@@ -1,0 +1,170 @@
+import { useEffect, useRef, useCallback } from 'react'
+import useTimelineStore from '../stores/timelineStore'
+
+/**
+ * Hook to manage timeline playback
+ * Advances the playhead and provides playback state
+ */
+export function useTimelinePlayback() {
+  const animationFrameRef = useRef(null)
+  const lastTimeRef = useRef(performance.now())
+  const activeClipRef = useRef(null)
+  
+  const {
+    isPlaying,
+    playheadPosition,
+    playbackRate,
+    setPlayheadPosition,
+    togglePlay,
+    shuttlePause,
+    getActiveClipAtTime,
+    getTransitionAtTime,
+    getTimelineEndTime,
+    clips,
+    transitions,
+  } = useTimelineStore()
+
+  // Get active clip info at current position
+  const getPlaybackState = useCallback((time) => {
+    const activeClip = getActiveClipAtTime(time)
+    const transitionInfo = getTransitionAtTime(time)
+    const endTime = getTimelineEndTime()
+    
+    return {
+      activeClip,
+      transitionInfo,
+      endTime,
+      // Calculate the time within the source video
+      sourceTime: activeClip 
+        ? activeClip.trimStart + (time - activeClip.startTime)
+        : 0
+    }
+  }, [getActiveClipAtTime, getTransitionAtTime, getTimelineEndTime])
+
+  // Track ping-pong direction (1 = forward, -1 = reverse)
+  const pingPongDirectionRef = useRef(1)
+
+  // Main playback loop with JKL shuttle support and loop modes
+  const tick = useCallback(() => {
+    const now = performance.now()
+    const deltaMs = now - lastTimeRef.current
+    lastTimeRef.current = now
+    
+    // Convert to seconds and apply playback rate (supports reverse with negative rate)
+    const state = useTimelineStore.getState()
+    const { loopMode, inPoint, outPoint } = state
+    
+    // For ping-pong mode, apply direction
+    let effectiveRate = state.playbackRate
+    if (loopMode === 'ping-pong') {
+      effectiveRate = Math.abs(state.playbackRate) * pingPongDirectionRef.current
+    }
+    
+    const deltaSeconds = (deltaMs / 1000) * effectiveRate
+    let newPosition = state.playheadPosition + deltaSeconds
+    const endTime = state.getTimelineEndTime()
+    
+    // Determine loop boundaries
+    const loopStart = (loopMode === 'loop-in-out' && inPoint !== null) ? inPoint : 0
+    const loopEnd = (loopMode === 'loop-in-out' && outPoint !== null) ? outPoint : endTime
+    
+    // Handle end of timeline (forward playback)
+    if (newPosition >= loopEnd && loopEnd > 0 && effectiveRate > 0) {
+      switch (loopMode) {
+        case 'loop':
+        case 'loop-in-out':
+          // Loop back to start
+          newPosition = loopStart
+          break
+        case 'ping-pong':
+          // Reverse direction
+          pingPongDirectionRef.current = -1
+          newPosition = loopEnd - (newPosition - loopEnd)
+          break
+        default:
+          // Normal mode - stop at end
+          setPlayheadPosition(loopEnd)
+          if (state.isPlaying) {
+            shuttlePause()
+          }
+          return
+      }
+    }
+    
+    // Handle start of timeline (reverse playback)
+    if (newPosition <= loopStart && effectiveRate < 0) {
+      switch (loopMode) {
+        case 'loop':
+        case 'loop-in-out':
+          // Loop to end
+          newPosition = loopEnd
+          break
+        case 'ping-pong':
+          // Reverse direction
+          pingPongDirectionRef.current = 1
+          newPosition = loopStart + (loopStart - newPosition)
+          break
+        default:
+          // Normal mode - stop at start
+          setPlayheadPosition(loopStart)
+          if (state.isPlaying) {
+            shuttlePause()
+          }
+          return
+      }
+    }
+    
+    setPlayheadPosition(Math.max(loopStart, Math.min(loopEnd, newPosition)))
+    
+    // Continue loop if still playing
+    if (state.isPlaying) {
+      animationFrameRef.current = requestAnimationFrame(tick)
+    }
+  }, [setPlayheadPosition, shuttlePause])
+
+  // Start/stop playback loop based on isPlaying
+  useEffect(() => {
+    if (isPlaying) {
+      lastTimeRef.current = performance.now()
+      animationFrameRef.current = requestAnimationFrame(tick)
+    } else {
+      if (animationFrameRef.current) {
+        cancelAnimationFrame(animationFrameRef.current)
+      }
+    }
+    
+    return () => {
+      if (animationFrameRef.current) {
+        cancelAnimationFrame(animationFrameRef.current)
+      }
+    }
+  }, [isPlaying, tick])
+
+  // Sync video element with timeline position
+  const syncVideoToTimeline = useCallback((videoRef, clip, currentTime) => {
+    if (!videoRef || !clip) return
+    
+    const sourceTime = clip.trimStart + (currentTime - clip.startTime)
+    
+    // Only seek if difference is significant (> 0.1s) to avoid constant seeking
+    if (Math.abs(videoRef.currentTime - sourceTime) > 0.1) {
+      videoRef.currentTime = sourceTime
+    }
+  }, [])
+
+  // Get current playback info
+  const playbackInfo = getPlaybackState(playheadPosition)
+
+  return {
+    isPlaying,
+    playheadPosition,
+    activeClip: playbackInfo.activeClip,
+    transitionInfo: playbackInfo.transitionInfo,
+    sourceTime: playbackInfo.sourceTime,
+    endTime: playbackInfo.endTime,
+    syncVideoToTimeline,
+    togglePlay,
+  }
+}
+
+export default useTimelinePlayback

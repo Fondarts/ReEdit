@@ -1,75 +1,93 @@
-import { useState, useCallback } from 'react'
+import { useState, useCallback, useEffect } from 'react'
 import TitleBar from './components/TitleBar'
-import Sidebar from './components/Sidebar'
+import LeftPanel from './components/LeftPanel'
 import PreviewPanel from './components/PreviewPanel'
-import GeneratePanel from './components/GeneratePanel'
 import Timeline from './components/Timeline'
-import BottomTabs from './components/BottomTabs'
+import TransportControls from './components/TransportControls'
 import InspectorPanel from './components/InspectorPanel'
 import ResizeHandle from './components/ResizeHandle'
-import ScenesPanel from './components/panels/ScenesPanel'
-import AssetsPanel from './components/panels/AssetsPanel'
-import WorkflowsPanel from './components/panels/WorkflowsPanel'
-import SettingsPanel from './components/panels/SettingsPanel'
 import AudioGenerateModal from './components/AudioGenerateModal'
+import WelcomeScreen from './components/WelcomeScreen'
+import useProjectStore from './stores/projectStore'
 
 function App() {
-  const [activeTab, setActiveTab] = useState('generate')
   const [audioModalOpen, setAudioModalOpen] = useState(false)
   const [audioModalType, setAudioModalType] = useState('music')
   const [selectedItem, setSelectedItem] = useState({ type: 'shot', id: '2.1' })
   
+  // Left panel state
+  const [leftPanelExpanded, setLeftPanelExpanded] = useState(true)
+  const [leftPanelTab, setLeftPanelTab] = useState('generate')
+  const [leftPanelFullHeight, setLeftPanelFullHeight] = useState(false) // Resolve-style full height mode
+  
+  // Right panel (Inspector) state
+  const [inspectorExpanded, setInspectorExpanded] = useState(true)
+  
   // Panel sizes (in pixels)
-  const [sidebarWidth, setSidebarWidth] = useState(224) // 14rem = 224px
-  const [inspectorWidth, setInspectorWidth] = useState(256) // 16rem = 256px
-  const [timelineHeight, setTimelineHeight] = useState(176) // 11rem = 176px
-  const [bottomPanelHeight, setBottomPanelHeight] = useState(256) // 16rem = 256px
+  const [leftPanelWidth, setLeftPanelWidth] = useState(280) // Content panel width (icon bar is 48px additional)
+  const [inspectorWidth, setInspectorWidth] = useState(256) // Content panel width (icon bar is 48px additional)
+  const [timelineHeight, setTimelineHeight] = useState(240) // Includes transport controls + timeline
 
   // Min/max constraints
-  const MIN_SIDEBAR = 180
-  const MAX_SIDEBAR = 400
-  const MIN_INSPECTOR = 200
-  const MAX_INSPECTOR = 450
-  const MIN_TIMELINE = 120
-  const MAX_TIMELINE = 300
-  const MIN_BOTTOM_PANEL = 150
-  const MAX_BOTTOM_PANEL = 400
+  const ICON_BAR_WIDTH = 48 // Fixed icon toolbar width
+  const MIN_LEFT_PANEL = 200 // Content panel min
+  const MAX_LEFT_PANEL = 450 // Content panel max
+  const MIN_INSPECTOR = 200 // Content panel min
+  const MAX_INSPECTOR = 400 // Content panel max
+  const MIN_TIMELINE = 180 // Accounts for transport controls (40px) + minimum timeline
+  const MAX_TIMELINE = 450
   
-  const [currentProject] = useState({
-    name: 'Nike Commercial v2',
-    scenes: [
-      { id: 1, name: 'Opening', shots: 3 },
-      { id: 2, name: 'Hero Moment', shots: 5 },
-      { id: 3, name: 'Product', shots: 2 },
-      { id: 4, name: 'CTA', shots: 1 },
-    ]
-  })
+  // Project state
+  const { currentProject, initialize, isLoading, saveProject, autoSaveEnabled, autoSaveInterval } = useProjectStore()
+  
+  // Initialize project store on mount
+  useEffect(() => {
+    initialize()
+  }, [initialize])
+  
+  // Auto-save functionality
+  useEffect(() => {
+    if (!currentProject || !autoSaveEnabled) return
+    
+    const autoSaveTimer = setInterval(() => {
+      saveProject()
+      console.log('Auto-saved project')
+    }, autoSaveInterval)
+    
+    return () => clearInterval(autoSaveTimer)
+  }, [currentProject, autoSaveEnabled, autoSaveInterval, saveProject])
+  
+  // Save on window close/refresh
+  useEffect(() => {
+    const handleBeforeUnload = () => {
+      if (currentProject) {
+        saveProject()
+      }
+    }
+    
+    window.addEventListener('beforeunload', handleBeforeUnload)
+    return () => window.removeEventListener('beforeunload', handleBeforeUnload)
+  }, [currentProject, saveProject])
 
   // Resize handlers
-  const handleSidebarResize = useCallback((clientX) => {
-    const newWidth = Math.min(MAX_SIDEBAR, Math.max(MIN_SIDEBAR, clientX))
-    setSidebarWidth(newWidth)
+  const handleLeftPanelResize = useCallback((clientX) => {
+    // Account for the icon bar width when calculating content panel width
+    const contentWidth = clientX - ICON_BAR_WIDTH
+    const newWidth = Math.min(MAX_LEFT_PANEL, Math.max(MIN_LEFT_PANEL, contentWidth))
+    setLeftPanelWidth(newWidth)
   }, [])
 
   const handleInspectorResize = useCallback((clientX) => {
-    const newWidth = Math.min(MAX_INSPECTOR, Math.max(MIN_INSPECTOR, window.innerWidth - clientX))
+    // Account for the icon bar width when calculating content panel width
+    const contentWidth = window.innerWidth - clientX - ICON_BAR_WIDTH
+    const newWidth = Math.min(MAX_INSPECTOR, Math.max(MIN_INSPECTOR, contentWidth))
     setInspectorWidth(newWidth)
   }, [])
 
   const handleTimelineResize = useCallback((clientY) => {
-    // Calculate from the bottom of the preview area
-    const titleBarHeight = 40
-    const bottomTabsHeight = 40
-    const availableHeight = window.innerHeight - titleBarHeight - bottomTabsHeight - bottomPanelHeight
-    const previewBottom = titleBarHeight + (availableHeight * 0.6) // Approximate preview position
-    const newHeight = Math.min(MAX_TIMELINE, Math.max(MIN_TIMELINE, clientY - previewBottom))
+    // Calculate from bottom - timeline is at the bottom of the viewport
+    const newHeight = Math.min(MAX_TIMELINE, Math.max(MIN_TIMELINE, window.innerHeight - clientY))
     setTimelineHeight(newHeight)
-  }, [bottomPanelHeight])
-
-  const handleBottomPanelResize = useCallback((clientY) => {
-    const bottomTabsHeight = 40
-    const newHeight = Math.min(MAX_BOTTOM_PANEL, Math.max(MIN_BOTTOM_PANEL, window.innerHeight - clientY - bottomTabsHeight))
-    setBottomPanelHeight(newHeight)
   }, [])
 
   const openAudioModal = (type = 'music') => {
@@ -77,46 +95,98 @@ function App() {
     setAudioModalOpen(true)
   }
 
-  const renderBottomPanel = () => {
-    switch (activeTab) {
-      case 'scenes':
-        return <ScenesPanel scenes={currentProject.scenes} />
-      case 'generate':
-        return <GeneratePanel />
-      case 'assets':
-        return <AssetsPanel />
-      case 'workflows':
-        return <WorkflowsPanel />
-      case 'settings':
-        return <SettingsPanel />
-      default:
-        return <GeneratePanel />
-    }
+  // Show welcome screen if no project is open
+  if (!currentProject) {
+    return <WelcomeScreen />
   }
 
   return (
     <div className="h-screen flex flex-col bg-sf-dark-950 no-select">
       {/* Title Bar */}
-      <TitleBar projectName={currentProject.name} />
+      <TitleBar projectName={currentProject?.name || 'Untitled'} />
       
       {/* Main Content Area */}
-      <div className="flex-1 flex overflow-hidden">
-        {/* Left Sidebar - Scenes */}
-        <div style={{ width: sidebarWidth }} className="flex-shrink-0">
-          <Sidebar scenes={currentProject.scenes} />
-        </div>
+      <div className="flex-1 flex overflow-hidden min-h-0">
+        {/* Left Panel - Full Height Mode (spans entire left side) */}
+        {leftPanelFullHeight && (
+          <>
+            <div 
+              style={{ width: leftPanelExpanded ? ICON_BAR_WIDTH + leftPanelWidth : ICON_BAR_WIDTH }} 
+              className="flex-shrink-0 transition-[width] duration-200 ease-out h-full"
+            >
+              <LeftPanel 
+                isExpanded={leftPanelExpanded}
+                onToggleExpanded={() => setLeftPanelExpanded(!leftPanelExpanded)}
+                activeTab={leftPanelTab}
+                onTabChange={setLeftPanelTab}
+                isFullHeight={true}
+                onToggleFullHeight={() => setLeftPanelFullHeight(false)}
+              />
+            </div>
+            {/* Resize Handle for full-height left panel */}
+            {leftPanelExpanded && (
+              <ResizeHandle 
+                direction="horizontal" 
+                onResize={handleLeftPanelResize}
+              />
+            )}
+          </>
+        )}
         
-        {/* Resize Handle - Sidebar */}
-        <ResizeHandle 
-          direction="horizontal" 
-          onResize={handleSidebarResize}
-        />
-        
-        {/* Center - Preview + Timeline + Bottom Panel */}
+        {/* Right Side Content (Preview + Inspector + Timeline) */}
         <div className="flex-1 flex flex-col min-w-0">
-          {/* Preview Area */}
-          <div className="flex-1 min-h-0">
-            <PreviewPanel />
+          {/* Upper Content Area - Preview + Inspector */}
+          <div className="flex-1 flex overflow-hidden min-h-0">
+            {/* Left Panel - Normal Mode (only in upper area) */}
+            {!leftPanelFullHeight && (
+              <>
+                <div 
+                  style={{ width: leftPanelExpanded ? ICON_BAR_WIDTH + leftPanelWidth : ICON_BAR_WIDTH }} 
+                  className="flex-shrink-0 transition-[width] duration-200 ease-out"
+                >
+                  <LeftPanel 
+                    isExpanded={leftPanelExpanded}
+                    onToggleExpanded={() => setLeftPanelExpanded(!leftPanelExpanded)}
+                    activeTab={leftPanelTab}
+                    onTabChange={setLeftPanelTab}
+                    isFullHeight={false}
+                    onToggleFullHeight={() => setLeftPanelFullHeight(true)}
+                  />
+                </div>
+                {/* Resize Handle - Left Panel (only when expanded) */}
+                {leftPanelExpanded && (
+                  <ResizeHandle 
+                    direction="horizontal" 
+                    onResize={handleLeftPanelResize}
+                  />
+                )}
+              </>
+            )}
+            
+            {/* Center - Preview */}
+            <div className="flex-1 min-w-0">
+              <PreviewPanel />
+            </div>
+            
+            {/* Resize Handle - Inspector (only when expanded) */}
+            {inspectorExpanded && (
+              <ResizeHandle 
+                direction="horizontal" 
+                onResize={handleInspectorResize}
+              />
+            )}
+            
+            {/* Right Sidebar - Inspector with Icon Toolbar */}
+            <div 
+              style={{ width: inspectorExpanded ? inspectorWidth + ICON_BAR_WIDTH : ICON_BAR_WIDTH }} 
+              className="flex-shrink-0 transition-[width] duration-200 ease-out"
+            >
+              <InspectorPanel 
+                selectedItem={selectedItem}
+                isExpanded={inspectorExpanded}
+                onToggleExpanded={() => setInspectorExpanded(!inspectorExpanded)}
+              />
+            </div>
           </div>
           
           {/* Resize Handle - Timeline */}
@@ -125,40 +195,17 @@ function App() {
             onResize={handleTimelineResize}
           />
           
-          {/* Timeline */}
-          <div style={{ height: timelineHeight }} className="flex-shrink-0">
-            <Timeline onOpenAudioGenerate={openAudioModal} />
+          {/* Bottom Section - Transport Controls + Timeline */}
+          <div style={{ height: timelineHeight }} className="flex-shrink-0 w-full flex flex-col">
+            {/* Transport Controls - Anchored to top of timeline section */}
+            <TransportControls />
+            {/* Timeline - Takes remaining space */}
+            <div className="flex-1 min-h-0">
+              <Timeline onOpenAudioGenerate={openAudioModal} />
+            </div>
           </div>
-          
-          {/* Resize Handle - Bottom Panel */}
-          <ResizeHandle 
-            direction="vertical" 
-            onResize={handleBottomPanelResize}
-          />
-          
-          {/* Bottom Tab Content */}
-          <div 
-            style={{ height: bottomPanelHeight }} 
-            className="flex-shrink-0 bg-sf-dark-900 border-t border-sf-dark-700"
-          >
-            {renderBottomPanel()}
-          </div>
-        </div>
-        
-        {/* Resize Handle - Inspector */}
-        <ResizeHandle 
-          direction="horizontal" 
-          onResize={handleInspectorResize}
-        />
-        
-        {/* Right Sidebar - Inspector */}
-        <div style={{ width: inspectorWidth }} className="flex-shrink-0">
-          <InspectorPanel selectedItem={selectedItem} />
         </div>
       </div>
-      
-      {/* Bottom Tab Bar */}
-      <BottomTabs activeTab={activeTab} onTabChange={setActiveTab} />
       
       {/* Audio Generate Modal */}
       <AudioGenerateModal 
