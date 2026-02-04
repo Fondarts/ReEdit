@@ -3,9 +3,13 @@ import {
   Volume2, VolumeX, Lock, Unlock, Eye, EyeOff, 
   Plus, Music, Mic, Video, Type, Image as ImageIcon,
   Sparkles, GripVertical, Magnet, ArrowRightLeft, Square, X, Check, Pencil,
-  Undo2, Redo2, Diamond, Zap, AlertTriangle, Loader2
+  Undo2, Redo2, Diamond, Zap, AlertTriangle, Loader2, ChevronRight
 } from 'lucide-react'
 import useTimelineStore from '../stores/timelineStore'
+import useProjectStore from '../stores/projectStore'
+import renderCacheService from '../services/renderCache'
+import { deleteRenderCache } from '../services/fileSystem'
+import { clearDiskCacheUrl } from './VideoLayerRenderer'
 import useAssetsStore from '../stores/assetsStore'
 import { useSnapping, SNAP_TYPES } from '../hooks/useSnapping'
 import { getAllKeyframeTimes } from '../utils/keyframes'
@@ -58,10 +62,15 @@ function Timeline({ onOpenAudioGenerate }) {
   
   // Clip context menu state
   const [clipContextMenu, setClipContextMenu] = useState(null) // { x, y, clipId }
+  const [maskSubmenuOpen, setMaskSubmenuOpen] = useState(false)
   
   // Track rename state
   const [renamingTrackId, setRenamingTrackId] = useState(null)
   const [renameValue, setRenameValue] = useState('')
+  
+  // Track reorder drag state
+  const [trackDragState, setTrackDragState] = useState(null) // { trackId, trackType, startY, originalIndex }
+  const [trackDropTarget, setTrackDropTarget] = useState(null) // index within type group
   
   // Timeline store
   const {
@@ -96,18 +105,24 @@ function Timeline({ onOpenAudioGenerate }) {
     removeTransition,
     updateTransition,
     getMaxTransitionDuration,
+    addMaskEffect,
     toggleSnapping,
     toggleRippleEdit,
     setActiveSnapTime,
     clearActiveSnap,
     removeTrack,
     renameTrack,
+    reorderTrack,
     undo,
     redo,
     canUndo,
     canRedo,
-    saveToHistory
+    saveToHistory,
+    clearClipCache,
+    requestMaskPicker
   } = useTimelineStore()
+
+  const { currentProjectHandle } = useProjectStore()
   
   const edgeTransitionsByClipId = useMemo(() => {
     const map = new Map()
@@ -127,6 +142,10 @@ function Timeline({ onOpenAudioGenerate }) {
 
   // Assets store for drag & drop and preview mode
   const { assets, currentPreview, setPreview, setPreviewMode, getAssetUrl, isPlaying: assetIsPlaying, setIsPlaying: setAssetIsPlaying } = useAssetsStore()
+
+  const availableMasks = useMemo(() => {
+    return assets.filter(a => a.type === 'mask')
+  }, [assets])
   
   // Helper to get clip URL - uses asset store URL if available (handles refreshed blob URLs)
   const getClipUrl = (clip) => {
@@ -600,15 +619,22 @@ function Timeline({ onOpenAudioGenerate }) {
       y: e.clientY,
       clipId: clip.id
     })
+    setMaskSubmenuOpen(false)
   }
 
   // Close clip context menu
   useEffect(() => {
     if (!clipContextMenu) return
     
-    const handleClick = () => setClipContextMenu(null)
+    const handleClick = () => {
+      setClipContextMenu(null)
+      setMaskSubmenuOpen(false)
+    }
     const handleEscape = (e) => {
-      if (e.key === 'Escape') setClipContextMenu(null)
+      if (e.key === 'Escape') {
+        setClipContextMenu(null)
+        setMaskSubmenuOpen(false)
+      }
     }
     
     window.addEventListener('click', handleClick)
@@ -626,6 +652,27 @@ function Timeline({ onOpenAudioGenerate }) {
     if (!clip) return
     
     switch (action) {
+      case 'add-mask':
+        // Ensure single selection on this clip
+        selectClip(clip.id)
+        requestMaskPicker(clip.id, { openPicker: true })
+        break
+      case 'flush-cache': {
+        const targetIds = selectedClipIds.includes(clip.id) ? selectedClipIds : [clip.id]
+        targetIds.forEach((clipId) => {
+          const targetClip = clips.find(c => c.id === clipId)
+          if (!targetClip) return
+          renderCacheService.clearCache(clipId)
+          clearDiskCacheUrl(clipId)
+          if (targetClip.cachePath && currentProjectHandle) {
+            deleteRenderCache(currentProjectHandle, targetClip.cachePath).catch(err => {
+              console.warn('Failed to delete cache from disk:', err)
+            })
+          }
+          clearClipCache(clipId)
+        })
+        break
+      }
       case 'delete':
         if (selectedClipIds.length > 1 && selectedClipIds.includes(clip.id)) {
           removeSelectedClips()
@@ -682,6 +729,18 @@ function Timeline({ onOpenAudioGenerate }) {
         break
     }
     
+    setMaskSubmenuOpen(false)
+    setClipContextMenu(null)
+  }
+
+  const handleApplyMaskFromContextMenu = (maskAssetId) => {
+    const clip = clips.find(c => c.id === clipContextMenu?.clipId)
+    if (!clip) return
+
+    selectClip(clip.id)
+    addMaskEffect(clip.id, maskAssetId)
+    requestMaskPicker(clip.id, { openPicker: false })
+    setMaskSubmenuOpen(false)
     setClipContextMenu(null)
   }
 
@@ -1256,6 +1315,57 @@ function Timeline({ onOpenAudioGenerate }) {
     removeTrack(track.id)
   }
 
+  // ==================== TRACK REORDER DRAG HANDLERS ====================
+  const handleTrackDragStart = (e, track, indexInGroup) => {
+    e.stopPropagation()
+    setTrackDragState({
+      trackId: track.id,
+      trackType: track.type,
+      startY: e.clientY,
+      originalIndex: indexInGroup
+    })
+    setTrackDropTarget(indexInGroup)
+  }
+
+  const handleTrackDragMove = (e) => {
+    if (!trackDragState) return
+    
+    // Calculate which index we're hovering over
+    const tracksOfType = trackDragState.trackType === 'video' ? videoTracks : audioTracks
+    const trackHeight = trackDragState.trackType === 'video' ? 48 : 40 // h-12 = 48px, h-10 = 40px
+    const deltaY = e.clientY - trackDragState.startY
+    const indexDelta = Math.round(deltaY / trackHeight)
+    const newIndex = Math.max(0, Math.min(tracksOfType.length - 1, trackDragState.originalIndex + indexDelta))
+    
+    if (newIndex !== trackDropTarget) {
+      setTrackDropTarget(newIndex)
+    }
+  }
+
+  const handleTrackDragEnd = () => {
+    if (trackDragState && trackDropTarget !== null && trackDropTarget !== trackDragState.originalIndex) {
+      reorderTrack(trackDragState.trackId, trackDropTarget)
+    }
+    setTrackDragState(null)
+    setTrackDropTarget(null)
+  }
+
+  // Track drag mouse move/up listeners
+  useEffect(() => {
+    if (!trackDragState) return
+    
+    const handleMouseMove = (e) => handleTrackDragMove(e)
+    const handleMouseUp = () => handleTrackDragEnd()
+    
+    window.addEventListener('mousemove', handleMouseMove)
+    window.addEventListener('mouseup', handleMouseUp)
+    
+    return () => {
+      window.removeEventListener('mousemove', handleMouseMove)
+      window.removeEventListener('mouseup', handleMouseUp)
+    }
+  }, [trackDragState, trackDropTarget])
+
   // Generate time markers
   const timeMarkers = []
   const markerInterval = zoom > 100 ? 5 : 10
@@ -1422,14 +1532,23 @@ function Timeline({ onOpenAudioGenerate }) {
           >
           
           {/* Video Tracks */}
-          {videoTracks.map((track) => (
+          {videoTracks.map((track, index) => {
+            const isDragging = trackDragState?.trackId === track.id
+            const isDropTarget = trackDragState?.trackType === 'video' && trackDropTarget === index && !isDragging
+            
+            return (
             <div 
               key={track.id}
               className={`h-12 flex items-center px-2 gap-1 border-b border-sf-dark-700 hover:bg-sf-dark-800 transition-colors group/track ${
                 track.locked ? 'bg-sf-dark-800/50' : ''
-              }`}
+              } ${isDragging ? 'opacity-50 bg-sf-dark-700' : ''} ${isDropTarget ? 'border-t-2 border-t-purple-500' : ''}`}
             >
-              <GripVertical className={`w-3 h-3 ${track.locked ? 'text-sf-dark-600' : 'text-sf-dark-500'} cursor-grab`} />
+              <div
+                className={`p-0.5 rounded hover:bg-sf-dark-600 ${track.locked ? 'cursor-not-allowed' : 'cursor-grab active:cursor-grabbing'}`}
+                onMouseDown={(e) => !track.locked && handleTrackDragStart(e, track, index)}
+              >
+                <GripVertical className={`w-3 h-3 ${track.locked ? 'text-sf-dark-600' : 'text-sf-dark-500'}`} />
+              </div>
               <div className={`w-5 h-5 rounded flex items-center justify-center flex-shrink-0 ${getTrackColor(track)}`}>
                 {getTrackIcon(track)}
               </div>
@@ -1506,7 +1625,7 @@ function Timeline({ onOpenAudioGenerate }) {
                 )}
               </div>
             </div>
-          ))}
+          )})}
           
           {/* Audio Section Divider */}
           <div className="h-5 bg-sf-dark-800 border-b border-sf-dark-700 flex items-center px-2">
@@ -1521,14 +1640,23 @@ function Timeline({ onOpenAudioGenerate }) {
           </div>
           
           {/* Audio Tracks */}
-          {audioTracks.map((track) => (
+          {audioTracks.map((track, index) => {
+            const isDragging = trackDragState?.trackId === track.id
+            const isDropTarget = trackDragState?.trackType === 'audio' && trackDropTarget === index && !isDragging
+            
+            return (
             <div 
               key={track.id}
               className={`h-10 flex items-center px-2 gap-1 border-b border-sf-dark-700 hover:bg-sf-dark-800 transition-colors group/track ${
                 track.locked ? 'bg-sf-dark-800/50' : ''
-              }`}
+              } ${isDragging ? 'opacity-50 bg-sf-dark-700' : ''} ${isDropTarget ? 'border-t-2 border-t-purple-500' : ''}`}
             >
-              <GripVertical className={`w-3 h-3 ${track.locked ? 'text-sf-dark-600' : 'text-sf-dark-500'} cursor-grab`} />
+              <div
+                className={`p-0.5 rounded hover:bg-sf-dark-600 ${track.locked ? 'cursor-not-allowed' : 'cursor-grab active:cursor-grabbing'}`}
+                onMouseDown={(e) => !track.locked && handleTrackDragStart(e, track, index)}
+              >
+                <GripVertical className={`w-3 h-3 ${track.locked ? 'text-sf-dark-600' : 'text-sf-dark-500'}`} />
+              </div>
               <div className={`w-5 h-5 rounded flex items-center justify-center flex-shrink-0 ${getTrackColor(track)}`}>
                 {getTrackIcon(track)}
               </div>
@@ -1605,7 +1733,7 @@ function Timeline({ onOpenAudioGenerate }) {
                 )}
               </div>
             </div>
-          ))}
+          )})}
           </div>
         </div>
 
@@ -2428,6 +2556,84 @@ function Timeline({ onOpenAudioGenerate }) {
           }}
           onClick={(e) => e.stopPropagation()}
         >
+          {(() => {
+            const contextClip = clips.find(c => c.id === clipContextMenu.clipId)
+            const track = tracks.find(t => t.id === contextClip?.trackId)
+            const isVideoClip = track?.type === 'video'
+            if (!isVideoClip) return null
+            
+            return (
+              <>
+                <div className="relative">
+                  <button
+                    onClick={() => setMaskSubmenuOpen((prev) => !prev)}
+                    className="w-full px-3 py-1.5 text-left text-xs text-sf-text-primary hover:bg-sf-dark-700 flex items-center gap-2 transition-colors"
+                  >
+                    <span className="w-4 text-center">🪄</span>
+                    <span>Add Mask…</span>
+                    <ChevronRight className="ml-auto w-3 h-3 text-sf-text-muted" />
+                  </button>
+                  
+                  {maskSubmenuOpen && (
+                    <div
+                      className="absolute top-0 left-full ml-1 bg-sf-dark-800 border border-sf-dark-600 rounded-lg shadow-xl py-1 min-w-[220px] z-50 max-h-60 overflow-auto"
+                      onClick={(e) => e.stopPropagation()}
+                    >
+                      <button
+                        onClick={() => handleContextMenuAction('add-mask')}
+                        className="w-full px-3 py-1.5 text-left text-xs text-sf-text-primary hover:bg-sf-dark-700 flex items-center gap-2 transition-colors"
+                      >
+                        <span className="w-4 text-center">🧭</span>
+                        <span>Open Mask Picker…</span>
+                      </button>
+                      
+                      <div className="h-px bg-sf-dark-600 my-1" />
+                      
+                      {availableMasks.length > 0 ? (
+                        availableMasks.map((mask) => (
+                          <button
+                            key={mask.id}
+                            onClick={() => handleApplyMaskFromContextMenu(mask.id)}
+                            className="w-full px-3 py-1.5 text-left text-xs text-sf-text-primary hover:bg-sf-dark-700 flex items-center gap-2 transition-colors"
+                          >
+                            <span className="w-4 text-center">🎭</span>
+                            <span className="truncate">{mask.name}</span>
+                          </button>
+                        ))
+                      ) : (
+                        <div className="px-3 py-2 text-xs text-sf-text-muted">
+                          No masks found
+                        </div>
+                      )}
+                    </div>
+                  )}
+                </div>
+                <div className="h-px bg-sf-dark-600 my-1" />
+              </>
+            )
+          })()}
+          {(() => {
+            const contextClip = clips.find(c => c.id === clipContextMenu.clipId)
+            const hasCache =
+              !!contextClip?.cacheUrl ||
+              !!contextClip?.cachePath ||
+              (contextClip?.cacheStatus && contextClip.cacheStatus !== 'none')
+
+            if (!hasCache) return null
+
+            return (
+              <>
+                <button
+                  onClick={() => handleContextMenuAction('flush-cache')}
+                  className="w-full px-3 py-1.5 text-left text-xs text-sf-text-primary hover:bg-sf-dark-700 flex items-center gap-2 transition-colors"
+                >
+                  <span className="w-4 text-center">🧹</span>
+                  <span>Flush Render Cache</span>
+                </button>
+                <div className="h-px bg-sf-dark-600 my-1" />
+              </>
+            )
+          })()}
           <button
             onClick={() => handleContextMenuAction('preview')}
             className="w-full px-3 py-1.5 text-left text-xs text-sf-text-primary hover:bg-sf-dark-700 flex items-center gap-2 transition-colors"

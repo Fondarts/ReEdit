@@ -44,6 +44,9 @@ export const useTimelineStore = create(
   
   // Selected clips (multi-select support)
   selectedClipIds: [], // Array of selected clip IDs
+
+  // UI request: open Inspector (optionally mask picker) for a clip
+  maskPickerRequest: null, // { clipId, openPicker }
   
   // Clip counter for unique IDs
   clipCounter: 1,
@@ -2041,6 +2044,21 @@ export const useTimelineStore = create(
   },
 
   /**
+   * Request opening the Inspector for a clip (optionally mask picker)
+   */
+  requestMaskPicker: (clipId, options = {}) => {
+    const { openPicker = true } = options
+    set({ maskPickerRequest: { clipId, openPicker } })
+  },
+
+  /**
+   * Clear mask picker request
+   */
+  clearMaskPickerRequest: () => {
+    set({ maskPickerRequest: null })
+  },
+
+  /**
    * Select multiple clips at once
    */
   selectClips: (clipIds) => {
@@ -2276,6 +2294,42 @@ export const useTimelineStore = create(
     }))
     
     return true
+  },
+
+  /**
+   * Reorder a track within its type group (video or audio)
+   * @param {string} trackId - The track to move
+   * @param {number} newIndex - The new index within its type group
+   */
+  reorderTrack: (trackId, newIndex) => {
+    const state = get()
+    const track = state.tracks.find(t => t.id === trackId)
+    if (!track) return
+    
+    const trackType = track.type
+    const tracksOfType = state.tracks.filter(t => t.type === trackType)
+    const otherTracks = state.tracks.filter(t => t.type !== trackType)
+    
+    // Find current index within type group
+    const currentIndex = tracksOfType.findIndex(t => t.id === trackId)
+    if (currentIndex === newIndex) return
+    
+    // Clamp newIndex
+    const clampedIndex = Math.max(0, Math.min(tracksOfType.length - 1, newIndex))
+    
+    // Remove track from current position and insert at new position
+    const reorderedTracks = [...tracksOfType]
+    reorderedTracks.splice(currentIndex, 1)
+    reorderedTracks.splice(clampedIndex, 0, track)
+    
+    // Save to history
+    get().saveToHistory()
+    
+    // Reconstruct tracks array with video first, then audio
+    const videoTracks = trackType === 'video' ? reorderedTracks : otherTracks.filter(t => t.type === 'video')
+    const audioTracks = trackType === 'audio' ? reorderedTracks : otherTracks.filter(t => t.type === 'audio')
+    
+    set({ tracks: [...videoTracks, ...audioTracks] })
   },
 
   /**

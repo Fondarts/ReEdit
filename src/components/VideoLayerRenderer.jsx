@@ -3,8 +3,9 @@ import useTimelineStore from '../stores/timelineStore'
 import useAssetsStore from '../stores/assetsStore'
 import useProjectStore from '../stores/projectStore'
 import videoCache from '../services/videoCache'
+import renderCacheService from '../services/renderCache'
 import { getAnimatedTransform } from '../utils/keyframes'
-import { loadRenderCache } from '../services/fileSystem'
+import { loadRenderCache, saveRenderCache } from '../services/fileSystem'
 import { getSpriteFramePosition } from '../services/thumbnailSprites'
 
 /**
@@ -193,17 +194,27 @@ function useMaskEffectStyle(clip, playheadPosition, isCachedRender = false) {
     const maskAsset = getAssetById(maskEffect.maskAssetId)
     
     if (!maskAsset) return {}
+    const sourceAsset = maskAsset.sourceAssetId ? getAssetById(maskAsset.sourceAssetId) : null
+    const maskFrameCount = maskAsset.frameCount || maskAsset.maskFrames?.length || 1
+    const sourceDuration = clip.sourceDuration
+      || sourceAsset?.duration
+      || sourceAsset?.settings?.duration
+      || maskAsset?.settings?.duration
+      || clip.duration
     
     // For video masks (PNG sequences), we need to get the correct frame
     let maskUrl = maskAsset.url
     
     if (maskAsset.maskFrames && maskAsset.maskFrames.length > 1) {
-      // Calculate which frame to use based on clip time
+      // Calculate which frame to use based on SOURCE time (trim-aware)
       const clipTime = playheadPosition - clip.startTime
-      const clipProgress = Math.max(0, Math.min(1, clipTime / clip.duration))
+      const sourceTime = (clip.trimStart || 0) + clipTime
+      const sourceProgress = sourceDuration > 0
+        ? Math.max(0, Math.min(1, sourceTime / sourceDuration))
+        : 0
       const frameIndex = Math.min(
-        Math.floor(clipProgress * maskAsset.frameCount),
-        maskAsset.frameCount - 1
+        Math.max(0, Math.floor(sourceProgress * maskFrameCount)),
+        maskFrameCount - 1
       )
       
       // Get the URL for this specific frame
@@ -283,6 +294,8 @@ const VideoLayer = memo(function VideoLayer({
   // Get sprite data for this clip's asset
   const getAssetSprite = useAssetsStore(state => state.getAssetSprite)
   const spriteData = clip?.assetId ? getAssetSprite(clip.assetId) : null
+
+  const useSpriteScrub = !!spriteData?.url && !isCachedRender
   
   // Get mask effect styles for video (skip if using cached render)
   const maskStyles = useMaskEffectStyle(clip, playheadPosition, isCachedRender)
@@ -406,7 +419,7 @@ const VideoLayer = memo(function VideoLayer({
     if (playheadDelta > 0.01) {
       isScrubbing.current = true
       // Show sprite during scrubbing if available (only set if not already showing)
-      if (spriteData?.url && !showSprite) {
+      if (useSpriteScrub && !showSprite) {
         setShowSprite(true)
       }
       
@@ -434,6 +447,13 @@ const VideoLayer = memo(function VideoLayer({
       }
     }
   }, [playheadPosition, isPlaying]) // Removed spriteData and clip from deps to prevent loops
+
+  // If cached render becomes available, hide sprite overlay
+  useEffect(() => {
+    if (isCachedRender && showSprite) {
+      setShowSprite(false)
+    }
+  }, [isCachedRender, showSprite])
 
   // Sync video playback with timeline
   useEffect(() => {
@@ -467,7 +487,7 @@ const VideoLayer = memo(function VideoLayer({
     } else if (isScrubbing.current) {
       // When scrubbing with sprite: skip video seeking entirely (sprite handles display)
       // When scrubbing without sprite: use throttled seeking
-      if (!spriteData?.url) {
+      if (!useSpriteScrub) {
         const now = performance.now()
         if (now - lastSeekTime.current > 50) { // 50ms = 20 fps during scrub
           // Use fastSeek if available (seeks to nearest keyframe - much faster)
@@ -736,7 +756,13 @@ function VideoLayerRenderer({
     playheadPosition,
     playbackRate,
     getActiveClipsAtTime,
+    getEnabledEffects,
+    setCacheStatus,
+    setCacheUrl,
   } = useTimelineStore()
+
+  const getAssetById = useAssetsStore(state => state.getAssetById)
+  const { currentProjectHandle } = useProjectStore()
   
   // State for active layer clips
   const [activeLayerClips, setActiveLayerClips] = useState([])
@@ -780,6 +806,56 @@ function VideoLayerRenderer({
     return relevantClips
   }, [clips, tracks, playbackRate])
 
+  const autoCacheClip = useCallback(async (clip) => {
+    if (!clip || clip.type !== 'video') return
+    if (clip.cacheStatus === 'cached' || renderCacheService.isRendering(clip.id)) return
+
+    const enabledEffects = getEnabledEffects(clip.id)
+    const maskEffects = (enabledEffects || []).filter(e => e.type === 'mask' && e.enabled)
+    if (maskEffects.length === 0) return
+
+    const asset = getAssetById(clip.assetId)
+    const videoUrl = asset?.url || clip.url
+    if (!videoUrl) return
+
+    setCacheStatus(clip.id, 'rendering', 0)
+
+    try {
+      const { blobUrl, blob } = await renderCacheService.renderClipWithEffects(
+        clip,
+        videoUrl,
+        enabledEffects,
+        getAssetById,
+        {
+          fps: 30,
+          onProgress: (progress) => {
+            if (progress.progress !== undefined) {
+              setCacheStatus(clip.id, 'rendering', progress.progress)
+            }
+          }
+        }
+      )
+
+      let cachePath = null
+      if (currentProjectHandle && blob) {
+        try {
+          cachePath = await saveRenderCache(currentProjectHandle, clip.id, blob, {
+            clipId: clip.id,
+            duration: clip.duration,
+            effects: enabledEffects.map(e => ({ id: e.id, type: e.type })),
+          })
+        } catch (saveErr) {
+          console.warn('Failed to save cache to disk:', saveErr)
+        }
+      }
+
+      setCacheUrl(clip.id, blobUrl, cachePath)
+    } catch (err) {
+      console.error('Auto render cache failed:', err)
+      setCacheStatus(clip.id, 'none', 0)
+    }
+  }, [currentProjectHandle, getAssetById, getEnabledEffects, setCacheStatus, setCacheUrl])
+
   /**
    * Preload upcoming clips
    */
@@ -799,6 +875,14 @@ function VideoLayerRenderer({
     
     lastPreloadPosition.current = playheadPosition
   }, [clips, playheadPosition, playbackRate, getClipsToPreload])
+
+  // Auto-render cache for clips with mask effects (smooth playback)
+  useEffect(() => {
+    const candidates = getClipsToPreload(playheadPosition)
+    candidates.forEach(clip => {
+      void autoCacheClip(clip)
+    })
+  }, [playheadPosition, getClipsToPreload, autoCacheClip])
 
   // Update active layer clips when playhead moves OR when clips change (for real-time text editing)
   useEffect(() => {

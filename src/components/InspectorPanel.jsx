@@ -252,6 +252,8 @@ function InspectorPanel({ isExpanded, onToggleExpanded }) {
     setCacheStatus,
     setCacheUrl,
     clearClipCache,
+    maskPickerRequest,
+    clearMaskPickerRequest,
   } = useTimelineStore()
   
   // Get assets store functions (needed for render cache)
@@ -261,6 +263,25 @@ function InspectorPanel({ isExpanded, onToggleExpanded }) {
   const selectedClip = selectedClipIds.length > 0 
     ? clips.find(c => c.id === selectedClipIds[0]) 
     : null
+
+  // If a mask picker request comes in for this clip, open inspector + effects
+  useEffect(() => {
+    if (!maskPickerRequest || !selectedClip) return
+    if (maskPickerRequest.clipId !== selectedClip.id) return
+    
+    if (!isExpanded) {
+      onToggleExpanded()
+    }
+    setExpandedSections(prev =>
+      prev.includes('effects') ? prev : [...prev, 'effects']
+    )
+    if (maskPickerRequest.openPicker) {
+      setShowMaskPicker(true)
+    } else {
+      setShowMaskPicker(false)
+    }
+    clearMaskPickerRequest()
+  }, [maskPickerRequest, selectedClip?.id, isExpanded, onToggleExpanded, clearMaskPickerRequest])
   
   // Get track info for the selected clip
   const selectedTrack = selectedClip 

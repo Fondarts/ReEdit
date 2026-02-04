@@ -307,9 +307,13 @@ class RenderCacheService {
         // Draw video frame
         ctx.drawImage(video, 0, 0, canvas.width, canvas.height)
 
-        // Apply mask
+        // Apply mask (align to source time so trims stay in sync)
+        const sourceDuration = clip.sourceDuration || clipDuration
+        const sourceProgress = sourceDuration > 0
+          ? Math.max(0, Math.min(1, sourceTime / sourceDuration))
+          : 0
         const maskFrameIndex = Math.min(
-          Math.floor((clipTime / clipDuration) * maskFrames.length),
+          Math.max(0, Math.floor(sourceProgress * maskFrames.length)),
           maskFrames.length - 1
         )
         const maskImage = maskFrames[maskFrameIndex]
