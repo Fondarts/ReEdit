@@ -6,16 +6,30 @@ It combines a timeline editor, asset browser, Generate workspace, stock search, 
 
 ## Download
 
-Download the current public build from the [GitHub Releases page](https://github.com/JaimeIsMe/comfystudio/releases).
+Most users should download the desktop app from the [GitHub Releases page](https://github.com/JaimeIsMe/comfystudio/releases).
 
 The current public release is marked as a pre-release while early setup feedback comes in.
 
-Available release assets include:
+Desktop app release assets include:
 
 - Windows installer
 - Windows portable build
 - macOS Apple Silicon DMG
 - macOS Intel DMG
+
+Advanced ComfyUI users can also optionally download the `Workflow Starter Pack` release asset to inspect workflows directly in ComfyUI and prepare dependencies manually before queueing inside ComfyStudio.
+
+## What The Desktop App Includes
+
+- The ComfyStudio desktop app
+- Built-in workflow JSONs used by the app internally
+- In-app dependency checks, setup guidance, and the Getting Started guide
+
+## What The Desktop App Does Not Include
+
+- ComfyUI itself
+- Every custom node and model required for every workflow
+- Real credentials such as Comfy account API keys or Pexels keys
 
 ## What It Does
 
@@ -32,12 +46,10 @@ Available release assets include:
 - LM Studio integration is local-only.
 - Generate includes dependency preflight checks before queueing workflows.
 
-## Requirements
+## Desktop App Requirements
 
-Minimum for development or local use:
+Minimum for normal app use:
 
-- Node.js 18+
-- npm
 - ComfyUI installed separately and running locally
 
 Optional integrations:
@@ -45,24 +57,6 @@ Optional integrations:
 - Pexels API key for the `Stock` tab
 - Comfy account API key for paid partner-node workflows
 - LM Studio for local prompt assistance in the `LLM` tab
-
-## Quick Start
-
-### Windows
-
-```bash
-npm install
-npm run electron:dev
-```
-
-### macOS
-
-```bash
-npm install
-npm run electron:dev
-```
-
-The packaged desktop app is the intended experience. Browser-only `npm run dev` is still useful for frontend work, but Electron is the normal development path.
 
 ## First Run
 
@@ -179,24 +173,58 @@ If your GPU memory is tight, unload the LM Studio model before heavy ComfyUI gen
 
 ## Workflow Starter Pack
 
-The Starter Pack is the supported setup bridge for advanced ComfyUI users who want a clearer dependency and workflow-prep path.
+The Workflow Starter Pack is optional and intended for advanced ComfyUI users who want a clearer dependency and workflow-prep path outside the app.
+
+Advanced ComfyUI users can usually treat it like this:
+
+1. Download the Workflow Starter Pack
+2. Open the workflows in ComfyUI
+3. Install any missing custom nodes
+4. Download any missing models
+5. Return to ComfyStudio and use `Generate`
 
 Generate it with:
 
 ```bash
 npm run starter-pack:build
+npm run starter-pack:package
 ```
 
 Generated files:
 
 - `docs/workflow-starter-pack/starter-pack.manifest.json`
 - `docs/workflow-starter-pack/INDEX.md`
-- `docs/workflow-starter-pack/workflows/*.md`
+- `docs/workflow-starter-pack/docs/workflows/*.md`
+- `docs/workflow-starter-pack/workflows/local/*.comfyui.json`
+- `docs/workflow-starter-pack/workflows/cloud/*.comfyui.json`
 
 See:
 
 - `docs/workflow-starter-pack/README.md`
 - `docs/workflow-starter-pack/INDEX.md`
+- `docs/workflow-starter-pack/docs/WHERE_FILES_GO.md`
+- `docs/workflow-starter-pack/docs/API_KEYS.md`
+- `docs/workflow-starter-pack/docs/TROUBLESHOOTING.md`
+
+## Run From Source (Developers Only)
+
+If you want to develop or contribute to ComfyStudio, run it from source with Electron:
+
+### Windows
+
+```bash
+npm install
+npm run electron:dev
+```
+
+### macOS
+
+```bash
+npm install
+npm run electron:dev
+```
+
+The packaged desktop app is the intended experience for most users. Browser-only `npm run dev` is still useful for frontend work, but Electron is the normal development path.
 
 ## Build Commands
 

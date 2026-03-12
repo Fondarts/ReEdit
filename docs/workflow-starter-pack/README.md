@@ -1,31 +1,33 @@
 # Workflow Starter Pack
 
-This folder defines the "starter pack" artifacts that ComfyUI users can download to prepare their local setup before using Generate.
+This folder defines the optional `Workflow Starter Pack` for advanced ComfyUI users.
 
-## Why this exists
+Most ComfyStudio users should download the desktop app and rely on the in-app dependency checks. The starter pack exists for people who prefer to inspect workflows directly in ComfyUI, install missing nodes/models manually, and validate their environment outside the app.
 
-ComfyStudio executes API-oriented workflow JSON files internally. Advanced ComfyUI users often want a parallel setup path where they can inspect workflows directly in ComfyUI, install missing custom nodes/models, and validate their environment.
+## What this pack includes
 
-The starter pack is the bridge for that setup flow.
+- `README.md` - overview and maintenance notes for the starter pack itself.
+- `INDEX.md` - human-readable workflow index with links to setup JSONs and per-workflow guides.
+- `starter-pack.manifest.json` - machine-readable summary of workflow dependencies.
+- `release.json` - version/build metadata for the packaged starter pack.
+- `RELEASE_NOTES.md` - summary of what the current starter-pack build includes.
+- `docs/workflows/*.md` - per-workflow setup checklists.
+- `workflows/local/*.comfyui.json` - local workflow graphs prepared for manual ComfyUI import.
+- `workflows/cloud/*.comfyui.json` - cloud/partner workflow graphs prepared for manual ComfyUI import.
+- `nodes/custom-node-manifest.json` - aggregated custom-node requirements.
+- `models/model-manifest.json` - aggregated model requirements and target folders.
+- `checksums/SHA256SUMS.txt` - hashes for the shipped starter-pack files.
 
-## What is generated here
-
-Run:
+## Build commands
 
 ```bash
 npm run starter-pack:build
+npm run starter-pack:package
 ```
 
-This generates:
+`starter-pack:build` refreshes the docs, manifests, checksums, and importable workflow JSON copies under this folder.
 
-- `starter-pack.manifest.json` - machine-readable summary of built-in workflows, tiers, runtime mode, and dependency requirements.
-- `INDEX.md` - human-readable index of workflows.
-- `workflows/<workflow-id>.md` - one dependency/setup checklist per workflow.
-
-## Current status
-
-- The generated files are ready now.
-- `setupWorkflowFile` fields are marked as `pending` by default. Replace those with real ComfyUI-importable workflow files as they are created.
+`starter-pack:package` rebuilds the pack and writes a versioned zip to `release/`.
 
 ## Maintenance rules
 
@@ -34,10 +36,11 @@ When adding or changing workflows:
 1. Update `src/config/workflowRegistry.js`.
 2. Update `src/config/workflowDependencyPacks.js`.
 3. Run `npm run starter-pack:build`.
-4. Add/update the ComfyUI-importable setup workflow JSON files for any new workflows.
-5. Publish this folder (or a zip of it) to GitHub Releases for users.
+4. Verify the generated `docs/workflows/*.md`, `workflows/local/*.comfyui.json`, and `workflows/cloud/*.comfyui.json` files are still correct.
+5. Run `npm run starter-pack:package` before uploading the zip to GitHub Releases.
 
 ## Publishing recommendation
 
-- Publish a versioned zip (for example `comfystudio-workflow-starter-pack-vX.Y.Z.zip`).
-- Include this folder as-is so users get both machine-readable (`starter-pack.manifest.json`) and human-readable (`INDEX.md`, per-workflow markdown) guidance.
+- Publish a versioned zip such as `comfystudio-workflow-starter-pack-vX.Y.Z.zip`.
+- Upload it beside the desktop app binaries on GitHub Releases.
+- In release notes, describe it as optional and intended for advanced ComfyUI users only.

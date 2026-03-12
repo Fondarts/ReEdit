@@ -1,0 +1,259 @@
+{
+  "generatedAt": "2026-03-09T23:48:01.447Z",
+  "totalModels": 16,
+  "models": [
+    {
+      "filename": "ace_1.5_vae.safetensors",
+      "targetSubdir": "vae",
+      "folder": "models/vae",
+      "loaders": [
+        "VAELoader"
+      ],
+      "inputKeys": [
+        "vae_name"
+      ],
+      "workflows": [
+        "music-gen"
+      ],
+      "downloadUrl": null
+    },
+    {
+      "filename": "acestep_v1.5_turbo.safetensors",
+      "targetSubdir": "diffusion_models",
+      "folder": "models/diffusion_models",
+      "loaders": [
+        "UNETLoader"
+      ],
+      "inputKeys": [
+        "unet_name"
+      ],
+      "workflows": [
+        "music-gen"
+      ],
+      "downloadUrl": null
+    },
+    {
+      "filename": "ae.safetensors",
+      "targetSubdir": "vae",
+      "folder": "models/vae",
+      "loaders": [
+        "VAELoader"
+      ],
+      "inputKeys": [
+        "vae_name"
+      ],
+      "workflows": [
+        "z-image-turbo"
+      ],
+      "downloadUrl": null
+    },
+    {
+      "filename": "qwen_2.5_vl_7b_fp8_scaled.safetensors",
+      "targetSubdir": "text_encoders",
+      "folder": "models/text_encoders",
+      "loaders": [
+        "CLIPLoader"
+      ],
+      "inputKeys": [
+        "clip_name"
+      ],
+      "workflows": [
+        "image-edit",
+        "image-edit-model-product",
+        "multi-angles",
+        "multi-angles-scene"
+      ],
+      "downloadUrl": null
+    },
+    {
+      "filename": "qwen_3_4b.safetensors",
+      "targetSubdir": "text_encoders",
+      "folder": "models/text_encoders",
+      "loaders": [
+        "CLIPLoader"
+      ],
+      "inputKeys": [
+        "clip_name"
+      ],
+      "workflows": [
+        "z-image-turbo"
+      ],
+      "downloadUrl": null
+    },
+    {
+      "filename": "qwen_image_edit_2509_fp8_e4m3fn.safetensors",
+      "targetSubdir": "diffusion_models",
+      "folder": "models/diffusion_models",
+      "loaders": [
+        "UNETLoader"
+      ],
+      "inputKeys": [
+        "unet_name"
+      ],
+      "workflows": [
+        "image-edit",
+        "image-edit-model-product",
+        "multi-angles",
+        "multi-angles-scene"
+      ],
+      "downloadUrl": null
+    },
+    {
+      "filename": "qwen_image_vae.safetensors",
+      "targetSubdir": "vae",
+      "folder": "models/vae",
+      "loaders": [
+        "VAELoader"
+      ],
+      "inputKeys": [
+        "vae_name"
+      ],
+      "workflows": [
+        "image-edit",
+        "image-edit-model-product",
+        "multi-angles",
+        "multi-angles-scene"
+      ],
+      "downloadUrl": null
+    },
+    {
+      "filename": "Qwen-Edit-2509-Multiple-angles.safetensors",
+      "targetSubdir": "loras",
+      "folder": "models/loras",
+      "loaders": [
+        "LoraLoaderModelOnly"
+      ],
+      "inputKeys": [
+        "lora_name"
+      ],
+      "workflows": [
+        "multi-angles",
+        "multi-angles-scene"
+      ],
+      "downloadUrl": null
+    },
+    {
+      "filename": "Qwen-Image-Edit-2509-Lightning-4steps-V1.0-bf16.safetensors",
+      "targetSubdir": "loras",
+      "folder": "models/loras",
+      "loaders": [
+        "LoraLoaderModelOnly"
+      ],
+      "inputKeys": [
+        "lora_name"
+      ],
+      "workflows": [
+        "image-edit",
+        "image-edit-model-product",
+        "multi-angles",
+        "multi-angles-scene"
+      ],
+      "downloadUrl": null
+    },
+    {
+      "filename": "umt5_xxl_fp8_e4m3fn_scaled.safetensors",
+      "targetSubdir": "text_encoders",
+      "folder": "models/text_encoders",
+      "loaders": [
+        "CLIPLoader"
+      ],
+      "inputKeys": [
+        "clip_name"
+      ],
+      "workflows": [
+        "wan22-i2v"
+      ],
+      "downloadUrl": null
+    },
+    {
+      "filename": "wan_2.1_vae.safetensors",
+      "targetSubdir": "vae",
+      "folder": "models/vae",
+      "loaders": [
+        "VAELoader"
+      ],
+      "inputKeys": [
+        "vae_name"
+      ],
+      "workflows": [
+        "wan22-i2v"
+      ],
+      "downloadUrl": null
+    },
+    {
+      "filename": "wan2.2_i2v_high_noise_14B_fp8_scaled.safetensors",
+      "targetSubdir": "diffusion_models",
+      "folder": "models/diffusion_models",
+      "loaders": [
+        "UNETLoader"
+      ],
+      "inputKeys": [
+        "unet_name"
+      ],
+      "workflows": [
+        "wan22-i2v"
+      ],
+      "downloadUrl": null
+    },
+    {
+      "filename": "wan2.2_i2v_lightx2v_4steps_lora_v1_high_noise.safetensors",
+      "targetSubdir": "loras",
+      "folder": "models/loras",
+      "loaders": [
+        "LoraLoaderModelOnly"
+      ],
+      "inputKeys": [
+        "lora_name"
+      ],
+      "workflows": [
+        "wan22-i2v"
+      ],
+      "downloadUrl": null
+    },
+    {
+      "filename": "wan2.2_i2v_lightx2v_4steps_lora_v1_low_noise.safetensors",
+      "targetSubdir": "loras",
+      "folder": "models/loras",
+      "loaders": [
+        "LoraLoaderModelOnly"
+      ],
+      "inputKeys": [
+        "lora_name"
+      ],
+      "workflows": [
+        "wan22-i2v"
+      ],
+      "downloadUrl": null
+    },
+    {
+      "filename": "wan2.2_i2v_low_noise_14B_fp8_scaled.safetensors",
+      "targetSubdir": "diffusion_models",
+      "folder": "models/diffusion_models",
+      "loaders": [
+        "UNETLoader"
+      ],
+      "inputKeys": [
+        "unet_name"
+      ],
+      "workflows": [
+        "wan22-i2v"
+      ],
+      "downloadUrl": null
+    },
+    {
+      "filename": "z_image_turbo_bf16.safetensors",
+      "targetSubdir": "diffusion_models",
+      "folder": "models/diffusion_models",
+      "loaders": [
+        "UNETLoader"
+      ],
+      "inputKeys": [
+        "unet_name"
+      ],
+      "workflows": [
+        "z-image-turbo"
+      ],
+      "downloadUrl": null
+    }
+  ]
+}

@@ -15,7 +15,8 @@
     "electron:build:mac": "npm run build && electron-builder --mac",
     "electron:build:linux": "npm run build && electron-builder --linux",
     "electron:pack": "npm run build && electron-builder --dir",
-    "starter-pack:build": "node ./scripts/build-workflow-starter-pack.mjs"
+    "starter-pack:build": "node ./scripts/build-workflow-starter-pack.mjs",
+    "starter-pack:package": "npm run starter-pack:build && node ./scripts/package-workflow-starter-pack.mjs"
   },
   "keywords": [
     "animatic",
@@ -51,6 +52,7 @@
     "@types/react": "^18.2.43",
     "@types/react-dom": "^18.2.17",
     "@vitejs/plugin-react": "^4.2.1",
+    "archiver": "^7.0.1",
     "autoprefixer": "^10.4.16",
     "concurrently": "^8.2.2",
     "electron": "^28.0.0",

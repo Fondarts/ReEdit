@@ -4186,54 +4186,66 @@ function GenerateWorkspace() {
                   </button>
                 </div>
 
-                <div className="rounded-lg border border-sf-dark-700 bg-sf-dark-900/40 p-2">
-                  <div
-                    role="tablist"
-                    aria-label="Director workflow steps"
-                    className="flex items-center gap-1 p-1 rounded-lg bg-sf-dark-800 border border-sf-dark-700"
-                  >
-                    {DIRECTOR_SUBTABS.map((tab) => {
-                      const isActive = directorSubTab === tab.id
-                      const needsPlan = tab.id === 'scene-shot' || tab.id === 'video-pass'
-                      const needsStoryboard = tab.id === 'video-pass' && yoloStoryboardReadyCount === 0
-                      const isDisabled = (needsPlan && !yoloCanEditScenes) || needsStoryboard
-                      const disabledTitle = !yoloCanEditScenes
-                        ? 'Build a plan first to unlock this step'
-                        : 'Create at least one keyframe to unlock Videos'
-                      return (
-                        <button
-                          key={tab.id}
-                          type="button"
-                          role="tab"
-                          aria-selected={isActive}
-                          disabled={isDisabled}
-                          onClick={() => setDirectorSubTab(tab.id)}
-                          title={isDisabled ? disabledTitle : ''}
-                          className={`flex-1 px-3 py-1.5 rounded text-xs transition-colors ${
-                            isDisabled
-                              ? 'text-sf-text-muted/60 cursor-not-allowed'
-                              : isActive
-                                ? 'bg-sf-accent text-white'
-                                : 'text-sf-text-muted hover:text-sf-text-primary hover:bg-sf-dark-700'
-                          }`}
-                        >
-                          {tab.label}
-                        </button>
-                      )
-                    })}
-                  </div>
-                  <div className="mt-2 rounded-lg border border-sf-accent/40 bg-gradient-to-r from-sf-accent/20 via-sf-dark-800/90 to-sf-dark-900/90 px-3 py-2.5 text-center ring-1 ring-sf-accent/20 shadow-sm">
-                    <div className="text-[10px] uppercase tracking-[0.12em] text-sf-accent/90 font-semibold">
-                      Current Step: {yoloSubTabTitle}
+                {yoloCreationType === 'music' ? (
+                  <div className="rounded-lg border border-amber-500/30 bg-amber-500/10 p-4 text-center">
+                    <div className="text-[10px] uppercase tracking-[0.14em] text-amber-300 font-semibold">
+                      Coming Soon
                     </div>
-                    <div className="mt-1 text-sm md:text-base font-semibold leading-snug text-sf-text-primary">
-                      {yoloSubTabHelperText}
+                    <div className="mt-2 text-base font-semibold text-sf-text-primary">
+                      Music Video Creation is in active development.
+                    </div>
+                    <div className="mt-2 text-xs leading-relaxed text-sf-text-secondary">
+                      Lip sync, lyric-aware timing, and the rest of the music-video workflow are not ready yet, but they are planned.
                     </div>
                   </div>
-                </div>
-
-                {yoloCreationType === 'ad' ? (
+                ) : (
                   <>
+                    <div className="rounded-lg border border-sf-dark-700 bg-sf-dark-900/40 p-2">
+                      <div
+                        role="tablist"
+                        aria-label="Director workflow steps"
+                        className="flex items-center gap-1 p-1 rounded-lg bg-sf-dark-800 border border-sf-dark-700"
+                      >
+                        {DIRECTOR_SUBTABS.map((tab) => {
+                          const isActive = directorSubTab === tab.id
+                          const needsPlan = tab.id === 'scene-shot' || tab.id === 'video-pass'
+                          const needsStoryboard = tab.id === 'video-pass' && yoloStoryboardReadyCount === 0
+                          const isDisabled = (needsPlan && !yoloCanEditScenes) || needsStoryboard
+                          const disabledTitle = !yoloCanEditScenes
+                            ? 'Build a plan first to unlock this step'
+                            : 'Create at least one keyframe to unlock Videos'
+                          return (
+                            <button
+                              key={tab.id}
+                              type="button"
+                              role="tab"
+                              aria-selected={isActive}
+                              disabled={isDisabled}
+                              onClick={() => setDirectorSubTab(tab.id)}
+                              title={isDisabled ? disabledTitle : ''}
+                              className={`flex-1 px-3 py-1.5 rounded text-xs transition-colors ${
+                                isDisabled
+                                  ? 'text-sf-text-muted/60 cursor-not-allowed'
+                                  : isActive
+                                    ? 'bg-sf-accent text-white'
+                                    : 'text-sf-text-muted hover:text-sf-text-primary hover:bg-sf-dark-700'
+                              }`}
+                            >
+                              {tab.label}
+                            </button>
+                          )
+                        })}
+                      </div>
+                      <div className="mt-2 rounded-lg border border-sf-accent/40 bg-gradient-to-r from-sf-accent/20 via-sf-dark-800/90 to-sf-dark-900/90 px-3 py-2.5 text-center ring-1 ring-sf-accent/20 shadow-sm">
+                        <div className="text-[10px] uppercase tracking-[0.12em] text-sf-accent/90 font-semibold">
+                          Current Step: {yoloSubTabTitle}
+                        </div>
+                        <div className="mt-1 text-sm md:text-base font-semibold leading-snug text-sf-text-primary">
+                          {yoloSubTabHelperText}
+                        </div>
+                      </div>
+                    </div>
+
                     {directorSubTab === 'plan-script' && (
                       <>
                         <div>
@@ -4520,159 +4532,9 @@ function GenerateWorkspace() {
                         </div>
                       </>
                     )}
-                  </>
-                ) : (
-                  <>
-                    {directorSubTab === 'plan-script' && (
-                      <>
-                        <div>
-                          <label className="text-[10px] text-sf-text-muted uppercase tracking-wider">Song Title (optional)</label>
-                          <input
-                            type="text"
-                            value={yoloMusicTitle}
-                            onChange={e => setYoloMusicTitle(e.target.value)}
-                            className="mt-1 w-full bg-sf-dark-800 border border-sf-dark-600 rounded px-2 py-1 text-xs text-sf-text-primary"
-                            placeholder="e.g. Midnight Waves"
-                          />
-                        </div>
-
-                        <div>
-                          <label className="text-[10px] text-sf-text-muted uppercase tracking-wider">Song Lyrics</label>
-                          <textarea
-                            value={yoloMusicLyrics}
-                            onChange={e => setYoloMusicLyrics(e.target.value)}
-                            rows={8}
-                            className="mt-1 w-full bg-sf-dark-800 border border-sf-dark-600 rounded-lg px-3 py-2 text-xs text-sf-text-primary focus:outline-none focus:border-sf-accent resize-y"
-                            placeholder="Paste full lyrics. Each line helps create a visual beat sequence."
-                          />
-                        </div>
-
-                        <div>
-                          <label className="text-[10px] text-sf-text-muted uppercase tracking-wider">Story Arc (optional)</label>
-                          <textarea
-                            value={yoloMusicStoryIdea}
-                            onChange={e => setYoloMusicStoryIdea(e.target.value)}
-                            rows={2}
-                            className="mt-1 w-full bg-sf-dark-800 border border-sf-dark-600 rounded-lg px-3 py-2 text-xs text-sf-text-primary focus:outline-none focus:border-sf-accent resize-y"
-                            placeholder="e.g. starts intimate, builds into kinetic city-night energy, ends in sunrise release."
-                          />
-                        </div>
-
-                        <div className="grid grid-cols-2 gap-3">
-                          <div>
-                            <label className="text-[10px] text-sf-text-muted uppercase tracking-wider">Subject / Performer</label>
-                            <textarea
-                              value={yoloMusicSubject}
-                              onChange={e => setYoloMusicSubject(e.target.value)}
-                              rows={2}
-                              className="mt-1 w-full bg-sf-dark-800 border border-sf-dark-600 rounded px-2 py-1 text-xs text-sf-text-primary resize-y"
-                              placeholder="e.g. female vocalist, silver jacket, short dark hair."
-                            />
-                          </div>
-                          <div>
-                            <label className="text-[10px] text-sf-text-muted uppercase tracking-wider">Scene Palette</label>
-                            <textarea
-                              value={yoloMusicScenePalette}
-                              onChange={e => setYoloMusicScenePalette(e.target.value)}
-                              rows={2}
-                              className="mt-1 w-full bg-sf-dark-800 border border-sf-dark-600 rounded px-2 py-1 text-xs text-sf-text-primary resize-y"
-                              placeholder="e.g. neon alley, rooftop, tunnel, dawn shoreline."
-                            />
-                          </div>
-                        </div>
-
-                        <div>
-                          <label className="text-[10px] text-sf-text-muted uppercase tracking-wider">Style Notes</label>
-                          <textarea
-                            value={yoloMusicStyleNotes}
-                            onChange={e => setYoloMusicStyleNotes(e.target.value)}
-                            rows={2}
-                            className="mt-1 w-full bg-sf-dark-800 border border-sf-dark-600 rounded-lg px-3 py-2 text-xs text-sf-text-primary focus:outline-none focus:border-sf-accent resize-y"
-                            placeholder="e.g. cinematic handheld, high contrast, subtle lens bloom, energetic edits."
-                          />
-                        </div>
-                      </>
-                    )}
 
                     {directorSubTab === 'setup' && (
-                      <>
-                        <div className="grid grid-cols-2 gap-3">
-                          <div>
-                            <label className="text-[10px] text-sf-text-muted uppercase tracking-wider">Target Duration (s)</label>
-                            <input
-                              type="number"
-                              min={5}
-                              max={300}
-                              value={yoloMusicTargetDuration}
-                              onChange={e => setYoloMusicTargetDuration(Number(e.target.value) || 5)}
-                              className="mt-1 w-full bg-sf-dark-800 border border-sf-dark-600 rounded px-2 py-1 text-xs text-sf-text-primary"
-                            />
-                          </div>
-                          <div>
-                            <label className="text-[10px] text-sf-text-muted uppercase tracking-wider">Shots Per Scene</label>
-                            <input
-                              type="number"
-                              min={1}
-                              max={12}
-                              value={yoloMusicShotsPerScene}
-                              onChange={e => setYoloMusicShotsPerScene(Number(e.target.value) || 1)}
-                              className="mt-1 w-full bg-sf-dark-800 border border-sf-dark-600 rounded px-2 py-1 text-xs text-sf-text-primary"
-                            />
-                          </div>
-                          <div>
-                            <label className="text-[10px] text-sf-text-muted uppercase tracking-wider">Angles Per Shot</label>
-                            <input
-                              type="number"
-                              min={1}
-                              max={8}
-                              value={yoloMusicAnglesPerShot}
-                              onChange={e => setYoloMusicAnglesPerShot(Number(e.target.value) || 1)}
-                              className="mt-1 w-full bg-sf-dark-800 border border-sf-dark-600 rounded px-2 py-1 text-xs text-sf-text-primary"
-                            />
-                          </div>
-                          <div>
-                            <label className="text-[10px] text-sf-text-muted uppercase tracking-wider">Takes Per Angle</label>
-                            <input
-                              type="number"
-                              min={1}
-                              max={4}
-                              value={yoloMusicTakesPerAngle}
-                              onChange={e => setYoloMusicTakesPerAngle(Number(e.target.value) || 1)}
-                              className="mt-1 w-full bg-sf-dark-800 border border-sf-dark-600 rounded px-2 py-1 text-xs text-sf-text-primary"
-                            />
-                          </div>
-                        </div>
-
-                        <div>
-                          <label className="text-[10px] text-sf-text-muted uppercase tracking-wider">Quality Profile</label>
-                          <select
-                            value={yoloMusicQualityProfile}
-                            onChange={e => setYoloMusicQualityProfile(e.target.value)}
-                            className="mt-1 w-full bg-sf-dark-800 border border-sf-dark-600 rounded px-2 py-1 text-xs text-sf-text-primary"
-                          >
-                            <option value="draft">Draft (fast)</option>
-                            <option value="balanced">Balanced</option>
-                            <option value="premium">Premium</option>
-                          </select>
-                        </div>
-                      </>
-                    )}
-                  </>
-                )}
-
-                {directorSubTab === 'setup' && (
                   <>
-                    {isYoloMusicMode && (
-                      <div className="rounded-lg border border-sf-dark-700 bg-sf-dark-800/40 px-2.5 py-2">
-                        <div className="text-[10px] text-sf-text-muted">
-                          Video pass uses profile default: <span className="text-sf-text-secondary">{yoloSelectedVideoWorkflowLabel}</span>
-                        </div>
-                        <div className="mt-1 text-[10px] text-sf-text-muted">
-                          Video tier: <span className="text-sf-text-secondary">{yoloVideoTargetTierSummary}</span>
-                        </div>
-                      </div>
-                    )}
-
                     <div className="rounded-lg border border-sf-dark-700 bg-sf-dark-800/50 p-2.5">
                       <div className="flex items-center justify-between gap-2">
                         <div className="text-[10px] uppercase tracking-wider text-sf-text-muted">{DIRECTOR_MODE_BETA_LABEL} dependencies</div>
@@ -4893,7 +4755,7 @@ function GenerateWorkspace() {
                   </>
                 )}
 
-                {directorSubTab === 'plan-script' && (
+                    {directorSubTab === 'plan-script' && (
                   <>
                     <div className="grid grid-cols-1 gap-2">
                       <button
@@ -4911,7 +4773,7 @@ function GenerateWorkspace() {
                   </>
                 )}
 
-                {(isYoloStillsStep || isYoloVideoStep) && (
+                    {(isYoloStillsStep || isYoloVideoStep) && (
                   yoloCanEditScenes ? (
                   <div className="space-y-3">
                     {yoloDependencyCheckInProgress && (
@@ -5196,6 +5058,8 @@ function GenerateWorkspace() {
                       </button>
                     </div>
                   )
+                    )}
+                  </>
                 )}
               </>
             )}

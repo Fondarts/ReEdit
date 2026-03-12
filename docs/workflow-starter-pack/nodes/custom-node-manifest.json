@@ -1,0 +1,247 @@
+{
+  "generatedAt": "2026-03-09T23:48:01.446Z",
+  "totalNodes": 22,
+  "nodes": [
+    {
+      "classType": "BatchImagesNode",
+      "workflows": [
+        "seedream-5-lite-image-edit"
+      ],
+      "runtimes": [
+        "cloud"
+      ],
+      "installDocs": "https://registry.comfy.org"
+    },
+    {
+      "classType": "ByteDanceSeedreamNode",
+      "workflows": [
+        "seedream-5-lite-image-edit"
+      ],
+      "runtimes": [
+        "cloud"
+      ],
+      "installDocs": "https://registry.comfy.org"
+    },
+    {
+      "classType": "CLIPLoader",
+      "workflows": [
+        "wan22-i2v",
+        "z-image-turbo"
+      ],
+      "runtimes": [
+        "local"
+      ],
+      "installDocs": "https://registry.comfy.org"
+    },
+    {
+      "classType": "FluxKontextImageScale",
+      "workflows": [
+        "image-edit",
+        "image-edit-model-product"
+      ],
+      "runtimes": [
+        "local"
+      ],
+      "installDocs": "https://registry.comfy.org"
+    },
+    {
+      "classType": "GeminiNanoBanana2",
+      "workflows": [
+        "nano-banana-2"
+      ],
+      "runtimes": [
+        "cloud"
+      ],
+      "installDocs": "https://registry.comfy.org"
+    },
+    {
+      "classType": "GrokImageNode",
+      "workflows": [
+        "grok-text-to-image"
+      ],
+      "runtimes": [
+        "cloud"
+      ],
+      "installDocs": "https://registry.comfy.org"
+    },
+    {
+      "classType": "GrokVideoNode",
+      "workflows": [
+        "grok-video-i2v"
+      ],
+      "runtimes": [
+        "cloud"
+      ],
+      "installDocs": "https://registry.comfy.org"
+    },
+    {
+      "classType": "ImageResizeKJv2",
+      "workflows": [
+        "image-edit-model-product"
+      ],
+      "runtimes": [
+        "local"
+      ],
+      "installDocs": "https://registry.comfy.org"
+    },
+    {
+      "classType": "KlingOmniProImageToVideoNode",
+      "workflows": [
+        "kling-o3-i2v"
+      ],
+      "runtimes": [
+        "cloud"
+      ],
+      "installDocs": "https://registry.comfy.org"
+    },
+    {
+      "classType": "KSampler",
+      "workflows": [
+        "image-edit",
+        "image-edit-model-product",
+        "z-image-turbo"
+      ],
+      "runtimes": [
+        "local"
+      ],
+      "installDocs": "https://registry.comfy.org"
+    },
+    {
+      "classType": "LoraLoaderModelOnly",
+      "workflows": [
+        "wan22-i2v"
+      ],
+      "runtimes": [
+        "local"
+      ],
+      "installDocs": "https://registry.comfy.org"
+    },
+    {
+      "classType": "ModelSamplingAuraFlow",
+      "workflows": [
+        "z-image-turbo"
+      ],
+      "runtimes": [
+        "local"
+      ],
+      "installDocs": "https://registry.comfy.org"
+    },
+    {
+      "classType": "SaveAudioMP3",
+      "workflows": [
+        "music-gen"
+      ],
+      "runtimes": [
+        "local"
+      ],
+      "installDocs": "https://registry.comfy.org"
+    },
+    {
+      "classType": "SaveImage",
+      "workflows": [
+        "grok-text-to-image",
+        "image-edit",
+        "image-edit-model-product",
+        "multi-angles",
+        "multi-angles-scene",
+        "nano-banana-2",
+        "seedream-5-lite-image-edit",
+        "z-image-turbo"
+      ],
+      "runtimes": [
+        "cloud",
+        "local"
+      ],
+      "installDocs": "https://registry.comfy.org"
+    },
+    {
+      "classType": "SaveVideo",
+      "workflows": [
+        "grok-video-i2v",
+        "kling-o3-i2v",
+        "vidu-q2-i2v",
+        "wan22-i2v"
+      ],
+      "runtimes": [
+        "cloud",
+        "local"
+      ],
+      "installDocs": "https://registry.comfy.org"
+    },
+    {
+      "classType": "TextEncodeAceStepAudio1.5",
+      "workflows": [
+        "music-gen"
+      ],
+      "runtimes": [
+        "local"
+      ],
+      "installDocs": "https://registry.comfy.org"
+    },
+    {
+      "classType": "TextEncodeQwenImageEditPlus",
+      "workflows": [
+        "image-edit",
+        "image-edit-model-product",
+        "multi-angles",
+        "multi-angles-scene"
+      ],
+      "runtimes": [
+        "local"
+      ],
+      "installDocs": "https://registry.comfy.org"
+    },
+    {
+      "classType": "UNETLoader",
+      "workflows": [
+        "wan22-i2v",
+        "z-image-turbo"
+      ],
+      "runtimes": [
+        "local"
+      ],
+      "installDocs": "https://registry.comfy.org"
+    },
+    {
+      "classType": "VAEDecodeAudio",
+      "workflows": [
+        "music-gen"
+      ],
+      "runtimes": [
+        "local"
+      ],
+      "installDocs": "https://registry.comfy.org"
+    },
+    {
+      "classType": "VAELoader",
+      "workflows": [
+        "wan22-i2v",
+        "z-image-turbo"
+      ],
+      "runtimes": [
+        "local"
+      ],
+      "installDocs": "https://registry.comfy.org"
+    },
+    {
+      "classType": "Vidu2ImageToVideoNode",
+      "workflows": [
+        "vidu-q2-i2v"
+      ],
+      "runtimes": [
+        "cloud"
+      ],
+      "installDocs": "https://registry.comfy.org"
+    },
+    {
+      "classType": "WanImageToVideo",
+      "workflows": [
+        "wan22-i2v"
+      ],
+      "runtimes": [
+        "local"
+      ],
+      "installDocs": "https://registry.comfy.org"
+    }
+  ]
+}
