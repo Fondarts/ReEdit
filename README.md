@@ -4,6 +4,8 @@ ComfyStudio is a desktop animatic, previsualization, and AI-assisted editing too
 
 It combines a timeline editor, asset browser, Generate workspace, stock search, LM Studio prompt helper, and export queue in one app.
 
+**Website:** [comfystudiopro.com](https://comfystudiopro.com)
+
 ## Download
 
 Most users should download the desktop app from the [GitHub Releases page](https://github.com/JaimeIsMe/comfystudio/releases).
