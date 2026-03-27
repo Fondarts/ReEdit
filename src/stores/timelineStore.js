@@ -562,8 +562,9 @@ export const useTimelineStore = create(
     if (!track) return null
     const safeClipCounter = getNextClipCounter(state.clips, state.clipCounter || 1)
     
-    // Save to history before modifying
-    get().saveToHistory()
+    if (options?.saveHistory !== false) {
+      get().saveToHistory()
+    }
     
     const fps = state.timelineFps || Number(timelineFps) || 24
     // Find the end of existing clips on this track if no start time specified
@@ -672,8 +673,9 @@ export const useTimelineStore = create(
     if (!track || track.type !== 'video') return null
     const safeClipCounter = getNextClipCounter(state.clips, state.clipCounter || 1)
     
-    // Save to history before modifying
-    get().saveToHistory()
+    if (textOptions?.saveHistory !== false) {
+      get().saveToHistory()
+    }
     
     const fps = state.timelineFps || 24
     // Find the end of existing clips on this track if no start time specified
@@ -782,7 +784,9 @@ export const useTimelineStore = create(
     if (!track || track.type !== 'video') return null
     const safeClipCounter = getNextClipCounter(state.clips, state.clipCounter || 1)
 
-    get().saveToHistory()
+    if (options?.saveHistory !== false) {
+      get().saveToHistory()
+    }
 
     const fps = state.timelineFps || 24
     const trackClips = state.clips.filter(c => c.trackId === trackId)

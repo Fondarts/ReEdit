@@ -3,7 +3,7 @@ import {
   Volume2, VolumeX, Lock, Unlock, Eye, EyeOff, 
   Plus, Video, Type, Image as ImageIcon,
   Sparkles, GripVertical, Magnet, ArrowRightLeft, Square, X, Check, Pencil,
-  Diamond, Zap, AlertTriangle, Loader2, ChevronLeft, ChevronRight, Maximize2, Flag
+  Diamond, Zap, AlertTriangle, Loader2, ChevronLeft, ChevronRight, Maximize2, Flag, Scissors
 } from 'lucide-react'
 import useTimelineStore from '../stores/timelineStore'
 import useProjectStore from '../stores/projectStore'
@@ -921,6 +921,78 @@ function Timeline({ onOpenAudioGenerate }) {
     selectMarker(null)
   }, [clips, playheadPosition, selectMarker])
 
+  const splitClipAtTime = useCallback((clip, splitPosition, { saveHistory = false } = {}) => {
+    if (!clip || splitPosition <= clip.startTime || splitPosition >= clip.startTime + clip.duration) return null
+
+    const splitTime = splitPosition - clip.startTime
+    const remainder = clip.duration - splitTime
+
+    let asset = null
+    if (clip.type !== 'text' && clip.type !== 'adjustment') {
+      asset = assets.find(a => a.id === clip.assetId)
+      if (!asset) return null
+    }
+
+    if (saveHistory) {
+      saveToHistory()
+    }
+
+    resizeClip(clip.id, splitTime)
+
+    if (clip.type === 'text') {
+      const textOptions = {
+        ...(clip.textProperties || {}),
+        duration: remainder,
+        saveHistory: false,
+      }
+      return addTextClip(clip.trackId, textOptions, splitPosition)
+    }
+
+    if (clip.type === 'adjustment') {
+      return addAdjustmentClip(clip.trackId, splitPosition, {
+        duration: remainder,
+        name: clip.name,
+        adjustments: clip.adjustments || {},
+        transform: clip.transform || {},
+        saveHistory: false,
+      })
+    }
+
+    const timeScale = getTimeScale(clip)
+    const sourceTimeAtCut = (clip.trimStart || 0) + splitTime * timeScale
+    const sourceTrimEnd = sourceTimeAtCut + remainder * timeScale
+
+    return addClip(clip.trackId, asset, splitPosition, timelineFps, {
+      duration: remainder,
+      trimStart: sourceTimeAtCut,
+      trimEnd: sourceTrimEnd,
+      saveHistory: false,
+    })
+  }, [assets, saveToHistory, resizeClip, addTextClip, addAdjustmentClip, addClip, timelineFps])
+
+  const splitAllTracksAtPlayhead = useCallback(() => {
+    const clipsToSplit = clips.filter(
+      c => playheadPosition > c.startTime && playheadPosition < c.startTime + c.duration
+    )
+
+    if (clipsToSplit.length === 0) return
+
+    saveToHistory()
+
+    const newClipIds = []
+    clipsToSplit.forEach((clip) => {
+      const newClip = splitClipAtTime(clip, playheadPosition, { saveHistory: false })
+      if (newClip?.id) {
+        newClipIds.push(newClip.id)
+      }
+    })
+
+    if (newClipIds.length > 0) {
+      useTimelineStore.getState().selectClips(newClipIds)
+      selectMarker(null)
+    }
+  }, [clips, playheadPosition, saveToHistory, splitClipAtTime, selectMarker])
+
   // Keyboard shortcuts
   useEffect(() => {
     const handleKeyDown = (e) => {
@@ -1011,43 +1083,20 @@ function Timeline({ onOpenAudioGenerate }) {
         }
       }
       
-      // X - split at playhead on active track only (seamless: second clip continues from cut in source)
-      if (e.key === 'x' && !e.ctrlKey && !e.metaKey && !e.altKey && activeTrackId) {
-        const clip = clips.find(
-          c => c.trackId === activeTrackId &&
-            playheadPosition > c.startTime &&
-            playheadPosition < c.startTime + c.duration
-        )
-        if (clip) {
+      // X / Shift+X - split at playhead
+      if ((e.key === 'x' || e.key === 'X') && !e.ctrlKey && !e.metaKey && !e.altKey) {
+        if (e.shiftKey) {
           e.preventDefault()
-          saveToHistory()
-          const splitTime = playheadPosition - clip.startTime
-          const remainder = clip.duration - splitTime
-          resizeClip(clip.id, splitTime)
-          if (clip.type === 'text') {
-            // Text clips: add second clip with same text properties
-            const textOptions = { ...(clip.textProperties || {}), duration: remainder }
-            addTextClip(clip.trackId, textOptions, playheadPosition)
-          } else if (clip.type === 'adjustment') {
-            addAdjustmentClip(clip.trackId, playheadPosition, {
-              duration: remainder,
-              name: clip.name,
-              adjustments: clip.adjustments || {},
-              transform: clip.transform || {},
-            })
-          } else {
-            // Video/audio: second clip continues from cut in source (pass duration/trim so resolveOverlaps doesn't push following clips)
-            const timeScale = getTimeScale(clip)
-            const sourceTimeAtCut = (clip.trimStart || 0) + splitTime * timeScale
-            const sourceTrimEnd = sourceTimeAtCut + remainder * timeScale
-            const asset = assets.find(a => a.id === clip.assetId)
-            if (asset) {
-              addClip(clip.trackId, asset, playheadPosition, timelineFps, {
-                duration: remainder,
-                trimStart: sourceTimeAtCut,
-                trimEnd: sourceTrimEnd,
-              })
-            }
+          splitAllTracksAtPlayhead()
+        } else if (activeTrackId) {
+          const clip = clips.find(
+            c => c.trackId === activeTrackId &&
+              playheadPosition > c.startTime &&
+              playheadPosition < c.startTime + c.duration
+          )
+          if (clip) {
+            e.preventDefault()
+            splitClipAtTime(clip, playheadPosition, { saveHistory: true })
           }
         }
       }
@@ -1057,7 +1106,7 @@ function Timeline({ onOpenAudioGenerate }) {
     return () => {
       window.removeEventListener('keydown', handleKeyDown)
     }
-  }, [toggleSnapping, toggleRippleEdit, addMarker, selectedClipIds, selectedTransitionId, selectedMarkerId, removeSelectedClips, removeTransition, removeMarker, clearSelection, selectMarker, clips, undo, redo, activeTrackId, playheadPosition, saveToHistory, resizeClip, addClip, addTextClip, addAdjustmentClip, updateClipTrim, assets, timelineFps, copySelectedClips, pasteClipsAtPlayhead, copiedClips, selectClipsFromPlayheadToEnd, selectClipsFromTimelineStartToPlayhead])
+  }, [toggleSnapping, toggleRippleEdit, addMarker, selectedClipIds, selectedTransitionId, selectedMarkerId, removeSelectedClips, removeTransition, removeMarker, clearSelection, selectMarker, clips, undo, redo, activeTrackId, playheadPosition, saveToHistory, resizeClip, addClip, addTextClip, addAdjustmentClip, updateClipTrim, assets, timelineFps, copySelectedClips, pasteClipsAtPlayhead, copiedClips, selectClipsFromPlayheadToEnd, selectClipsFromTimelineStartToPlayhead, splitClipAtTime, splitAllTracksAtPlayhead])
 
   // Spacebar panning key state (dedicated listeners so keyup cannot get "stuck")
   useEffect(() => {
@@ -1674,36 +1723,7 @@ function Timeline({ onOpenAudioGenerate }) {
         }
         break
       case 'split':
-        // Split clip at playhead (seamless: second clip continues from cut in source; text = duplicate props)
-        if (playheadPosition > clip.startTime && playheadPosition < clip.startTime + clip.duration) {
-          const splitTime = playheadPosition - clip.startTime
-          const remainder = clip.duration - splitTime
-          saveToHistory()
-          resizeClip(clip.id, splitTime)
-          if (clip.type === 'text') {
-            const textOptions = { ...(clip.textProperties || {}), duration: remainder }
-            addTextClip(clip.trackId, textOptions, playheadPosition)
-          } else if (clip.type === 'adjustment') {
-            addAdjustmentClip(clip.trackId, playheadPosition, {
-              duration: remainder,
-              name: clip.name,
-              adjustments: clip.adjustments || {},
-              transform: clip.transform || {},
-            })
-          } else {
-            const timeScale = getTimeScale(clip)
-            const sourceTimeAtCut = (clip.trimStart || 0) + splitTime * timeScale
-            const sourceTrimEnd = sourceTimeAtCut + remainder * timeScale
-            const asset = assets.find(a => a.id === clip.assetId)
-            if (asset) {
-              addClip(clip.trackId, asset, playheadPosition, timelineFps, {
-                duration: remainder,
-                trimStart: sourceTimeAtCut,
-                trimEnd: sourceTrimEnd,
-              })
-            }
-          }
-        }
+        splitClipAtTime(clip, playheadPosition, { saveHistory: true })
         break
     }
     
@@ -2623,6 +2643,14 @@ function Timeline({ onOpenAudioGenerate }) {
             Marker
           </button>
           <button
+            onClick={splitAllTracksAtPlayhead}
+            className="flex items-center gap-1 px-1.5 py-0.5 bg-sf-dark-700 hover:bg-sf-dark-600 rounded text-[10px] text-sf-text-secondary transition-colors"
+            title="Split all clips at the playhead across every track (Shift+X)"
+          >
+            <Scissors className="w-3 h-3" />
+            Cut All
+          </button>
+          <button
             onClick={handleAddAdjustmentLayer}
             className="flex items-center gap-1 px-1.5 py-0.5 bg-sf-dark-700 hover:bg-sf-dark-600 rounded text-[10px] text-sf-text-secondary transition-colors"
             title="Add adjustment layer on active video track"
@@ -2778,7 +2806,7 @@ function Timeline({ onOpenAudioGenerate }) {
             <div 
               key={track.id}
               onClick={() => setActiveTrack(track.id)}
-              title={activeTrackId === track.id ? 'Active track — press X to split at playhead' : 'Click to set as active track (X cuts at playhead on this track)'}
+              title={activeTrackId === track.id ? 'Active track — press X to split at playhead, or Shift+X to split all tracks' : 'Click to set as active track (X cuts at playhead on this track; Shift+X splits all tracks)'}
               className={`relative flex items-center px-2 gap-1 border-b border-sf-dark-700 hover:bg-sf-dark-800 transition-colors group/track cursor-pointer ${
                 track.locked ? 'bg-sf-dark-800/50' : ''
               } ${isDragging ? 'opacity-50 bg-sf-dark-700' : ''} ${isDropTarget ? 'border-t-2 border-t-purple-500' : ''}`}
@@ -2924,7 +2952,7 @@ function Timeline({ onOpenAudioGenerate }) {
             <div 
               key={track.id}
               onClick={() => setActiveTrack(track.id)}
-              title={activeTrackId === track.id ? 'Active track — press X to split at playhead' : 'Click to set as active track (X cuts at playhead on this track)'}
+              title={activeTrackId === track.id ? 'Active track — press X to split at playhead, or Shift+X to split all tracks' : 'Click to set as active track (X cuts at playhead on this track; Shift+X splits all tracks)'}
               className={`relative flex flex-col px-2 gap-0 border-b border-sf-dark-700 hover:bg-sf-dark-800 transition-colors group/track cursor-pointer ${
                 track.locked ? 'bg-sf-dark-800/50' : ''
               } ${isDragging ? 'opacity-50 bg-sf-dark-700' : ''} ${isDropTarget ? 'border-t-2 border-t-purple-500' : ''}`}
