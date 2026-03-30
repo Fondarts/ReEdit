@@ -14,6 +14,10 @@ Our focus is split across three major areas:
 2. Expanded generation workflows
 3. Higher-level creative tooling, including music video generation
 
+Near-term execution note:
+
+We want to handle the next editing improvements one at a time. The goal is to ship, test, and stabilize each feature before moving to the next one so bugs stay manageable and the workflow gets better in clear steps instead of large batches.
+
 ## What Already Exists
 
 ComfyStudio already includes a strong foundation that we want to keep improving:
@@ -41,6 +45,39 @@ These are the highest-priority editing improvements aimed at making the editor f
 - Capture a still frame from the preview window into project assets
 - Improve clip movement and timeline precision
 - Continue tightening overall editing speed and usability
+
+### Current Step-by-Step Editing Queue
+
+The items below are intended to be handled sequentially, not all at once.
+
+1. Linked audio and video clip pairs
+   Import clips with audio as linked video/audio pairs by default, keep them in sync while moving, and add timeline `Link` / `Unlink` actions for selected clips with assignable hotkeys.
+2. Timeline scroll, zoom, and playhead follow
+   Let the scroll wheel move forward and backward through the timeline, move zoom to `+` / `-` or configurable hotkeys, and keep the timeline view following the playhead during playback.
+3. Empty-space selection and gap targeting
+   Allow users to select dead space between clips directly in the timeline so gaps become first-class edit targets.
+4. Ripple delete
+   Delete the selected clip or selected empty space and automatically close the gap so timeline cleanup is faster.
+5. Fade handle polish
+   Flip the fade slope direction to feel more intuitive and show the fade duration in `seconds:frames` while dragging.
+6. Better transform bounds and rotation controls
+   Show clip bounds outside the visible frame, keep the clip image constrained to the timeline frame, and add clearer corner-based rotation controls similar to Photoshop / After Effects.
+7. Richer clip info at the top of Inspector
+   Surface resolution, FPS, codec, and other useful media info at the top of the Inspector, and show time as `hours:minutes:seconds:frames` instead of decimal seconds.
+8. Stronger timeline marquee selection
+   Improve click-and-drag selection in the timeline so users can quickly grab large groups of clips without relying on repeated `Shift` clicks.
+9. Marker and playhead visual separation
+   Make markers clearly distinct from the playhead through shape and color changes so they are easier to read at a glance.
+10. Keyframe color and multi-select improvements
+   Make the selected keyframe the brightest state, keep keyframe colors more intuitive, and support dragging multiple keyframes together for faster ease and timing adjustments.
+11. Dope Sheet clip reference strip
+   Add a visual filmstrip or clip reference above animated properties in the Dope Sheet so users can see where keyframes land against the source clip.
+12. Per-clip enable / disable
+   Let users enable or disable selected clips directly, separate from full-track toggles, with a context-menu action and a hotkey.
+13. Audio gain and future audio controls
+   Add per-clip audio boost in the Inspector so quiet recordings can be raised above recorded level, with future expansion toward gating, denoise, compression, reverb, and volume keyframes.
+14. Audio meter playback bug and ruler polish
+   Fix the issue where the audio meters keep moving after playback stops, and improve the meter ruler with clearer tick marks and labels such as every `5 dB`.
 
 ## Phase 2: Precision Editing and Pro Workflow Features
 
