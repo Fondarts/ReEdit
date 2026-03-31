@@ -205,83 +205,105 @@ export default function PreviewTransformGizmo({
   if (!clip || !transform) return null
 
   return (
-    <div className="absolute inset-0 pointer-events-none z-40">
+    <div className="absolute inset-0 overflow-visible pointer-events-none z-40">
       <div
         ref={frameRef}
-        className={`absolute inset-0 border-2 border-sf-accent/85 bg-sf-accent/5 pointer-events-auto ${disabled ? 'cursor-default' : 'cursor-move'}`}
+        className={`absolute inset-0 overflow-visible pointer-events-auto ${disabled ? 'cursor-default' : 'cursor-move'}`}
         style={frameStyle}
         title="Drag to move. Hold Shift to snap."
         onPointerDown={(e) => beginDrag('move', e)}
       >
+        <div className="absolute inset-0 border-2 border-sf-accent/90 bg-sf-accent/5 shadow-[0_0_0_1px_rgba(255,255,255,0.18),0_0_0_9999px_rgba(24,24,24,0.02)_inset] pointer-events-none" />
+        <div className="absolute inset-0 border border-white/50 border-dashed pointer-events-none" />
+        <div className="absolute left-1/2 top-0 bottom-0 w-px -translate-x-1/2 bg-sf-accent/35 pointer-events-none" />
+        <div className="absolute top-1/2 left-0 right-0 h-px -translate-y-1/2 bg-sf-accent/35 pointer-events-none" />
+
         {!disabled && (
           <>
             <button
               type="button"
               aria-label="Scale from top-left"
-              className="absolute -left-1.5 -top-1.5 w-3 h-3 rounded-full bg-sf-accent border border-white/80 cursor-nwse-resize"
+              className="absolute -left-2 -top-2 w-3.5 h-3.5 rounded-[3px] bg-sf-accent border border-white/85 cursor-nwse-resize shadow-[0_0_10px_rgba(0,0,0,0.35)]"
               title="Scale uniformly (Shift snaps)"
               onPointerDown={(e) => beginDrag('scale-uniform', e)}
             />
             <button
               type="button"
               aria-label="Scale from top-right"
-              className="absolute -right-1.5 -top-1.5 w-3 h-3 rounded-full bg-sf-accent border border-white/80 cursor-nesw-resize"
+              className="absolute -right-2 -top-2 w-3.5 h-3.5 rounded-[3px] bg-sf-accent border border-white/85 cursor-nesw-resize shadow-[0_0_10px_rgba(0,0,0,0.35)]"
               title="Scale uniformly (Shift snaps)"
               onPointerDown={(e) => beginDrag('scale-uniform', e)}
             />
             <button
               type="button"
               aria-label="Scale from bottom-left"
-              className="absolute -left-1.5 -bottom-1.5 w-3 h-3 rounded-full bg-sf-accent border border-white/80 cursor-nesw-resize"
+              className="absolute -left-2 -bottom-2 w-3.5 h-3.5 rounded-[3px] bg-sf-accent border border-white/85 cursor-nesw-resize shadow-[0_0_10px_rgba(0,0,0,0.35)]"
               title="Scale uniformly (Shift snaps)"
               onPointerDown={(e) => beginDrag('scale-uniform', e)}
             />
             <button
               type="button"
               aria-label="Scale from bottom-right"
-              className="absolute -right-1.5 -bottom-1.5 w-3 h-3 rounded-full bg-sf-accent border border-white/80 cursor-nwse-resize"
+              className="absolute -right-2 -bottom-2 w-3.5 h-3.5 rounded-[3px] bg-sf-accent border border-white/85 cursor-nwse-resize shadow-[0_0_10px_rgba(0,0,0,0.35)]"
               title="Scale uniformly (Shift snaps)"
               onPointerDown={(e) => beginDrag('scale-uniform', e)}
             />
             <button
               type="button"
               aria-label="Scale width"
-              className="absolute -left-1.5 top-1/2 -translate-y-1/2 w-3 h-3 rounded-full bg-sf-accent border border-white/80 cursor-ew-resize"
+              className="absolute -left-2 top-1/2 -translate-y-1/2 w-3.5 h-3.5 rounded-[3px] bg-sf-accent border border-white/85 cursor-ew-resize shadow-[0_0_10px_rgba(0,0,0,0.35)]"
               title="Scale width only (Shift snaps)"
               onPointerDown={(e) => beginDrag('scale-x', e)}
             />
             <button
               type="button"
               aria-label="Scale width"
-              className="absolute -right-1.5 top-1/2 -translate-y-1/2 w-3 h-3 rounded-full bg-sf-accent border border-white/80 cursor-ew-resize"
+              className="absolute -right-2 top-1/2 -translate-y-1/2 w-3.5 h-3.5 rounded-[3px] bg-sf-accent border border-white/85 cursor-ew-resize shadow-[0_0_10px_rgba(0,0,0,0.35)]"
               title="Scale width only (Shift snaps)"
               onPointerDown={(e) => beginDrag('scale-x', e)}
             />
             <button
               type="button"
               aria-label="Scale height"
-              className="absolute left-1/2 -translate-x-1/2 -top-1.5 w-3 h-3 rounded-full bg-sf-accent border border-white/80 cursor-ns-resize"
+              className="absolute left-1/2 -translate-x-1/2 -top-2 w-3.5 h-3.5 rounded-[3px] bg-sf-accent border border-white/85 cursor-ns-resize shadow-[0_0_10px_rgba(0,0,0,0.35)]"
               title="Scale height only (Shift snaps)"
               onPointerDown={(e) => beginDrag('scale-y', e)}
             />
             <button
               type="button"
               aria-label="Scale height"
-              className="absolute left-1/2 -translate-x-1/2 -bottom-1.5 w-3 h-3 rounded-full bg-sf-accent border border-white/80 cursor-ns-resize"
+              className="absolute left-1/2 -translate-x-1/2 -bottom-2 w-3.5 h-3.5 rounded-[3px] bg-sf-accent border border-white/85 cursor-ns-resize shadow-[0_0_10px_rgba(0,0,0,0.35)]"
               title="Scale height only (Shift snaps)"
               onPointerDown={(e) => beginDrag('scale-y', e)}
             />
-
-            <div className="absolute left-1/2 -translate-x-1/2 -top-7 pointer-events-none">
-              <div className="w-px h-4 bg-sf-accent/80 mx-auto" />
-              <button
-                type="button"
-                aria-label="Rotate clip"
-                className="w-3.5 h-3.5 rounded-full bg-sf-accent border border-white/80 pointer-events-auto cursor-grab active:cursor-grabbing"
-                title="Rotate (Shift snaps to 5deg)"
-                onPointerDown={(e) => beginDrag('rotate', e)}
-              />
-            </div>
+            <button
+              type="button"
+              aria-label="Rotate from top-left corner"
+              className="absolute -left-7 -top-7 w-4.5 h-4.5 rounded-full bg-sf-dark-950/95 border-2 border-sf-accent shadow-[0_0_14px_rgba(0,0,0,0.45)] pointer-events-auto cursor-grab active:cursor-grabbing"
+              title="Rotate from corner (Shift snaps to 5deg)"
+              onPointerDown={(e) => beginDrag('rotate', e)}
+            />
+            <button
+              type="button"
+              aria-label="Rotate from top-right corner"
+              className="absolute -right-7 -top-7 w-4.5 h-4.5 rounded-full bg-sf-dark-950/95 border-2 border-sf-accent shadow-[0_0_14px_rgba(0,0,0,0.45)] pointer-events-auto cursor-grab active:cursor-grabbing"
+              title="Rotate from corner (Shift snaps to 5deg)"
+              onPointerDown={(e) => beginDrag('rotate', e)}
+            />
+            <button
+              type="button"
+              aria-label="Rotate from bottom-left corner"
+              className="absolute -left-7 -bottom-7 w-4.5 h-4.5 rounded-full bg-sf-dark-950/95 border-2 border-sf-accent shadow-[0_0_14px_rgba(0,0,0,0.45)] pointer-events-auto cursor-grab active:cursor-grabbing"
+              title="Rotate from corner (Shift snaps to 5deg)"
+              onPointerDown={(e) => beginDrag('rotate', e)}
+            />
+            <button
+              type="button"
+              aria-label="Rotate from bottom-right corner"
+              className="absolute -right-7 -bottom-7 w-4.5 h-4.5 rounded-full bg-sf-dark-950/95 border-2 border-sf-accent shadow-[0_0_14px_rgba(0,0,0,0.45)] pointer-events-auto cursor-grab active:cursor-grabbing"
+              title="Rotate from corner (Shift snaps to 5deg)"
+              onPointerDown={(e) => beginDrag('rotate', e)}
+            />
           </>
         )}
       </div>

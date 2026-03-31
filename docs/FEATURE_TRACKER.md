@@ -1,0 +1,131 @@
+# ComfyStudio Feature Tracker
+
+This file is a running list of user-facing changes we have shipped or are actively shaping.
+
+The goal is to keep one simple place for:
+
+- release note drafting
+- X / Twitter post drafting
+- shortcut tracking
+- screenshot and demo ideas
+
+We should keep updating this file as new features land.
+
+## Recently Added
+
+### Timeline and Editing Workflow
+
+- Preview still capture from the preview panel into project assets
+- Select clips from the playhead to the end of the timeline
+- Select clips from the start of the timeline to the playhead
+- Split at playhead on the active track
+- Split all tracks at the playhead
+- Move selected clips by an exact signed offset
+- Change selected clip duration by an exact signed amount
+- Support both timecode and frame-based precision entry in exact-edit dialogs
+- Better multi-clip movement across tracks
+- Linked audio and video clip pairs for imported media with audio
+- Manual `Link Selected` and `Unlink Selected` actions in the timeline
+- Horizontal timeline wheel navigation
+- Playback follow so the playhead stays visible while the timeline is running
+- Click empty space on a track to select a timeline gap as its own target
+- Selected gaps get a visible highlight and can be cleared with `Esc`
+- Ripple delete for selected clips when ripple mode is enabled
+- Delete a selected gap to close that empty space directly on the targeted track
+- Linked clips now stay in sync when a selected gap ripples one of them forward
+- Audio fade handles now show intuitive ramp direction and a `seconds:frames` drag readout
+- Preview transform bounds can extend outside the visible frame while the media stays clipped inside it
+- Preview transform gizmo now has clearer corner-based rotation handles plus stronger visible bounds
+- Inspector clip headers now surface richer media info like resolution, FPS, codec, format, size, and timecode summaries
+- Inspector section collapse state now persists across app restarts
+- Timeline marquee selection now works by dragging on empty track space, supports additive modifiers, and auto-scrolls while sweeping large areas
+- Timeline markers now read as distinct bookmark-style flags while the playhead has a stronger transport-style indicator
+- Dope Sheet keyframes now show clearer active vs secondary selection colors and support easier grouped dragging
+- Fixed undo for link and unlink actions
+
+### Timeline and Sequence Management
+
+- Timelines now appear in the Assets panel like real sequence items
+- Open timelines from the Assets panel
+- Rename timelines from the Assets panel
+- Duplicate and delete timelines from the Assets panel
+- Color-code timelines in the Assets panel
+- Create new timelines from the Assets panel context menu
+- Project-level undo and redo for timeline structure changes
+
+### App and UI
+
+- Five dark themes with live switching:
+  `Midnight`, `Soft Dark`, `High Contrast`, `Arctic`, `Ember`
+- Fixed the custom restore-down / maximize behavior when the app starts fullscreen
+
+## Shortcut Notes
+
+These are the most important shortcut-related additions or surfaced editing shortcuts we may want to call out publicly.
+
+- `E`: Select clips from playhead to end
+- `Shift+E`: Select clips from start to playhead
+- `X`: Split at playhead on active track
+- `Shift+X`: Split all tracks at playhead
+- `Ctrl+Shift+M`: Open `Move by Offset...`
+- `Ctrl+L`: Link selected clips
+- `Ctrl+Shift+L`: Unlink selected clips
+- `S`: Toggle snapping
+- `R`: Toggle ripple edit
+- `M`: Add marker at playhead
+- `+` / `-`: Zoom timeline in and out
+- `Esc`: Clear selected clips, markers, transitions, or gap targets
+- `Delete` / `Backspace`: Ripple delete selected clips while ripple mode is on, or close a selected gap
+
+Notes:
+
+- `Change Duration...` currently has no default shortcut.
+- Editor hotkey presets also exist for ComfyStudio, Premiere-style, Resolve-style, and Final Cut-style bindings.
+
+## Screenshot and Demo Ideas
+
+Good visuals to capture for posts, release notes, or short clips:
+
+- Theme picker in Settings showing all five dark themes
+- `Move by Offset...` dialog showing timecode and frame modes
+- Timeline selection from playhead to end / from start to playhead
+- Split on one track versus split all tracks
+- Sequence items mixed directly into the Assets panel
+- Linked video/audio clips moving together across the timeline
+- `Link Selected` / `Unlink Selected` context menu actions
+- Timeline wheel scrolling and playhead follow during playback
+- Gap targeting highlight on an empty section of a track before ripple-delete lands
+- Ripple delete closing a selected hole on one track without touching others
+- Audio fade drag with the new `seconds:frames` badge over the waveform
+- Preview transform gizmo showing out-of-frame bounds and corner rotation handles
+- Inspector header showing clip start / duration / source timing in `hours:minutes:seconds:frames`
+- Empty-lane drag marquee grabbing a large block of clips without needing `Alt`
+- Timeline ruler showing the new marker flag styling versus the warmer playhead indicator
+- Dope Sheet showing selected time columns and multi-keyframe drag across several properties
+- Before/after clip organization using multi-clip drag across tracks
+
+## Suggested X / Social Talking Points
+
+- ComfyStudio is getting faster for real editing, not just generation
+- Precision editing now supports exact offsets in timecode or frames
+- Timeline workflows are more NLE-like with sequence management inside Assets
+- Linked audio/video clip pairs help keep sync intact while editing
+- Navigation is quicker with wheel scrolling, `+` / `-` zoom, and playhead follow
+- Empty-space targeting lays the groundwork for ripple delete and future gap actions
+- Ripple delete now makes cleanup faster for both clips and selected dead space
+- Fade handles feel more like an NLE with clearer ramp direction and drag timing feedback
+- Preview transforms feel closer to Photoshop / After Effects with more legible bounds and rotation handles
+- Inspector headers now show clip metadata and timecode more like a real editing app
+- Large timeline selections are faster now that marquee drag works directly from empty track space
+- Markers and the playhead are easier to parse at a glance thanks to clearer color and shape separation
+- Keyframe editing is getting faster with clearer selected states and more usable multi-key dragging
+- New dark themes make the app feel more customizable without changing the default look
+
+## Next Up
+
+Current roadmap order after the shipped work above:
+
+1. Dope Sheet clip reference strip
+2. Per-clip enable / disable
+3. Audio gain and future audio controls
+4. Audio meter playback bug and ruler polish

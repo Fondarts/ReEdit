@@ -617,7 +617,7 @@ ipcMain.handle('media:getVideoFps', async (event, filePath) => {
   return await new Promise((resolve) => {
     const args = [
       '-v', 'error',
-      '-show_entries', 'stream=codec_type,avg_frame_rate,r_frame_rate',
+      '-show_entries', 'stream=codec_type,codec_name,avg_frame_rate,r_frame_rate',
       '-of', 'json',
       filePath
     ]
@@ -644,9 +644,16 @@ ipcMain.handle('media:getVideoFps', async (event, filePath) => {
         const parsed = JSON.parse(stdout)
         const streams = Array.isArray(parsed?.streams) ? parsed.streams : []
         const videoStream = streams.find((stream) => stream?.codec_type === 'video') || null
+        const audioStream = streams.find((stream) => stream?.codec_type === 'audio') || null
         const fps = parseFps(videoStream?.avg_frame_rate) || parseFps(videoStream?.r_frame_rate)
         const hasAudio = streams.some((stream) => stream?.codec_type === 'audio')
-        resolve({ success: true, fps: fps || null, hasAudio })
+        resolve({
+          success: true,
+          fps: fps || null,
+          hasAudio,
+          videoCodec: videoStream?.codec_name || null,
+          audioCodec: audioStream?.codec_name || null,
+        })
       } catch (err) {
         resolve({ success: false, error: err.message })
       }

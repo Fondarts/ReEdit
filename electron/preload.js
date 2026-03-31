@@ -246,7 +246,7 @@ contextBridge.exposeInMainWorld('electronAPI', {
   /**
    * Get video stream info via ffprobe (Electron only)
    * @param {string} filePath
-   * @returns {Promise<{success: boolean, fps?: number, hasAudio?: boolean, error?: string}>}
+   * @returns {Promise<{success: boolean, fps?: number, hasAudio?: boolean, videoCodec?: string, audioCodec?: string, error?: string}>}
    */
   getVideoFps: (filePath) => ipcRenderer.invoke('media:getVideoFps', filePath),
 

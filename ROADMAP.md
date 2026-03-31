@@ -62,21 +62,13 @@ The items below are intended to be handled sequentially, not all at once.
    Flip the fade slope direction to feel more intuitive and show the fade duration in `seconds:frames` while dragging.
 6. Better transform bounds and rotation controls
    Show clip bounds outside the visible frame, keep the clip image constrained to the timeline frame, and add clearer corner-based rotation controls similar to Photoshop / After Effects.
-7. Richer clip info at the top of Inspector
-   Surface resolution, FPS, codec, and other useful media info at the top of the Inspector, and show time as `hours:minutes:seconds:frames` instead of decimal seconds.
-8. Stronger timeline marquee selection
-   Improve click-and-drag selection in the timeline so users can quickly grab large groups of clips without relying on repeated `Shift` clicks.
-9. Marker and playhead visual separation
-   Make markers clearly distinct from the playhead through shape and color changes so they are easier to read at a glance.
-10. Keyframe color and multi-select improvements
-   Make the selected keyframe the brightest state, keep keyframe colors more intuitive, and support dragging multiple keyframes together for faster ease and timing adjustments.
-11. Dope Sheet clip reference strip
+7. Dope Sheet clip reference strip
    Add a visual filmstrip or clip reference above animated properties in the Dope Sheet so users can see where keyframes land against the source clip.
-12. Per-clip enable / disable
+8. Per-clip enable / disable
    Let users enable or disable selected clips directly, separate from full-track toggles, with a context-menu action and a hotkey.
-13. Audio gain and future audio controls
+9. Audio gain and future audio controls
    Add per-clip audio boost in the Inspector so quiet recordings can be raised above recorded level, with future expansion toward gating, denoise, compression, reverb, and volume keyframes.
-14. Audio meter playback bug and ruler polish
+10. Audio meter playback bug and ruler polish
    Fix the issue where the audio meters keep moving after playback stops, and improve the meter ruler with clearer tick marks and labels such as every `5 dB`.
 
 ## Phase 2: Precision Editing and Pro Workflow Features

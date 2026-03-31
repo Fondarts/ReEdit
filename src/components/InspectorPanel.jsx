@@ -29,6 +29,74 @@ import {
 } from '../utils/overlayGenerators'
 
 const TRANSITION_DEFAULT_DURATION_KEY = 'comfystudio-transition-default-duration-frames'
+const INSPECTOR_EXPANDED_SECTIONS_KEY = 'comfystudio-inspector-expanded-sections-v1'
+const DEFAULT_INSPECTOR_EXPANDED_SECTIONS = ['clipInfo', 'transform', 'crop', 'timing', 'effects', 'text', 'style', 'animation', 'adjustments']
+
+const padTimecodeUnit = (value) => String(Math.max(0, Math.trunc(value) || 0)).padStart(2, '0')
+
+const formatInspectorTimecode = (seconds, fps = FRAME_RATE) => {
+  if (!Number.isFinite(Number(seconds))) return 'Unknown'
+  const roundedFps = Math.max(1, Math.round(Number(fps) || FRAME_RATE))
+  const totalFrames = Math.max(0, Math.round(Number(seconds) * roundedFps))
+  const frames = totalFrames % roundedFps
+  const totalSeconds = Math.floor(totalFrames / roundedFps)
+  const secs = totalSeconds % 60
+  const mins = Math.floor(totalSeconds / 60) % 60
+  const hours = Math.floor(totalSeconds / 3600)
+  return `${padTimecodeUnit(hours)}:${padTimecodeUnit(mins)}:${padTimecodeUnit(secs)}:${padTimecodeUnit(frames)}`
+}
+
+const formatInspectorFrameRate = (fps) => {
+  if (!Number.isFinite(Number(fps)) || Number(fps) <= 0) return 'Unknown'
+  const rounded = Math.round(Number(fps) * 100) / 100
+  if (Number.isInteger(rounded)) return String(rounded)
+  return rounded.toFixed(2).replace(/\.?0+$/, '')
+}
+
+const formatInspectorResolution = (width, height) => {
+  const safeWidth = Math.round(Number(width) || 0)
+  const safeHeight = Math.round(Number(height) || 0)
+  if (safeWidth <= 0 || safeHeight <= 0) return 'Unknown'
+  return `${safeWidth}x${safeHeight}`
+}
+
+const getFileExtensionLabel = (filename) => {
+  if (!filename) return 'Unknown'
+  const parts = filename.split('.')
+  return parts.length > 1 ? parts.pop().toUpperCase() : 'Unknown'
+}
+
+const CODEC_LABELS = {
+  h264: 'H.264',
+  hevc: 'H.265 / HEVC',
+  h265: 'H.265 / HEVC',
+  vp8: 'VP8',
+  vp9: 'VP9',
+  av1: 'AV1',
+  aac: 'AAC',
+  mp3: 'MP3',
+  opus: 'Opus',
+  vorbis: 'Vorbis',
+  flac: 'FLAC',
+  pcm_s16le: 'PCM S16LE',
+  pcm_s24le: 'PCM S24LE',
+  pcm_f32le: 'PCM F32LE',
+}
+
+const formatMediaCodecLabel = (codec) => {
+  if (!codec) return 'Unknown'
+  const normalized = String(codec).trim().toLowerCase()
+  return CODEC_LABELS[normalized] || String(codec).toUpperCase()
+}
+
+const formatAssetFormatLabel = (asset) => {
+  if (!asset) return 'Unknown'
+  const mimeSubtype = asset.mimeType?.split('/')?.[1]
+  if (mimeSubtype) {
+    return mimeSubtype.split(';')[0].toUpperCase()
+  }
+  return getFileExtensionLabel(asset.name)
+}
 
 // Draggable number input component - click and drag to change value
 function DraggableNumberInput({ value, onChange, onCommit, min, max, step = 1, sensitivity = 0.5, suffix = '', className = '' }) {
@@ -158,7 +226,6 @@ function KeyframeButton({ clipId, property, clip, playheadPosition }) {
     toggleKeyframe, 
     goToNextKeyframe, 
     goToPrevKeyframe,
-    hasKeyframes: checkHasKeyframes 
   } = useTimelineStore()
   
   // Calculate clip-relative time
@@ -204,9 +271,9 @@ function KeyframeButton({ clipId, property, clip, playheadPosition }) {
         onClick={handleClick}
         className={`p-0.5 rounded transition-colors ${
           keyframeAtTime 
-            ? 'bg-yellow-500/20 hover:bg-yellow-500/30' 
+            ? 'bg-yellow-400/18 hover:bg-yellow-400/28 shadow-[0_0_10px_rgba(253,224,71,0.18)]' 
             : hasKeyframesForProperty
-              ? 'bg-sf-dark-600 hover:bg-sf-dark-500 ring-1 ring-sf-blue/50'
+              ? 'bg-sf-dark-600 hover:bg-sf-dark-500 ring-1 ring-sky-400/40'
               : 'hover:bg-sf-dark-600'
         }`}
         title={keyframeAtTime ? 'Remove keyframe' : 'Add keyframe'}
@@ -214,9 +281,9 @@ function KeyframeButton({ clipId, property, clip, playheadPosition }) {
         <Diamond 
           className={`w-3 h-3 ${
             keyframeAtTime 
-              ? 'text-yellow-400 fill-yellow-400' 
+              ? 'text-white fill-yellow-300 drop-shadow-[0_0_8px_rgba(253,224,71,0.85)] scale-110' 
               : hasKeyframesForProperty
-                ? 'text-sf-blue'
+                ? 'text-sky-300 fill-sky-400/70'
                 : 'text-sf-text-muted'
           }`} 
         />
@@ -237,7 +304,19 @@ function KeyframeButton({ clipId, property, clip, playheadPosition }) {
 }
 
 function InspectorPanel({ isExpanded, onToggleExpanded }) {
-  const [expandedSections, setExpandedSections] = useState(['transform', 'crop', 'timing', 'effects', 'text', 'style', 'animation', 'adjustments'])
+  const [expandedSections, setExpandedSections] = useState(() => {
+    try {
+      const raw = localStorage.getItem(INSPECTOR_EXPANDED_SECTIONS_KEY)
+      const parsed = raw ? JSON.parse(raw) : null
+      if (Array.isArray(parsed)) {
+        const normalized = parsed.filter((section) => typeof section === 'string')
+        if (normalized.length > 0) {
+          return normalized
+        }
+      }
+    } catch (_) {}
+    return DEFAULT_INSPECTOR_EXPANDED_SECTIONS
+  })
   const [showMaskPicker, setShowMaskPicker] = useState(false)
   const [renderProgress, setRenderProgress] = useState(null) // { status, progress, error }
   const [isRendering, setIsRendering] = useState(false)
@@ -334,6 +413,7 @@ function InspectorPanel({ isExpanded, onToggleExpanded }) {
   const selectedTrack = selectedClip 
     ? tracks.find(t => t.id === selectedClip.trackId) 
     : null
+  const selectedAsset = selectedClip?.assetId ? getAssetById(selectedClip.assetId) : null
   
   // Check if it's a video, text, or audio clip
   const isTextClip = selectedClip?.type === 'text'
@@ -557,8 +637,70 @@ function InspectorPanel({ isExpanded, onToggleExpanded }) {
     )
   }
 
+  useEffect(() => {
+    try {
+      localStorage.setItem(INSPECTOR_EXPANDED_SECTIONS_KEY, JSON.stringify(expandedSections))
+    } catch (_) {}
+  }, [expandedSections])
+
   // Get project handle for saving cache to disk
-  const { currentProjectHandle } = useProjectStore()
+  const { currentProjectHandle, getCurrentTimelineSettings } = useProjectStore()
+  const currentTimelineSettings = getCurrentTimelineSettings?.() || null
+  const timecodeFps = Math.max(1, Math.round(Number(currentTimelineSettings?.fps) || FRAME_RATE))
+
+  useEffect(() => {
+    if (!selectedAsset || selectedAsset.type !== 'video') return
+    if (!isElectron() || typeof window === 'undefined' || typeof window.electronAPI?.getVideoFps !== 'function') return
+    if (!selectedAsset.absolutePath) return
+    if (selectedAsset.videoCodec && selectedAsset.audioCodec && selectedAsset.fps) return
+
+    let cancelled = false
+
+    window.electronAPI.getVideoFps(selectedAsset.absolutePath)
+      .then((result) => {
+        if (cancelled || !result?.success) return
+
+        const mergedSettings = { ...(selectedAsset.settings || {}) }
+        let didChange = false
+
+        if (Number.isFinite(Number(result.fps)) && !Number.isFinite(Number(selectedAsset.fps))) {
+          mergedSettings.fps = result.fps
+          didChange = true
+        }
+
+        if (result.videoCodec && result.videoCodec !== selectedAsset.videoCodec) {
+          didChange = true
+        }
+
+        if (result.audioCodec && result.audioCodec !== selectedAsset.audioCodec) {
+          didChange = true
+        }
+
+        if (!didChange) return
+
+        updateAsset(selectedAsset.id, {
+          fps: Number.isFinite(Number(result.fps)) ? result.fps : selectedAsset.fps,
+          videoCodec: result.videoCodec || selectedAsset.videoCodec || null,
+          audioCodec: result.audioCodec || selectedAsset.audioCodec || null,
+          settings: mergedSettings,
+        })
+      })
+      .catch(() => {})
+
+    return () => {
+      cancelled = true
+    }
+  }, [
+    selectedAsset,
+    selectedAsset?.absolutePath,
+    selectedAsset?.audioCodec,
+    selectedAsset?.fps,
+    selectedAsset?.id,
+    selectedAsset?.settings,
+    selectedAsset?.type,
+    selectedAsset?.videoCodec,
+    updateAsset,
+  ])
 
   // Handle render cache for clips with effects
   const handleRenderCache = useCallback(async () => {
@@ -685,27 +827,36 @@ function InspectorPanel({ isExpanded, onToggleExpanded }) {
 
     return (
       <>
-        {/* Clip Info Header */}
-        <div className="p-3 border-b border-sf-dark-700">
-          <div className="mb-2">
-            <p className="text-sm font-medium text-sf-text-primary truncate">
-              {selectedClip.name}
-            </p>
-            <p className="text-[10px] text-sf-text-muted">
-              {selectedTrack?.name || 'Unknown Track'} • {selectedClip.duration?.toFixed(2)}s
-            </p>
-          </div>
-          
-          {/* Reset Transform Button */}
-          <button 
-            onClick={handleResetTransform}
-            className="w-full py-1.5 bg-sf-dark-700 hover:bg-sf-dark-600 rounded text-[11px] text-sf-text-secondary hover:text-sf-text-primary transition-colors flex items-center justify-center gap-1.5"
-            title="Reset all transform properties to default"
-          >
-            <RotateCcw className="w-3.5 h-3.5" />
-            Reset Transform
-          </button>
-        </div>
+        {renderClipSummaryHeader({
+          title: selectedClip.name || (selectedClip.type === 'image' ? 'Image Clip' : 'Video Clip'),
+          subtitle: `${selectedTrack?.name || 'Unknown Track'} • ${selectedClip.type === 'image' ? 'Image clip' : 'Video clip'}`,
+          icon: selectedClip.type === 'image' ? FileImage : FileVideo,
+          iconToneClassName: selectedClip.type === 'image' ? 'text-emerald-200' : 'text-blue-100',
+          iconBgClassName: selectedClip.type === 'image' ? 'bg-emerald-500/20' : 'bg-blue-500/20',
+          badges: [
+            {
+              label: 'type',
+              value: selectedClip.type === 'image' ? 'IMAGE' : 'VIDEO',
+              className: selectedClip.type === 'image'
+                ? 'bg-emerald-500/15 text-emerald-300'
+                : 'bg-blue-500/15 text-blue-300',
+            },
+            {
+              label: 'timeline-fps',
+              value: `${timecodeFps} FPS`,
+            },
+          ],
+          actions: (
+            <button 
+              onClick={handleResetTransform}
+              className="w-full py-1.5 bg-sf-dark-700 hover:bg-sf-dark-600 rounded text-[11px] text-sf-text-secondary hover:text-sf-text-primary transition-colors flex items-center justify-center gap-1.5"
+              title="Reset all transform properties to default"
+            >
+              <RotateCcw className="w-3.5 h-3.5" />
+              Reset Transform
+            </button>
+          ),
+        })}
 
         {/* Transform Section */}
         {renderSectionHeader('transform', 'Transform', Move)}
@@ -1529,35 +1680,44 @@ function InspectorPanel({ isExpanded, onToggleExpanded }) {
 
     return (
       <>
-        <div className="p-3 border-b border-sf-dark-700">
-          <div className="mb-2">
-            <p className="text-sm font-medium text-sf-text-primary truncate">
-              {selectedClip.name || 'Adjustment Layer'}
-            </p>
-            <p className="text-[10px] text-sf-text-muted">
-              {selectedTrack?.name || 'Unknown Track'} • {selectedClip.duration?.toFixed(2)}s
-            </p>
-          </div>
-
-          <div className="grid grid-cols-2 gap-2">
-            <button
-              onClick={handleResetTransform}
-              className="py-1.5 bg-sf-dark-700 hover:bg-sf-dark-600 rounded text-[11px] text-sf-text-secondary hover:text-sf-text-primary transition-colors flex items-center justify-center gap-1.5"
-              title="Reset transform properties"
-            >
-              <RotateCcw className="w-3.5 h-3.5" />
-              Reset Transform
-            </button>
-            <button
-              onClick={handleClipAdjustmentsReset}
-              className="py-1.5 bg-sf-dark-700 hover:bg-sf-dark-600 rounded text-[11px] text-sf-text-secondary hover:text-sf-text-primary transition-colors flex items-center justify-center gap-1.5"
-              title="Reset adjustment controls"
-            >
-              <RotateCcw className="w-3.5 h-3.5" />
-              Reset Adjustments
-            </button>
-          </div>
-        </div>
+        {renderClipSummaryHeader({
+          title: selectedClip.name || 'Adjustment Layer',
+          subtitle: `${selectedTrack?.name || 'Unknown Track'} • Adjustment clip`,
+          icon: SlidersHorizontal,
+          iconToneClassName: 'text-violet-100',
+          iconBgClassName: 'bg-violet-500/20',
+          badges: [
+            {
+              label: 'type',
+              value: 'ADJUSTMENT',
+              className: 'bg-violet-500/15 text-violet-300',
+            },
+            {
+              label: 'timeline-fps',
+              value: `${timecodeFps} FPS`,
+            },
+          ],
+          actions: (
+            <div className="grid grid-cols-2 gap-2">
+              <button
+                onClick={handleResetTransform}
+                className="py-1.5 bg-sf-dark-700 hover:bg-sf-dark-600 rounded text-[11px] text-sf-text-secondary hover:text-sf-text-primary transition-colors flex items-center justify-center gap-1.5"
+                title="Reset transform properties"
+              >
+                <RotateCcw className="w-3.5 h-3.5" />
+                Reset Transform
+              </button>
+              <button
+                onClick={handleClipAdjustmentsReset}
+                className="py-1.5 bg-sf-dark-700 hover:bg-sf-dark-600 rounded text-[11px] text-sf-text-secondary hover:text-sf-text-primary transition-colors flex items-center justify-center gap-1.5"
+                title="Reset adjustment controls"
+              >
+                <RotateCcw className="w-3.5 h-3.5" />
+                Reset Adjustments
+              </button>
+            </div>
+          ),
+        })}
 
         {renderSectionHeader('transform', 'Transform', Move)}
         {expandedSections.includes('transform') && (
@@ -2520,27 +2680,34 @@ function InspectorPanel({ isExpanded, onToggleExpanded }) {
     
     return (
       <>
-        {/* Text Clip Info Header */}
-        <div className="p-3 border-b border-sf-dark-700">
-          <div className="mb-2">
-            <p className="text-sm font-medium text-sf-text-primary truncate">
-              Text Clip
-            </p>
-            <p className="text-[10px] text-sf-text-muted">
-              {selectedTrack?.name || 'Unknown Track'} • {selectedClip.duration?.toFixed(2)}s
-            </p>
-          </div>
-          
-          {/* Reset Transform Button */}
-          <button 
-            onClick={handleResetTransform}
-            className="w-full py-1.5 bg-sf-dark-700 hover:bg-sf-dark-600 rounded text-[11px] text-sf-text-secondary hover:text-sf-text-primary transition-colors flex items-center justify-center gap-1.5"
-            title="Reset all transform properties to default"
-          >
-            <RotateCcw className="w-3.5 h-3.5" />
-            Reset Transform
-          </button>
-        </div>
+        {renderClipSummaryHeader({
+          title: selectedClip.name || 'Text Clip',
+          subtitle: `${selectedTrack?.name || 'Unknown Track'} • Text clip`,
+          icon: Type,
+          iconToneClassName: 'text-amber-100',
+          iconBgClassName: 'bg-amber-500/20',
+          badges: [
+            {
+              label: 'type',
+              value: 'TEXT',
+              className: 'bg-amber-500/15 text-amber-300',
+            },
+            {
+              label: 'timeline-fps',
+              value: `${timecodeFps} FPS`,
+            },
+          ],
+          actions: (
+            <button 
+              onClick={handleResetTransform}
+              className="w-full py-1.5 bg-sf-dark-700 hover:bg-sf-dark-600 rounded text-[11px] text-sf-text-secondary hover:text-sf-text-primary transition-colors flex items-center justify-center gap-1.5"
+              title="Reset all transform properties to default"
+            >
+              <RotateCcw className="w-3.5 h-3.5" />
+              Reset Transform
+            </button>
+          ),
+        })}
 
         {/* Text Content Section */}
         {renderSectionHeader('text', 'Text Content', Type)}
@@ -3001,18 +3168,24 @@ function InspectorPanel({ isExpanded, onToggleExpanded }) {
   // Render Audio Inspector
   const renderAudioInspector = () => (
     <>
-      {/* Audio Info Header */}
-      <div className="p-3 border-b border-sf-dark-700">
-        <div className="mb-2">
-          <input
-            type="text"
-            value={audioData.name}
-            onChange={(e) => setAudioData({ ...audioData, name: e.target.value })}
-            className="w-full bg-transparent text-sm font-medium text-sf-text-primary focus:outline-none"
-          />
-          <p className="text-[10px] text-sf-text-muted capitalize">{audioData.type}</p>
-        </div>
-      </div>
+      {renderClipSummaryHeader({
+        title: selectedClip?.name || audioData.name || 'Audio Clip',
+        subtitle: `${selectedTrack?.name || 'Unknown Track'} • Audio clip`,
+        icon: FileAudio,
+        iconToneClassName: 'text-fuchsia-100',
+        iconBgClassName: 'bg-fuchsia-500/20',
+        badges: [
+          {
+            label: 'type',
+            value: 'AUDIO',
+            className: 'bg-fuchsia-500/15 text-fuchsia-300',
+          },
+          {
+            label: 'timeline-fps',
+            value: `${timecodeFps} FPS`,
+          },
+        ],
+      })}
 
       {/* Volume & Pan */}
       <div className="p-3 space-y-3 border-b border-sf-dark-700">
@@ -3250,6 +3423,131 @@ function InspectorPanel({ isExpanded, onToggleExpanded }) {
     const secs = (seconds % 60).toFixed(2)
     return mins > 0 ? `${mins}m ${parseFloat(secs).toFixed(1)}s` : `${parseFloat(secs).toFixed(2)}s`
   }
+
+  function renderClipSummaryHeader({
+    title,
+    subtitle,
+    icon: Icon,
+    iconToneClassName = 'text-sf-text-primary',
+    iconBgClassName = 'bg-sf-dark-700',
+    badges = [],
+    actions = null,
+  }) {
+    if (!selectedClip) return null
+
+    const clipStart = Number(selectedClip.startTime) || 0
+    const clipDuration = Math.max(0, Number(selectedClip.duration) || 0)
+    const clipEnd = clipStart + clipDuration
+
+    const sourceDuration = Number(selectedAsset?.settings?.duration ?? selectedAsset?.duration)
+    const clipSourceFps = Number(selectedAsset?.settings?.fps ?? selectedAsset?.fps)
+    const sourceTimecodeFps = Math.max(1, Math.round(clipSourceFps || timecodeFps || FRAME_RATE))
+    const rawTimeScale = Number(selectedClip?.sourceTimeScale)
+    const speed = Number(selectedClip?.speed)
+    const effectiveTimeScale = (Number.isFinite(rawTimeScale) && rawTimeScale > 0 ? rawTimeScale : 1)
+      * (Number.isFinite(speed) && speed > 0 ? speed : 1)
+    const sourceIn = Number.isFinite(Number(selectedClip?.trimStart))
+      ? Number(selectedClip.trimStart)
+      : null
+    const sourceOut = Number.isFinite(Number(selectedClip?.trimEnd))
+      ? Number(selectedClip.trimEnd)
+      : (sourceIn !== null
+          ? sourceIn + clipDuration * effectiveTimeScale
+          : (Number.isFinite(sourceDuration) ? sourceDuration : null))
+
+    const assetWidth = selectedAsset?.settings?.width ?? selectedAsset?.width
+    const assetHeight = selectedAsset?.settings?.height ?? selectedAsset?.height
+    const assetFps = selectedAsset?.settings?.fps ?? selectedAsset?.fps
+    const videoCodec = selectedAsset?.videoCodec || null
+    const audioCodec = selectedAsset?.audioCodec || null
+    const formatLabel = formatAssetFormatLabel(selectedAsset)
+
+    const infoItems = [
+      { label: 'Start', value: formatInspectorTimecode(clipStart, timecodeFps) },
+      { label: 'Duration', value: formatInspectorTimecode(clipDuration, timecodeFps) },
+      { label: 'End', value: formatInspectorTimecode(clipEnd, timecodeFps) },
+    ]
+
+    if ((selectedClip.type === 'video' || selectedClip.type === 'audio') && sourceIn !== null) {
+      infoItems.push({ label: 'Source In', value: formatInspectorTimecode(sourceIn, sourceTimecodeFps) })
+    }
+    if ((selectedClip.type === 'video' || selectedClip.type === 'audio') && sourceOut !== null) {
+      infoItems.push({ label: 'Source Out', value: formatInspectorTimecode(sourceOut, sourceTimecodeFps) })
+    }
+    if (assetWidth || assetHeight) {
+      infoItems.push({ label: 'Resolution', value: formatInspectorResolution(assetWidth, assetHeight) })
+    }
+    if (Number.isFinite(Number(assetFps)) && Number(assetFps) > 0) {
+      infoItems.push({ label: 'FPS', value: `${formatInspectorFrameRate(assetFps)} fps` })
+    }
+    if (selectedClip.type === 'video' && videoCodec) {
+      infoItems.push({ label: 'Codec', value: formatMediaCodecLabel(videoCodec) })
+    }
+    if (selectedClip.type === 'video' && audioCodec) {
+      infoItems.push({ label: 'Audio Codec', value: formatMediaCodecLabel(audioCodec) })
+    }
+    if (selectedClip.type === 'audio' && audioCodec) {
+      infoItems.push({ label: 'Codec', value: formatMediaCodecLabel(audioCodec) })
+    }
+    if (selectedAsset) {
+      infoItems.push({ label: 'Format', value: formatLabel })
+    }
+    if (selectedAsset?.size) {
+      infoItems.push({ label: 'Size', value: formatFileSize(selectedAsset.size) })
+    }
+
+    return (
+      <>
+        {renderSectionHeader('clipInfo', 'Clip Info', Info)}
+        {expandedSections.includes('clipInfo') && (
+          <div className="p-3 border-b border-sf-dark-700 space-y-3">
+            <div className="flex items-start gap-3">
+              <div className={`w-10 h-10 rounded-lg ${iconBgClassName} flex items-center justify-center flex-shrink-0`}>
+                <Icon className={`w-5 h-5 ${iconToneClassName}`} />
+              </div>
+              <div className="flex-1 min-w-0">
+                <p className="text-sm font-medium text-sf-text-primary truncate" title={title}>
+                  {title}
+                </p>
+                <p className="text-[10px] text-sf-text-muted truncate">
+                  {subtitle}
+                </p>
+              </div>
+              {badges.length > 0 && (
+                <div className="flex flex-wrap justify-end gap-1 max-w-[45%]">
+                  {badges.map((badge) => (
+                    <span
+                      key={`${badge.label}-${badge.value}`}
+                      className={`inline-flex items-center rounded px-2 py-0.5 text-[10px] font-medium ${badge.className || 'bg-sf-dark-700 text-sf-text-secondary'}`}
+                    >
+                      {badge.value}
+                    </span>
+                  ))}
+                </div>
+              )}
+            </div>
+
+            <div className="grid grid-cols-2 gap-2">
+              {infoItems.map((item) => (
+                <div key={`${item.label}-${item.value}`} className="rounded border border-sf-dark-700 bg-sf-dark-900/70 px-2 py-1.5 min-w-0">
+                  <div className="text-[9px] uppercase tracking-wider text-sf-text-muted">{item.label}</div>
+                  <div className="mt-0.5 truncate text-[11px] font-medium text-sf-text-primary" title={item.value}>
+                    {item.value}
+                  </div>
+                </div>
+              ))}
+            </div>
+
+            {actions && (
+              <div className="space-y-2">
+                {actions}
+              </div>
+            )}
+          </div>
+        )}
+      </>
+    )
+  }
   
   // Format date
   const formatDate = (isoString) => {
@@ -3266,9 +3564,7 @@ function InspectorPanel({ isExpanded, onToggleExpanded }) {
   
   // Get file extension
   const getFileExtension = (filename) => {
-    if (!filename) return 'Unknown'
-    const parts = filename.split('.')
-    return parts.length > 1 ? `.${parts.pop().toUpperCase()}` : 'Unknown'
+    return getFileExtensionLabel(filename)
   }
   
   // Render Asset Info Panel
@@ -3377,7 +3673,25 @@ function InspectorPanel({ isExpanded, onToggleExpanded }) {
               <div className="flex items-center justify-between">
                 <span className="text-[11px] text-sf-text-muted">Frame Rate</span>
                 <span className="text-[11px] text-sf-text-primary">
-                  {asset.settings?.fps || asset.fps} fps
+                  {formatInspectorFrameRate(asset.settings?.fps || asset.fps)} fps
+                </span>
+              </div>
+            )}
+
+            {isVideo && asset.videoCodec && (
+              <div className="flex items-center justify-between">
+                <span className="text-[11px] text-sf-text-muted">Video Codec</span>
+                <span className="text-[11px] text-sf-text-primary">
+                  {formatMediaCodecLabel(asset.videoCodec)}
+                </span>
+              </div>
+            )}
+
+            {(isVideo || isAudio) && asset.audioCodec && (
+              <div className="flex items-center justify-between">
+                <span className="text-[11px] text-sf-text-muted">{isAudio ? 'Codec' : 'Audio Codec'}</span>
+                <span className="text-[11px] text-sf-text-primary">
+                  {formatMediaCodecLabel(asset.audioCodec)}
                 </span>
               </div>
             )}

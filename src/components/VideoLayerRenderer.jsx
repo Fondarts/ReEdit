@@ -30,6 +30,8 @@ function isLayerFullyObscuring(clip, playheadPosition, getAssetById) {
   if (!t) return false
   const opacity = Number(t.opacity)
   const blendMode = t.blendMode || 'normal'
+  const positionX = Number(t.positionX) || 0
+  const positionY = Number(t.positionY) || 0
   const scaleX = Number(t.scaleX)
   const scaleY = Number(t.scaleY)
   const rotation = Number(t.rotation)
@@ -38,6 +40,9 @@ function isLayerFullyObscuring(clip, playheadPosition, getAssetById) {
   const cropLeft = Number(t.cropLeft) || 0
   const cropRight = Number(t.cropRight) || 0
   if (opacity < 99.5 || blendMode !== 'normal') return false
+  // Any translation means the clip no longer reliably covers the full frame,
+  // so lower layers may become visible and must keep rendering.
+  if (positionX !== 0 || positionY !== 0) return false
   if (scaleX < 100 || scaleY < 100) return false
   if (rotation !== 0) return false
   if (cropTop > 0 || cropBottom > 0 || cropLeft > 0 || cropRight > 0) return false
@@ -70,6 +75,21 @@ function getScaledSpriteStyle(spriteData, time) {
     frameHeight: framePos.height,
     spriteWidth: spriteData.width,
     spriteHeight: spriteData.height,
+  }
+}
+
+function getCenteredMediaFitStyle() {
+  return {
+    position: 'absolute',
+    top: '50%',
+    left: '50%',
+    transform: 'translate(-50%, -50%)',
+    width: 'auto',
+    height: 'auto',
+    maxWidth: '100%',
+    maxHeight: '100%',
+    display: 'block',
+    backgroundColor: 'transparent',
   }
 }
 
@@ -636,13 +656,8 @@ const VideoLayer = memo(function VideoLayer({
 
     // Style the video to fill the container (cache already set muted, playsInline, etc.)
     Object.assign(cachedVideo.style, {
+      ...getCenteredMediaFitStyle(),
       objectFit: 'contain',
-      width: '100%',
-      height: '100%',
-      display: 'block',
-      position: 'absolute',
-      top: 0,
-      left: 0,
     })
 
     const syncVideoToCurrentPlayhead = (reason) => {
@@ -1011,23 +1026,26 @@ const VideoLayer = memo(function VideoLayer({
       />
       
       {/* Hold frame canvas - shows last frame during video src transition to prevent black flicker */}
-      <canvas
-        ref={holdFrameRef}
+      <div
         className="pointer-events-none"
         style={{
           position: 'absolute',
           top: 0,
           left: 0,
-          width: '100%',
-          height: '100%',
-          objectFit: 'contain',
+          right: 0,
+          bottom: 0,
           zIndex: layerIndex + 3,
           display: showHoldFrame ? 'block' : 'none',
           ...transformStyle,
           ...maskStyles,
           filter: combinedFilter,
         }}
-      />
+      >
+        <canvas
+          ref={holdFrameRef}
+          style={getCenteredMediaFitStyle()}
+        />
+      </div>
       
       {/* Sprite overlay (shown during fast scrubbing) */}
       {showSprite && spriteOverlayStyle && (
@@ -1041,7 +1059,6 @@ const VideoLayer = memo(function VideoLayer({
             bottom: 0,
             zIndex: layerIndex + 2,
             overflow: 'hidden',
-            backgroundColor: '#000',
             ...spriteOverlayStyle,
             ...transformStyle,
             ...spriteMaskStyles,
@@ -1088,31 +1105,37 @@ const ImageLayer = memo(function ImageLayer({
   const combinedFilter = [adjustmentFilterValue, transformStyle.filter, maskStyles.filter].filter(Boolean).join(' ') || undefined
 
   return (
-    <img
-      src={clipUrl}
-      alt={clip.name || 'Image'}
+    <div
       className="bg-transparent w-full h-full"
       style={{
-        objectFit: 'contain', // Maintain aspect ratio, letterbox if needed
-        display: 'block',
         position: layerIndex === 0 ? 'relative' : 'absolute',
         top: 0,
         left: 0,
+        right: 0,
+        bottom: 0,
         zIndex: layerIndex + 1,
-        // Apply animated clip transforms
         ...transformStyle,
-        // Apply mask effect styles
         ...maskStyles,
         filter: combinedFilter,
       }}
-      onContextMenu={(e) => e.preventDefault()}
-      draggable={false}
       onPointerDown={(e) => {
         if (typeof onClipPointerDown === 'function') {
           onClipPointerDown(clip, e)
         }
       }}
-    />
+    >
+      <img
+        src={clipUrl}
+        alt={clip.name || 'Image'}
+        className="bg-transparent"
+        style={{
+          ...getCenteredMediaFitStyle(),
+          objectFit: 'contain',
+        }}
+        onContextMenu={(e) => e.preventDefault()}
+        draggable={false}
+      />
+    </div>
   )
 })
 

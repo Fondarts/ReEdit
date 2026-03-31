@@ -369,6 +369,8 @@ export const importAsset = async (projectDir, file, category = 'video') => {
     let height = null
     let fps = null
     let hasAudio = null
+    let videoCodec = null
+    let audioCodec = null
     
     if (category === 'video' || category === 'audio') {
       try {
@@ -414,6 +416,12 @@ export const importAsset = async (projectDir, file, category = 'video') => {
         if (typeof fpsResult?.hasAudio === 'boolean') {
           hasAudio = fpsResult.hasAudio
         }
+        if (typeof fpsResult?.videoCodec === 'string' && fpsResult.videoCodec) {
+          videoCodec = fpsResult.videoCodec
+        }
+        if (typeof fpsResult?.audioCodec === 'string' && fpsResult.audioCodec) {
+          audioCodec = fpsResult.audioCodec
+        }
       } catch (err) {
         console.warn('Could not get video FPS:', err)
       }
@@ -432,6 +440,8 @@ export const importAsset = async (projectDir, file, category = 'video') => {
       width,
       height,
       fps,
+      videoCodec,
+      audioCodec,
       isImported: true,
     }
     if (category === 'video') {

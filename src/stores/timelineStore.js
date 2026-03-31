@@ -115,6 +115,145 @@ const roundDurationToFrame = (duration, fps) => {
   return Math.max(minDuration, rounded)
 }
 
+const getNormalizedLinkGroupId = (value) => {
+  if (typeof value !== 'string') return null
+  const trimmed = value.trim()
+  return trimmed || null
+}
+
+const buildLinkGroupId = (seed) => `link-${seed}`
+
+const dedupeClipIds = (clipIds = []) => [...new Set((clipIds || []).filter(Boolean))]
+const RIPPLE_TIME_EPSILON = 1e-6
+
+const expandClipIdsWithLinked = (clips, clipIds = []) => {
+  const sourceIds = dedupeClipIds(clipIds)
+  if (sourceIds.length === 0) return []
+
+  const clipsById = new Map((clips || []).map((clip) => [clip.id, clip]))
+  const expandedIds = new Set(sourceIds)
+
+  sourceIds.forEach((clipId) => {
+    const clip = clipsById.get(clipId)
+    const linkGroupId = getNormalizedLinkGroupId(clip?.linkGroupId)
+    if (!linkGroupId) return
+
+    ;(clips || []).forEach((candidate) => {
+      if (getNormalizedLinkGroupId(candidate?.linkGroupId) === linkGroupId) {
+        expandedIds.add(candidate.id)
+      }
+    })
+  })
+
+  return [...expandedIds]
+}
+
+const mergeTimeRanges = (ranges = []) => {
+  if (!Array.isArray(ranges) || ranges.length === 0) return []
+
+  const sortedRanges = ranges
+    .map((range) => ({
+      start: Number(range?.start) || 0,
+      end: Number(range?.end) || 0,
+    }))
+    .filter((range) => range.end - range.start > RIPPLE_TIME_EPSILON)
+    .sort((a, b) => a.start - b.start)
+
+  const mergedRanges = []
+  for (const range of sortedRanges) {
+    const previous = mergedRanges[mergedRanges.length - 1]
+    if (!previous || range.start > previous.end + RIPPLE_TIME_EPSILON) {
+      mergedRanges.push({ ...range })
+      continue
+    }
+    previous.end = Math.max(previous.end, range.end)
+  }
+
+  return mergedRanges
+}
+
+const getClipBaseRange = (clip, transitions = []) => {
+  if (!clip) return { start: 0, end: 0 }
+
+  let start = Number(clip.startTime) || 0
+  let end = start + (Number(clip.duration) || 0)
+
+  for (const transition of transitions || []) {
+    if (transition?.kind !== 'between') continue
+    if (transition.clipAId === clip.id && Number.isFinite(Number(transition.originalClipAEnd))) {
+      end = Number(transition.originalClipAEnd)
+    }
+    if (transition.clipBId === clip.id && Number.isFinite(Number(transition.originalClipBStart))) {
+      start = Number(transition.originalClipBStart)
+    }
+  }
+
+  start = Math.max(0, start)
+  end = Math.max(start, end)
+  return { start, end }
+}
+
+const getRippleShiftAmount = (time, ranges = []) => {
+  return ranges.reduce((total, range) => {
+    const overlapBeforeTime = Math.max(0, Math.min(time, range.end) - range.start)
+    return total + overlapBeforeTime
+  }, 0)
+}
+
+const cleanupBrokenBetweenTransitions = (clips = [], transitions = []) => {
+  let finalClips = [...clips]
+  let finalTransitions = [...(transitions || [])]
+
+  if (finalTransitions.length === 0) {
+    return { clips: finalClips, transitions: finalTransitions }
+  }
+
+  const isBroken = (transition, candidateClips) => {
+    if (transition.kind !== 'between') return false
+    const clipA = candidateClips.find((clip) => clip.id === transition.clipAId)
+    const clipB = candidateClips.find((clip) => clip.id === transition.clipBId)
+    if (!clipA || !clipB) return true
+    if (clipA.trackId !== clipB.trackId) return true
+    const trackClips = candidateClips
+      .filter((clip) => clip.trackId === clipA.trackId)
+      .sort((a, b) => a.startTime - b.startTime)
+    const indexA = trackClips.findIndex((clip) => clip.id === clipA.id)
+    const indexB = trackClips.findIndex((clip) => clip.id === clipB.id)
+    return Math.abs(indexA - indexB) !== 1
+  }
+
+  const brokenTransitions = finalTransitions.filter((transition) => isBroken(transition, finalClips))
+  if (brokenTransitions.length === 0) {
+    return { clips: finalClips, transitions: finalTransitions }
+  }
+
+  const brokenIds = new Set(brokenTransitions.map((transition) => transition.id))
+  for (const transition of brokenTransitions) {
+    finalClips = finalClips.map((clip) => {
+      if (clip.id === transition.clipAId && transition.originalClipAEnd != null && transition.originalClipATrimEnd != null) {
+        return {
+          ...clip,
+          duration: transition.originalClipAEnd - clip.startTime,
+          trimEnd: transition.originalClipATrimEnd,
+        }
+      }
+      if (clip.id === transition.clipBId && transition.originalClipBStart != null && transition.originalClipBTrimStart != null) {
+        const durationDiff = clip.startTime - transition.originalClipBStart
+        return {
+          ...clip,
+          startTime: transition.originalClipBStart,
+          duration: clip.duration - durationDiff,
+          trimStart: transition.originalClipBTrimStart,
+        }
+      }
+      return clip
+    })
+  }
+
+  finalTransitions = finalTransitions.filter((transition) => !brokenIds.has(transition.id))
+  return { clips: finalClips, transitions: finalTransitions }
+}
+
 const normalizeClipTimebases = (clips, assets, timelineFps) => {
   if (!clips || clips.length === 0) return clips || []
 
@@ -253,6 +392,8 @@ export const useTimelineStore = create(
   selectedClipIds: [], // Array of selected clip IDs
   // Selected transition (Resolve-style transition inspector)
   selectedTransitionId: null,
+  // Selected empty space / gap on a track
+  selectedGap: null, // { trackId, startTime, endTime }
 
   // Active track for cut-at-playhead (X): only this track is cut when pressing X
   activeTrackId: null,
@@ -372,6 +513,7 @@ export const useTimelineStore = create(
         selectedClipIds: [], // Clear selection on undo
         selectedTransitionId: null,
         selectedMarkerId: null,
+        selectedGap: null,
       })
       return true
     }
@@ -392,6 +534,7 @@ export const useTimelineStore = create(
         selectedClipIds: [], // Clear selection on undo
         selectedTransitionId: null,
         selectedMarkerId: null,
+        selectedGap: null,
       })
       return true
     }
@@ -420,6 +563,7 @@ export const useTimelineStore = create(
         selectedClipIds: [], // Clear selection on redo
         selectedTransitionId: null,
         selectedMarkerId: null,
+        selectedGap: null,
       })
       return true
     }
@@ -608,6 +752,8 @@ export const useTimelineStore = create(
     const overrideDuration = options?.duration
     const overrideTrimStart = options?.trimStart
     const overrideTrimEnd = options?.trimEnd
+    const linkGroupId = getNormalizedLinkGroupId(options?.linkGroupId)
+    const selectAfterAdd = options?.selectAfterAdd !== false
     const rawDuration = overrideDuration != null ? overrideDuration : defaultDuration
     const finalDuration = roundDurationToFrame(rawDuration, fps)
     const finalTrimStart = overrideTrimStart != null ? overrideTrimStart : 0
@@ -639,6 +785,7 @@ export const useTimelineStore = create(
       type: asset.type,
       url: asset.url,
       thumbnail: asset.url, // For video clips
+      ...(linkGroupId ? { linkGroupId } : {}),
       // 2D Transform properties (NLE-style)
       transform: {
         ...createDefaultClipTransform(),
@@ -661,7 +808,7 @@ export const useTimelineStore = create(
     set((state) => ({
       clips: [...updatedClips, newClip],
       clipCounter: Math.max(state.clipCounter, safeClipCounter + 1 + addedCount),
-      selectedClipIds: [newClip.id],
+      selectedClipIds: selectAfterAdd ? [newClip.id] : state.selectedClipIds,
       // Extend timeline if needed
       duration: Math.max(state.duration, calculatedStartTime + newClip.duration + 10)
     }))
@@ -886,11 +1033,14 @@ export const useTimelineStore = create(
   removeClip: (clipId) => {
     // Save to history before modifying
     get().saveToHistory()
-    
-    set((state) => ({
-      clips: state.clips.filter(c => c.id !== clipId),
-      selectedClipIds: state.selectedClipIds.filter(id => id !== clipId)
-    }))
+
+    set((state) => {
+      const targetIds = new Set(expandClipIdsWithLinked(state.clips, [clipId]))
+      return {
+        clips: state.clips.filter(c => !targetIds.has(c.id)),
+        selectedClipIds: state.selectedClipIds.filter(id => !targetIds.has(id))
+      }
+    })
   },
 
   /**
@@ -899,11 +1049,136 @@ export const useTimelineStore = create(
   removeSelectedClips: () => {
     // Save to history before modifying
     get().saveToHistory()
-    
-    set((state) => ({
-      clips: state.clips.filter(c => !state.selectedClipIds.includes(c.id)),
-      selectedClipIds: []
-    }))
+
+    set((state) => {
+      const targetIds = new Set(expandClipIdsWithLinked(state.clips, state.selectedClipIds))
+      return {
+        clips: state.clips.filter(c => !targetIds.has(c.id)),
+        selectedClipIds: []
+      }
+    })
+  },
+
+  rippleDeleteClipIds: (clipIds = []) => {
+    const state = get()
+    const targetIds = expandClipIdsWithLinked(state.clips, clipIds)
+    if (targetIds.length === 0) return false
+
+    const targetIdSet = new Set(targetIds)
+    const targetClips = state.clips.filter((clip) => targetIdSet.has(clip.id))
+    if (targetClips.length === 0) return false
+
+    const rippleRangesByTrack = new Map()
+    targetClips.forEach((clip) => {
+      const baseRange = getClipBaseRange(clip, state.transitions)
+      const existingRanges = rippleRangesByTrack.get(clip.trackId) || []
+      existingRanges.push(baseRange)
+      rippleRangesByTrack.set(clip.trackId, existingRanges)
+    })
+
+    for (const [trackId, ranges] of rippleRangesByTrack.entries()) {
+      rippleRangesByTrack.set(trackId, mergeTimeRanges(ranges))
+    }
+
+    const fps = state.timelineFps || 24
+    get().saveToHistory()
+
+    set((currentState) => {
+      const remainingClips = currentState.clips.filter((clip) => !targetIdSet.has(clip.id))
+      const cleanedState = cleanupBrokenBetweenTransitions(remainingClips, currentState.transitions)
+      const rippledClips = cleanedState.clips.map((clip) => {
+        const trackRanges = rippleRangesByTrack.get(clip.trackId)
+        if (!trackRanges || trackRanges.length === 0) return clip
+
+        const shiftAmount = getRippleShiftAmount(clip.startTime, trackRanges)
+        if (shiftAmount <= RIPPLE_TIME_EPSILON) return clip
+
+        return {
+          ...clip,
+          startTime: roundToFrame(Math.max(0, clip.startTime - shiftAmount), fps),
+        }
+      })
+
+      return {
+        clips: rippledClips,
+        transitions: cleanedState.transitions,
+        selectedClipIds: [],
+        selectedTransitionId: null,
+        selectedGap: null,
+      }
+    })
+
+    return true
+  },
+
+  rippleDeleteSelectedClips: () => {
+    const state = get()
+    return get().rippleDeleteClipIds(state.selectedClipIds)
+  },
+
+  rippleDeleteSelectedGap: () => {
+    const state = get()
+    const selectedGap = state.selectedGap
+    if (!selectedGap?.trackId || !Number.isFinite(selectedGap?.startTime) || !Number.isFinite(selectedGap?.endTime)) {
+      return false
+    }
+
+    const gapRange = mergeTimeRanges([{
+      start: Math.max(0, selectedGap.startTime),
+      end: Math.max(0, selectedGap.endTime),
+    }])
+    if (gapRange.length === 0) {
+      set({ selectedGap: null })
+      return false
+    }
+
+    const fps = state.timelineFps || 24
+    get().saveToHistory()
+
+    set((currentState) => {
+      const linkGroupShiftAmounts = new Map()
+
+      currentState.clips.forEach((clip) => {
+        if (clip.trackId !== selectedGap.trackId) return
+
+        const shiftAmount = getRippleShiftAmount(clip.startTime, gapRange)
+        if (shiftAmount <= RIPPLE_TIME_EPSILON) return
+
+        const linkGroupId = getNormalizedLinkGroupId(clip.linkGroupId)
+        if (!linkGroupId) return
+
+        const existingShiftAmount = linkGroupShiftAmounts.get(linkGroupId) || 0
+        linkGroupShiftAmounts.set(linkGroupId, Math.max(existingShiftAmount, shiftAmount))
+      })
+
+      const shiftedClips = currentState.clips.map((clip) => {
+        const directTrackShift = clip.trackId === selectedGap.trackId
+          ? getRippleShiftAmount(clip.startTime, gapRange)
+          : 0
+        const linkedShift = linkGroupShiftAmounts.get(getNormalizedLinkGroupId(clip.linkGroupId)) || 0
+        const shiftAmount = Math.max(directTrackShift, linkedShift)
+
+        if (shiftAmount <= RIPPLE_TIME_EPSILON) return clip
+
+        return {
+          ...clip,
+          startTime: roundToFrame(Math.max(0, clip.startTime - shiftAmount), fps),
+        }
+      })
+
+      const cleanedState = cleanupBrokenBetweenTransitions(shiftedClips, currentState.transitions)
+
+      return {
+        clips: cleanedState.clips,
+        transitions: cleanedState.transitions,
+        selectedClipIds: [],
+        selectedTransitionId: null,
+        selectedMarkerId: null,
+        selectedGap: null,
+      }
+    })
+
+    return true
   },
 
   /**
@@ -912,7 +1187,8 @@ export const useTimelineStore = create(
   copySelectedClips: () => {
     const state = get()
     if (state.selectedClipIds.length === 0) return
-    const selected = state.clips.filter(c => state.selectedClipIds.includes(c.id))
+    const selectedIds = expandClipIdsWithLinked(state.clips, state.selectedClipIds)
+    const selected = state.clips.filter(c => selectedIds.includes(c.id))
     if (selected.length === 0) return
     const minStart = Math.min(...selected.map(c => c.startTime))
     const withRelative = selected.map(c => ({ ...c, relativeStart: c.startTime - minStart }))
@@ -946,9 +1222,20 @@ export const useTimelineStore = create(
     let clips = [...state.clips]
     let clipCounter = getNextClipCounter(state.clips, state.clipCounter || 1)
     const newIds = []
+    const pastedLinkGroups = new Map()
+
+    const getPastedLinkGroupId = (sourceLinkGroupId) => {
+      const normalized = getNormalizedLinkGroupId(sourceLinkGroupId)
+      if (!normalized) return undefined
+      if (!pastedLinkGroups.has(normalized)) {
+        pastedLinkGroups.set(normalized, buildLinkGroupId(`paste-${clipCounter + pastedLinkGroups.size}`))
+      }
+      return pastedLinkGroups.get(normalized)
+    }
 
     for (const template of toPaste) {
       const clipStartTime = roundToFrame(startTime + (template.relativeStart ?? 0), fps)
+      const pastedLinkGroupId = getPastedLinkGroupId(template.linkGroupId)
       if (template.type === 'adjustment') {
         const rawDuration = template.duration ?? 5
         const duration = roundDurationToFrame(rawDuration, fps)
@@ -975,6 +1262,7 @@ export const useTimelineStore = create(
             ...(template.transform || {}),
             blendMode: template.transform?.blendMode ?? 'normal',
           },
+          ...(pastedLinkGroupId ? { linkGroupId: pastedLinkGroupId } : {}),
           keyframes: template.keyframes ? JSON.parse(JSON.stringify(template.keyframes)) : undefined,
         }
         clipCounter += 1
@@ -1006,6 +1294,7 @@ export const useTimelineStore = create(
           thumbnail: null,
           textProperties: { ...(template.textProperties || {}) },
           transform: { ...(template.transform || {}), blendMode: template.transform?.blendMode ?? 'normal' },
+          ...(pastedLinkGroupId ? { linkGroupId: pastedLinkGroupId } : {}),
           keyframes: template.keyframes ? JSON.parse(JSON.stringify(template.keyframes)) : undefined,
         }
         clipCounter += 1
@@ -1040,6 +1329,7 @@ export const useTimelineStore = create(
           url: asset.url,
           thumbnail: asset.url,
           transform: { ...(template.transform || {}), blendMode: template.transform?.blendMode ?? 'normal' },
+          ...(pastedLinkGroupId ? { linkGroupId: pastedLinkGroupId } : {}),
           effects: template.effects ? [...template.effects] : undefined,
           keyframes: template.keyframes ? JSON.parse(JSON.stringify(template.keyframes)) : undefined,
         }
@@ -1079,6 +1369,53 @@ export const useTimelineStore = create(
       clips: nextClips,
       selectedClipIds: nextSelected
     }))
+  },
+
+  getLinkedClipIds: (clipIds = []) => {
+    const state = get()
+    return expandClipIdsWithLinked(state.clips, clipIds)
+  },
+
+  linkSelectedClips: () => {
+    const state = get()
+    const targetIds = expandClipIdsWithLinked(state.clips, state.selectedClipIds)
+    if (targetIds.length < 2) return false
+
+    const linkGroupId = buildLinkGroupId(`manual-${getNextClipCounter(state.clips, state.clipCounter || 1)}`)
+    get().saveToHistory()
+
+    set((state) => ({
+      clips: state.clips.map((clip) => (
+        targetIds.includes(clip.id)
+          ? { ...clip, linkGroupId }
+          : clip
+      )),
+      selectedClipIds: targetIds,
+    }))
+
+    return true
+  },
+
+  unlinkSelectedClips: () => {
+    const state = get()
+    const targetIds = expandClipIdsWithLinked(state.clips, state.selectedClipIds)
+    const hasLinkedClip = targetIds.some((clipId) => {
+      const clip = state.clips.find((candidate) => candidate.id === clipId)
+      return Boolean(getNormalizedLinkGroupId(clip?.linkGroupId))
+    })
+    if (!hasLinkedClip) return false
+
+    get().saveToHistory()
+    set((state) => ({
+      clips: state.clips.map((clip) => {
+        if (!targetIds.includes(clip.id)) return clip
+        const { linkGroupId, ...rest } = clip
+        return rest
+      }),
+      selectedClipIds: targetIds,
+    }))
+
+    return true
   },
 
   /**
@@ -3342,7 +3679,7 @@ export const useTimelineStore = create(
    * Select a transition (single selection)
    */
   selectTransition: (transitionId) => {
-    set({ selectedTransitionId: transitionId, selectedClipIds: [] })
+    set({ selectedTransitionId: transitionId, selectedClipIds: [], selectedMarkerId: null, selectedGap: null })
   },
 
   /**
@@ -3361,25 +3698,41 @@ export const useTimelineStore = create(
    */
   selectClip: (clipId, options = {}) => {
     const { addToSelection = false, toggleSelection = false } = options
-    
+
     set((state) => {
+      const linkedClipIds = expandClipIdsWithLinked(state.clips, [clipId])
       if (toggleSelection) {
         // Ctrl/Cmd+click: toggle this clip in selection
-        const isSelected = state.selectedClipIds.includes(clipId)
+        const isSelected = linkedClipIds.every(id => state.selectedClipIds.includes(id))
         if (isSelected) {
-          return { selectedClipIds: state.selectedClipIds.filter(id => id !== clipId), selectedTransitionId: null }
+          return {
+            selectedClipIds: state.selectedClipIds.filter(id => !linkedClipIds.includes(id)),
+            selectedTransitionId: null,
+            selectedMarkerId: null,
+            selectedGap: null,
+          }
         } else {
-          return { selectedClipIds: [...state.selectedClipIds, clipId], selectedTransitionId: null }
+          return {
+            selectedClipIds: dedupeClipIds([...state.selectedClipIds, ...linkedClipIds]),
+            selectedTransitionId: null,
+            selectedMarkerId: null,
+            selectedGap: null,
+          }
         }
       } else if (addToSelection) {
         // Shift+click: add to selection (or range select)
-        if (state.selectedClipIds.includes(clipId)) {
+        if (linkedClipIds.every(id => state.selectedClipIds.includes(id))) {
           return state // Already selected
         }
-        return { selectedClipIds: [...state.selectedClipIds, clipId], selectedTransitionId: null }
+        return {
+          selectedClipIds: dedupeClipIds([...state.selectedClipIds, ...linkedClipIds]),
+          selectedTransitionId: null,
+          selectedMarkerId: null,
+          selectedGap: null,
+        }
       } else {
         // Normal click: replace selection
-        return { selectedClipIds: [clipId], selectedTransitionId: null }
+        return { selectedClipIds: linkedClipIds, selectedTransitionId: null, selectedMarkerId: null, selectedGap: null }
       }
     })
   },
@@ -3388,7 +3741,7 @@ export const useTimelineStore = create(
    * Clear all selections
    */
   clearSelection: () => {
-    set({ selectedClipIds: [], selectedTransitionId: null })
+    set({ selectedClipIds: [], selectedTransitionId: null, selectedMarkerId: null, selectedGap: null })
   },
 
   /**
@@ -3410,7 +3763,37 @@ export const useTimelineStore = create(
    * Select multiple clips at once
    */
   selectClips: (clipIds) => {
-    set({ selectedClipIds: clipIds, selectedTransitionId: null })
+    set((state) => ({
+      selectedClipIds: expandClipIdsWithLinked(state.clips, clipIds),
+      selectedTransitionId: null,
+      selectedMarkerId: null,
+      selectedGap: null,
+    }))
+  },
+
+  /**
+   * Select an empty gap on a track.
+   */
+  selectGap: (gap) => {
+    if (!gap?.trackId || !Number.isFinite(gap?.startTime) || !Number.isFinite(gap?.endTime)) {
+      set({ selectedGap: null })
+      return
+    }
+
+    set({
+      selectedGap: {
+        trackId: gap.trackId,
+        startTime: Math.max(0, gap.startTime),
+        endTime: Math.max(0, gap.endTime),
+      },
+      selectedClipIds: [],
+      selectedTransitionId: null,
+      selectedMarkerId: null,
+    })
+  },
+
+  clearGapSelection: () => {
+    set({ selectedGap: null })
   },
 
   /**
@@ -4005,7 +4388,7 @@ export const useTimelineStore = create(
    * Select timeline marker by id.
    */
   selectMarker: (markerId = null) => {
-    set({ selectedMarkerId: markerId })
+    set({ selectedMarkerId: markerId, selectedClipIds: [], selectedTransitionId: null, selectedGap: null })
   },
 
   /**
@@ -4057,7 +4440,7 @@ export const useTimelineStore = create(
         // Note: Transient UI state NOT persisted:
         // - activeSnapTime, selectedClipIds, playheadPosition
         // - isPlaying, playbackRate, shuttleMode
-        // - inPoint, outPoint, selectedMarkerId (session-specific)
+        // - inPoint, outPoint, selectedMarkerId, selectedGap (session-specific)
       }),
     }
   )

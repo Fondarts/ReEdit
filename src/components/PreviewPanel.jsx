@@ -1594,6 +1594,12 @@ function PreviewPanel() {
     return <>{guides}</>
   }
 
+  const previewStageStyle = {
+    transform: `translate(${pan.x}px, ${pan.y}px) scale(${getZoomScale()})`,
+    transformOrigin: 'center center',
+    transition: isZooming || isPanning ? 'none' : 'transform 0.1s ease-out',
+  }
+
   return (
     <div 
       ref={panelRef}
@@ -1788,11 +1794,7 @@ function PreviewPanel() {
           <div 
             ref={containerRef}
             className="relative bg-black overflow-hidden w-full h-full"
-            style={{
-              transform: `translate(${pan.x}px, ${pan.y}px) scale(${getZoomScale()})`,
-              transformOrigin: 'center center',
-              transition: isZooming || isPanning ? 'none' : 'transform 0.1s ease-out',
-            }}
+            style={previewStageStyle}
             onContextMenu={handleContextMenu}
           >
               {/* Timeline Playback Mode */}
@@ -1829,19 +1831,6 @@ function PreviewPanel() {
                       onClipPointerDown={handlePreviewClipPointerDown}
                       previewScale={previewScale.uniform}
                     />
-                    {selectedPreviewClip && selectedPreviewTransform && (
-                      <PreviewTransformGizmo
-                        clip={selectedPreviewClip}
-                        transform={selectedPreviewTransform}
-                        buildVideoTransform={buildVideoTransform}
-                        previewScale={previewScale}
-                        zoomScale={getZoomScale()}
-                        disabled={isSpaceHeld || isPanning || isZooming}
-                        onInteractionStart={handlePreviewTransformInteractionStart}
-                        onTransformChange={handlePreviewTransformChange}
-                        onTransformCommit={handlePreviewTransformCommit}
-                      />
-                    )}
                   </>
                 )}
                 
@@ -2143,6 +2132,25 @@ function PreviewPanel() {
               </div>
             )}
           </div>
+
+          {selectedPreviewClip && selectedPreviewTransform && (
+            <div
+              className="absolute inset-0 overflow-visible pointer-events-none"
+              style={previewStageStyle}
+            >
+              <PreviewTransformGizmo
+                clip={selectedPreviewClip}
+                transform={selectedPreviewTransform}
+                buildVideoTransform={buildVideoTransform}
+                previewScale={previewScale}
+                zoomScale={getZoomScale()}
+                disabled={isSpaceHeld || isPanning || isZooming}
+                onInteractionStart={handlePreviewTransformInteractionStart}
+                onTransformChange={handlePreviewTransformChange}
+                onTransformCommit={handlePreviewTransformCommit}
+              />
+            </div>
+          )}
           
           {/* Safe Guides Overlay - positioned outside the transformed container */}
           {renderSafeGuides()}

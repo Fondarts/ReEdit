@@ -7,6 +7,7 @@ const LEFT_COLUMN_WIDTH = 148
 const KEYFRAME_MATCH_TOLERANCE = 0.05
 const RULER_HEIGHT = 32
 const PROPERTY_ROW_HEIGHT = 36
+const KEYFRAME_MULTI_DRAG_THRESHOLD_PX = 0.5
 
 const getMajorRulerStep = (pixelsPerSecond) => {
   const candidates = [0.25, 0.5, 1, 2, 5, 10, 15, 30, 60, 120]
@@ -27,6 +28,8 @@ function DopeSheet() {
     removeKeyframe,
     timelineFps,
     zoom,
+    undo,
+    redo,
   } = useTimelineStore()
   const [frameSnapEnabled, setFrameSnapEnabled] = useState(true)
   const [selectedKeyframe, setSelectedKeyframe] = useState(null) // { propertyId, time }
@@ -113,11 +116,31 @@ function DopeSheet() {
     return normalized
   }, [isSameKeyframeTime])
 
+  const applyKeyframeSelection = useCallback((entries = [], preferredActiveEntry = null) => {
+    const normalized = normalizeKeyframeSelection(entries)
+    setSelectedKeyframes(normalized)
+    if (preferredActiveEntry) {
+      const activeMatch = normalized.find((entry) => (
+        entry.propertyId === preferredActiveEntry.propertyId
+        && isSameKeyframeTime(entry.time, preferredActiveEntry.time)
+      ))
+      setSelectedKeyframe(activeMatch || normalized[0] || null)
+      return
+    }
+    setSelectedKeyframe(normalized[0] || null)
+  }, [isSameKeyframeTime, normalizeKeyframeSelection])
+
   const isKeyframeSelected = useCallback((propertyId, time) => (
     selectedKeyframes.some((entry) => (
       entry.propertyId === propertyId && isSameKeyframeTime(entry.time, time)
     ))
   ), [isSameKeyframeTime, selectedKeyframes])
+
+  const isPrimaryKeyframeSelected = useCallback((propertyId, time) => (
+    !!selectedKeyframe
+    && selectedKeyframe.propertyId === propertyId
+    && isSameKeyframeTime(selectedKeyframe.time, time)
+  ), [isSameKeyframeTime, selectedKeyframe])
 
   const normalizeEditableTime = useCallback((time) => {
     const clamped = clampToClipRange(time)
@@ -149,6 +172,22 @@ function DopeSheet() {
     return normalizeKeyframeSelection(hits)
   }, [clampToClipRange, normalizeKeyframeSelection, pixelsPerSecond, propertyRows, selectedClip])
 
+  const getKeyframesAtTimeColumn = useCallback((time) => {
+    if (!selectedClip) return []
+    const hits = []
+
+    propertyRows.forEach((property) => {
+      const keyframes = selectedClip.keyframes?.[property.id] || []
+      keyframes.forEach((keyframe) => {
+        if (isSameKeyframeTime(keyframe.time, time)) {
+          hits.push({ propertyId: property.id, time: keyframe.time })
+        }
+      })
+    })
+
+    return normalizeKeyframeSelection(hits)
+  }, [isSameKeyframeTime, normalizeKeyframeSelection, propertyRows, selectedClip])
+
   const setPlayheadFromMouseEvent = useCallback((event) => {
     if (!selectedClip) return
 
@@ -158,30 +197,41 @@ function DopeSheet() {
     setPlayheadPosition(selectedClip.startTime + clipTime)
   }, [normalizeEditableTime, pixelsPerSecond, selectedClip, setPlayheadPosition])
 
-  const startMarqueeSelection = useCallback((event) => {
+  const startMarqueeSelection = useCallback((event, addToSelection = false) => {
     if (!selectedClip || !lanesScrollRef.current) return
 
     const scrollElement = lanesScrollRef.current
     const scrollRect = scrollElement.getBoundingClientRect()
     const pointerX = event.clientX - scrollRect.left + scrollElement.scrollLeft
     const pointerY = event.clientY - scrollRect.top + scrollElement.scrollTop
+    const baseSelection = addToSelection
+      ? normalizeKeyframeSelection(
+        selectedKeyframes.length > 0
+          ? selectedKeyframes
+          : (selectedKeyframe ? [selectedKeyframe] : [])
+      )
+      : []
 
     setDragState(null)
-    setSelectedKeyframe(null)
-    setSelectedKeyframes([])
+    if (!addToSelection) {
+      setSelectedKeyframe(null)
+      setSelectedKeyframes([])
+    }
     setMarqueeState({
       startX: pointerX,
       startY: pointerY,
       currentX: pointerX,
       currentY: pointerY,
+      addToSelection,
+      baseSelection,
     })
-  }, [selectedClip])
+  }, [normalizeKeyframeSelection, selectedClip, selectedKeyframe, selectedKeyframes])
 
   const handleLaneMouseDown = useCallback((event) => {
     if (event.altKey) {
       event.preventDefault()
       event.stopPropagation()
-      startMarqueeSelection(event)
+      startMarqueeSelection(event, event.shiftKey || event.ctrlKey || event.metaKey)
       return
     }
     setPlayheadFromMouseEvent(event)
@@ -236,7 +286,7 @@ function DopeSheet() {
     if (event.altKey) {
       event.preventDefault()
       event.stopPropagation()
-      startMarqueeSelection(event)
+      startMarqueeSelection(event, event.shiftKey || event.ctrlKey || event.metaKey)
       return
     }
 
@@ -246,9 +296,30 @@ function DopeSheet() {
 
     const clickedKeyframe = { propertyId, time: keyframeTime }
     const clickedIsInSelection = isKeyframeSelected(propertyId, keyframeTime)
+    const isToggleModifier = event.ctrlKey || event.metaKey
+
+    if (isToggleModifier) {
+      const baseSelection = selectedKeyframes.length > 0
+        ? selectedKeyframes
+        : (selectedKeyframe ? [selectedKeyframe] : [])
+      const nextSelection = clickedIsInSelection
+        ? baseSelection.filter((entry) => !(
+          entry.propertyId === propertyId && isSameKeyframeTime(entry.time, keyframeTime)
+        ))
+        : [...baseSelection, clickedKeyframe]
+      applyKeyframeSelection(nextSelection, clickedIsInSelection ? nextSelection[0] || null : clickedKeyframe)
+      setDragState(null)
+      return
+    }
+
+    const sameTimeSelection = event.shiftKey
+      ? getKeyframesAtTimeColumn(keyframeTime)
+      : []
     const shouldMoveSelection = clickedIsInSelection && selectedKeyframes.length > 1 && !event.shiftKey
     const activeSelection = normalizeKeyframeSelection(
-      shouldMoveSelection ? selectedKeyframes : [clickedKeyframe]
+      shouldMoveSelection
+        ? selectedKeyframes
+        : (sameTimeSelection.length > 1 ? sameTimeSelection : [clickedKeyframe])
     )
     const selectionTimes = activeSelection.map((entry) => entry.time)
 
@@ -261,8 +332,8 @@ function DopeSheet() {
       sourceTime: keyframeTime,
       currentTime: keyframeTime,
       startX: event.clientX,
-      groupMove: event.shiftKey && !shouldMoveSelection,
-      selectionEntries: shouldMoveSelection
+      groupMove: false,
+      selectionEntries: (shouldMoveSelection || sameTimeSelection.length > 1)
         ? activeSelection.map((entry) => ({
           propertyId: entry.propertyId,
           sourceTime: entry.time,
@@ -287,7 +358,7 @@ function DopeSheet() {
         const maxDelta = clipDuration - Math.max(0, Number(dragState.selectionMaxTime) || 0)
         const boundedDelta = Math.max(minDelta, Math.min(anchorTargetTime - dragState.sourceTime, maxDelta))
 
-        if (Math.abs(boundedDelta - Number(dragState.currentDelta || 0)) < 0.0005) {
+        if (Math.abs(boundedDelta - Number(dragState.currentDelta || 0)) < KEYFRAME_MULTI_DRAG_THRESHOLD_PX / pixelsPerSecond) {
           return
         }
 
@@ -447,8 +518,11 @@ function DopeSheet() {
     const scrollElement = lanesScrollRef.current
     const updateSelection = (nextState) => {
       const nextSelected = collectKeyframesInMarquee(nextState)
-      setSelectedKeyframes(nextSelected)
-      setSelectedKeyframe(nextSelected.length === 1 ? nextSelected[0] : null)
+      const mergedSelection = nextState.addToSelection
+        ? normalizeKeyframeSelection([...(nextState.baseSelection || []), ...nextSelected])
+        : nextSelected
+      setSelectedKeyframes(mergedSelection)
+      setSelectedKeyframe(mergedSelection[0] || null)
     }
 
     updateSelection(marqueeState)
@@ -481,7 +555,7 @@ function DopeSheet() {
       document.body.style.userSelect = ''
       document.body.style.cursor = ''
     }
-  }, [collectKeyframesInMarquee, marqueeState, selectedClip])
+  }, [collectKeyframesInMarquee, marqueeState, normalizeKeyframeSelection, selectedClip])
 
   useEffect(() => {
     if (!selectedClip || !selectedKeyframe) return
@@ -530,7 +604,7 @@ function DopeSheet() {
   }, [isSameKeyframeTime, normalizeKeyframeSelection, selectedClip, selectedKeyframe, selectedKeyframes])
 
   useEffect(() => {
-    if ((selectedKeyframes.length === 0 && !selectedKeyframe) || dragState || marqueeState) return undefined
+    if (!selectedClip || dragState || marqueeState) return undefined
 
     const handleKeyDown = (event) => {
       const target = event.target
@@ -538,6 +612,21 @@ function DopeSheet() {
         && (target.tagName === 'INPUT' || target.tagName === 'TEXTAREA' || target.isContentEditable)
 
       if (isTypingField) return
+
+      const key = String(event.key || '').toLowerCase()
+      const isModifierHeld = event.ctrlKey || event.metaKey
+
+      if (isModifierHeld && !event.shiftKey && key === 'z') {
+        event.preventDefault()
+        undo()
+        return
+      }
+
+      if (isModifierHeld && ((event.shiftKey && key === 'z') || key === 'y')) {
+        event.preventDefault()
+        redo()
+        return
+      }
 
       if (event.key === 'Delete' || event.key === 'Backspace') {
         event.preventDefault()
@@ -547,7 +636,7 @@ function DopeSheet() {
 
     window.addEventListener('keydown', handleKeyDown)
     return () => window.removeEventListener('keydown', handleKeyDown)
-  }, [deleteSelectedKeyframes, dragState, marqueeState, selectedKeyframe, selectedKeyframes.length])
+  }, [deleteSelectedKeyframes, dragState, marqueeState, redo, selectedClip, undo])
 
   const marqueeBox = useMemo(() => {
     if (!marqueeState) return null
@@ -561,6 +650,16 @@ function DopeSheet() {
   const selectedKeyframeCount = selectedKeyframes.length > 0
     ? selectedKeyframes.length
     : (selectedKeyframe ? 1 : 0)
+
+  const selectedKeyframeColumns = useMemo(() => {
+    const selection = normalizeKeyframeSelection(
+      selectedKeyframes.length > 0
+        ? selectedKeyframes
+        : (selectedKeyframe ? [selectedKeyframe] : [])
+    )
+    return [...new Set(selection.map((entry) => Number(entry.time)).filter(Number.isFinite))]
+      .sort((a, b) => a - b)
+  }, [normalizeKeyframeSelection, selectedKeyframe, selectedKeyframes])
 
   const selectedKeyframeTargets = useMemo(() => {
     if (!selectedClip) return []
@@ -639,7 +738,12 @@ function DopeSheet() {
             <Magnet className="w-3 h-3" />
             {frameSnapEnabled ? `Frame Snap (${safeFps}fps)` : 'Free Time'}
           </button>
-          <span className="text-[10px] text-sf-text-muted">Alt+Drag = marquee select keyframes | Shift+Drag = move same-time column</span>
+          <span className="text-[10px] text-sf-text-muted">Ctrl/Cmd+Click = toggle select | Shift+Click/Drag = same-time column | Alt+Drag = marquee keyframes | Drag selected = move together</span>
+          {selectedKeyframeCount > 0 && (
+            <span className="px-1.5 py-0.5 rounded border border-sky-400/35 bg-sky-500/10 text-[10px] text-sky-200">
+              {selectedKeyframeCount} selected
+            </span>
+          )}
           {selectedKeyframeCount > 0 && (
             <div className="flex items-center gap-1">
               <span className="text-[10px] text-sf-text-muted">Easing</span>
@@ -743,6 +847,17 @@ function DopeSheet() {
                     }}
                   />
 
+                  {selectedKeyframeColumns.map((time) => (
+                    <div
+                      key={`selected-column-${property.id}-${time}`}
+                      className="absolute top-0 bottom-0 w-px bg-sky-300/35 pointer-events-none"
+                      style={{
+                        left: `${clampToClipRange(time) * pixelsPerSecond}px`,
+                        boxShadow: '0 0 10px rgba(125, 211, 252, 0.18)',
+                      }}
+                    />
+                  ))}
+
                   {keyframes.map((keyframe, index) => (
                     <div
                       key={`${property.id}-${index}-${keyframe.time}`}
@@ -759,10 +874,11 @@ function DopeSheet() {
                     >
                       <Diamond
                         className={`w-3 h-3 ${
-                          isKeyframeSelected(property.id, keyframe.time)
-                          || (selectedKeyframe?.propertyId === property.id && isSameKeyframeTime(selectedKeyframe?.time, keyframe.time))
-                            ? 'text-sf-accent fill-sf-accent'
-                            : 'text-yellow-400 fill-yellow-400'
+                          isPrimaryKeyframeSelected(property.id, keyframe.time)
+                            ? 'text-white fill-yellow-300 drop-shadow-[0_0_10px_rgba(253,224,71,0.95)] scale-[1.22]'
+                            : isKeyframeSelected(property.id, keyframe.time)
+                              ? 'text-sky-100 fill-sky-400 drop-shadow-[0_0_9px_rgba(56,189,248,0.55)] scale-[1.14]'
+                              : 'text-amber-300/85 fill-amber-500/75 hover:text-amber-200 hover:fill-amber-400'
                         }`}
                       />
                     </div>
