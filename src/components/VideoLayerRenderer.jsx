@@ -1376,7 +1376,7 @@ function VideoLayerRenderer({
     const videoTrackIds = new Set(videoTracks.map(t => t.id))
     
     const relevantClips = clips.filter(clip => {
-      if (!videoTrackIds.has(clip.trackId) || clip.type !== 'video') return false
+      if (!videoTrackIds.has(clip.trackId) || clip.type !== 'video' || clip.enabled === false) return false
       
       const clipEnd = clip.startTime + clip.duration
       

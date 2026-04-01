@@ -952,11 +952,24 @@ const clampAudioFadeSeconds = (value, clipDuration = 0) => {
   return Math.min(parsed, duration)
 }
 
-const buildAudioFadeVolumeExpression = (clipDuration, fadeIn, fadeOut, clipOffset = 0) => {
+const MIN_AUDIO_CLIP_GAIN_DB = -24
+const MAX_AUDIO_CLIP_GAIN_DB = 24
+
+const normalizeAudioClipGainDb = (value) => {
+  const parsed = Number(value)
+  if (!Number.isFinite(parsed)) return 0
+  return Math.max(MIN_AUDIO_CLIP_GAIN_DB, Math.min(MAX_AUDIO_CLIP_GAIN_DB, parsed))
+}
+
+const audioGainDbToLinear = (value) => Math.pow(10, normalizeAudioClipGainDb(value) / 20)
+
+const buildAudioFadeVolumeExpression = (clipDuration, fadeIn, fadeOut, clipOffset = 0, gainDb = 0, trackVolume = 100) => {
   const duration = Math.max(0, Number(clipDuration) || 0)
   const normalizedFadeIn = clampAudioFadeSeconds(fadeIn, duration)
   const normalizedFadeOut = clampAudioFadeSeconds(fadeOut, duration)
   const offset = Math.max(0, Math.min(Number(clipOffset) || 0, duration))
+  const trackGain = Math.max(0, Math.min(1, (Number(trackVolume) || 0) / 100))
+  const baseGain = audioGainDbToLinear(gainDb) * trackGain
 
   const fadeInExpr = normalizedFadeIn > 0
     ? `if(lt(t+${formatFilterNumber(offset)},${formatFilterNumber(normalizedFadeIn)}),(t+${formatFilterNumber(offset)})/${formatFilterNumber(normalizedFadeIn)},1)`
@@ -967,7 +980,11 @@ const buildAudioFadeVolumeExpression = (clipDuration, fadeIn, fadeOut, clipOffse
     ? `if(gt(t+${formatFilterNumber(offset)},${formatFilterNumber(fadeOutStart)}),(${formatFilterNumber(duration)}-(t+${formatFilterNumber(offset)}))/${formatFilterNumber(normalizedFadeOut)},1)`
     : '1'
 
-  return `max(0,min(1,min(${fadeInExpr},${fadeOutExpr})))`
+  const fadeExpr = `max(0,min(1,min(${fadeInExpr},${fadeOutExpr})))`
+  if (Math.abs(baseGain - 1) < 0.000001) {
+    return fadeExpr
+  }
+  return `${formatFilterNumber(baseGain)}*(${fadeExpr})`
 }
 
 ipcMain.handle('export:mixAudio', async (event, options = {}) => {
@@ -1054,8 +1071,10 @@ ipcMain.handle('export:mixAudio', async (event, options = {}) => {
       timeScale,
       clipDuration,
       clipOffsetOnTimeline,
+      gainDb: normalizeAudioClipGainDb(clip.gainDb),
       fadeIn: clampAudioFadeSeconds(clip.fadeIn, clipDuration),
       fadeOut: clampAudioFadeSeconds(clip.fadeOut, clipDuration),
+      trackVolume: track.volume ?? 100,
       forceMono: track.channels === 'mono',
     })
   }
@@ -1091,8 +1110,8 @@ ipcMain.handle('export:mixAudio', async (event, options = {}) => {
     if (entry.forceMono) {
       filters.push('aformat=channel_layouts=mono')
     }
-    if (entry.fadeIn > 0 || entry.fadeOut > 0) {
-      filters.push(`volume='${buildAudioFadeVolumeExpression(entry.clipDuration, entry.fadeIn, entry.fadeOut, entry.clipOffsetOnTimeline)}':eval=frame`)
+    if (entry.fadeIn > 0 || entry.fadeOut > 0 || entry.gainDb !== 0 || entry.trackVolume !== 100) {
+      filters.push(`volume='${buildAudioFadeVolumeExpression(entry.clipDuration, entry.fadeIn, entry.fadeOut, entry.clipOffsetOnTimeline, entry.gainDb, entry.trackVolume)}':eval=frame`)
     }
     if (entry.delayMs > 0) {
       filters.push(`adelay=${entry.delayMs}:all=1`)

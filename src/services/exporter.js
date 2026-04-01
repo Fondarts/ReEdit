@@ -4,6 +4,7 @@ import useProjectStore from '../stores/projectStore'
 import { getAnimatedTransform, getAnimatedAdjustmentSettings } from '../utils/keyframes'
 import { buildCssFilterFromAdjustments, hasAdjustmentEffect, normalizeAdjustmentSettings } from '../utils/adjustments'
 import { getAudioClipFadeGain, getAudioClipFadeValues } from '../utils/audioClipFades'
+import { getAudioClipLinearGain, normalizeAudioClipGainDb } from '../utils/audioClipGain'
 
 const DEFAULT_SAMPLE_RATE = 44100
 const AUDIO_FETCH_TIMEOUT_MS = 15000
@@ -971,7 +972,7 @@ export const exportTimeline = async (options = {}, onProgress = () => {}) => {
       onProgress({ status: `Mixing audio (${elapsed}s) • ${message}`, progress })
     }
     updateAudioStatus('Preparing audio clips', 80)
-    const audioClips = timelineState.clips.filter(clip => clip.type === 'audio')
+    const audioClips = timelineState.clips.filter(clip => clip.type === 'audio' && clip.enabled !== false)
     const activeTracks = timelineState.tracks.filter(t => t.type === 'audio' && t.visible && !t.muted)
     
     if (audioClips.length > 0 && activeTracks.length > 0) {
@@ -1009,6 +1010,7 @@ export const exportTimeline = async (options = {}, onProgress = () => {}) => {
               sourceFps: clip.sourceFps,
               speed: clip.speed,
               reverse: clip.reverse,
+              gainDb: normalizeAudioClipGainDb(clip.gainDb),
               fadeIn: clip.fadeIn ?? 0,
               fadeOut: clip.fadeOut ?? 0,
               url: clip.url || null,
@@ -1021,6 +1023,7 @@ export const exportTimeline = async (options = {}, onProgress = () => {}) => {
                 muted: !!track.muted,
                 visible: track.visible !== false,
                 channels: track.channels || 'stereo',
+                volume: track.volume ?? 100,
               })),
             assets: assetsState.assets
               .map(asset => ({
@@ -1121,18 +1124,22 @@ export const exportTimeline = async (options = {}, onProgress = () => {}) => {
 
             const gainNode = offlineContext.createGain()
             const { fadeIn, fadeOut } = getAudioClipFadeValues(clip)
+            const trackGain = track.volume !== undefined
+              ? Math.max(0, Number(track.volume) || 0) / 100
+              : 1
+            const baseGain = getAudioClipLinearGain(clip) * trackGain
             const endClipTime = Math.min(clipDuration, clipOffsetOnTimeline + visibleDuration)
             const startClipTime = Math.max(0, clipOffsetOnTimeline)
             const segmentEndTime = startOffset + visibleDuration
-            const startGain = getAudioClipFadeGain(clip, startClipTime)
-            const endGain = getAudioClipFadeGain(clip, endClipTime)
+            const startGain = baseGain * getAudioClipFadeGain(clip, startClipTime)
+            const endGain = baseGain * getAudioClipFadeGain(clip, endClipTime)
 
             gainNode.gain.setValueAtTime(startGain, startOffset)
 
             if (fadeIn > 0) {
               const fadeInBoundary = fadeIn - startClipTime
               if (fadeInBoundary > 0 && fadeInBoundary < visibleDuration) {
-                gainNode.gain.linearRampToValueAtTime(1, startOffset + fadeInBoundary)
+                gainNode.gain.linearRampToValueAtTime(baseGain, startOffset + fadeInBoundary)
               }
             }
 
@@ -1140,15 +1147,15 @@ export const exportTimeline = async (options = {}, onProgress = () => {}) => {
               const fadeOutStart = Math.max(0, clipDuration - fadeOut)
               const fadeOutBoundary = fadeOutStart - startClipTime
               if (fadeOutBoundary > 0 && fadeOutBoundary < visibleDuration) {
-                gainNode.gain.setValueAtTime(1, startOffset + fadeOutBoundary)
+                gainNode.gain.setValueAtTime(baseGain, startOffset + fadeOutBoundary)
                 gainNode.gain.linearRampToValueAtTime(endGain, segmentEndTime)
               } else if (startClipTime >= fadeOutStart) {
                 gainNode.gain.linearRampToValueAtTime(endGain, segmentEndTime)
               } else if (fadeIn <= 0) {
-                gainNode.gain.setValueAtTime(1, startOffset)
+                gainNode.gain.setValueAtTime(baseGain, startOffset)
               }
             } else if (fadeIn > 0 && startClipTime >= fadeIn) {
-              gainNode.gain.setValueAtTime(1, startOffset)
+              gainNode.gain.setValueAtTime(baseGain, startOffset)
             }
 
             source.connect(gainNode)

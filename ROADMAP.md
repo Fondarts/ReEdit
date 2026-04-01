@@ -50,26 +50,9 @@ These are the highest-priority editing improvements aimed at making the editor f
 
 The items below are intended to be handled sequentially, not all at once.
 
-1. Linked audio and video clip pairs
-   Import clips with audio as linked video/audio pairs by default, keep them in sync while moving, and add timeline `Link` / `Unlink` actions for selected clips with assignable hotkeys.
-2. Timeline scroll, zoom, and playhead follow
-   Let the scroll wheel move forward and backward through the timeline, move zoom to `+` / `-` or configurable hotkeys, and keep the timeline view following the playhead during playback.
-3. Empty-space selection and gap targeting
-   Allow users to select dead space between clips directly in the timeline so gaps become first-class edit targets.
-4. Ripple delete
-   Delete the selected clip or selected empty space and automatically close the gap so timeline cleanup is faster.
-5. Fade handle polish
-   Flip the fade slope direction to feel more intuitive and show the fade duration in `seconds:frames` while dragging.
-6. Better transform bounds and rotation controls
-   Show clip bounds outside the visible frame, keep the clip image constrained to the timeline frame, and add clearer corner-based rotation controls similar to Photoshop / After Effects.
-7. Dope Sheet clip reference strip
-   Add a visual filmstrip or clip reference above animated properties in the Dope Sheet so users can see where keyframes land against the source clip.
-8. Per-clip enable / disable
-   Let users enable or disable selected clips directly, separate from full-track toggles, with a context-menu action and a hotkey.
-9. Audio gain and future audio controls
-   Add per-clip audio boost in the Inspector so quiet recordings can be raised above recorded level, with future expansion toward gating, denoise, compression, reverb, and volume keyframes.
-10. Audio meter playback bug and ruler polish
-   Fix the issue where the audio meters keep moving after playback stops, and improve the meter ruler with clearer tick marks and labels such as every `5 dB`.
+The current Phase 1 queue is complete.
+
+The next roadmap work now rolls into the Phase 2 precision editing items below.
 
 ## Phase 2: Precision Editing and Pro Workflow Features
 

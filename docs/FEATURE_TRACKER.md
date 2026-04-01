@@ -26,6 +26,7 @@ We should keep updating this file as new features land.
 - Better multi-clip movement across tracks
 - Linked audio and video clip pairs for imported media with audio
 - Manual `Link Selected` and `Unlink Selected` actions in the timeline
+- Linked audio/video pair selections can now stay multi-selected while the Inspector switches between focused `Video` and `Audio` controls
 - Horizontal timeline wheel navigation
 - Playback follow so the playhead stays visible while the timeline is running
 - Click empty space on a track to select a timeline gap as its own target
@@ -36,11 +37,16 @@ We should keep updating this file as new features land.
 - Audio fade handles now show intuitive ramp direction and a `seconds:frames` drag readout
 - Preview transform bounds can extend outside the visible frame while the media stays clipped inside it
 - Preview transform gizmo now has clearer corner-based rotation handles plus stronger visible bounds
+- Preview viewer now lets you hide transform controls while keeping the selected clip active for looping and playback checks
+- Audio clips now have per-clip Inspector gain with boosted preview, meters, and export mix support for quiet recordings
+- Timeline audio meters now stop cleanly with playback and use clearer `5 dB` ruler ticks and labels
 - Inspector clip headers now surface richer media info like resolution, FPS, codec, format, size, and timecode summaries
 - Inspector section collapse state now persists across app restarts
 - Timeline marquee selection now works by dragging on empty track space, supports additive modifiers, and auto-scrolls while sweeping large areas
 - Timeline markers now read as distinct bookmark-style flags while the playhead has a stronger transport-style indicator
 - Dope Sheet keyframes now show clearer active vs secondary selection colors and support easier grouped dragging
+- Dope Sheet now shows a clip reference strip above keyframe rows so animation timing can be lined up against source imagery
+- Clips can now be disabled individually with a hotkey or context-menu action, while staying visible for edit decisions in the timeline
 - Fixed undo for link and unlink actions
 
 ### Timeline and Sequence Management
@@ -73,6 +79,7 @@ These are the most important shortcut-related additions or surfaced editing shor
 - `S`: Toggle snapping
 - `R`: Toggle ripple edit
 - `M`: Add marker at playhead
+- `D`: Enable or disable selected clips
 - `+` / `-`: Zoom timeline in and out
 - `Esc`: Clear selected clips, markers, transitions, or gap targets
 - `Delete` / `Backspace`: Ripple delete selected clips while ripple mode is on, or close a selected gap
@@ -97,7 +104,10 @@ Good visuals to capture for posts, release notes, or short clips:
 - Gap targeting highlight on an empty section of a track before ripple-delete lands
 - Ripple delete closing a selected hole on one track without touching others
 - Audio fade drag with the new `seconds:frames` badge over the waveform
+- Audio Inspector gain boosting a quiet clip above `0 dB` while the meter reacts live
+- Timeline audio meters dropping cleanly to silence on stop with the denser `5 dB` scale visible beside them
 - Preview transform gizmo showing out-of-frame bounds and corner rotation handles
+- Preview toolbar toggling transform controls on and off while the same clip stays selected
 - Inspector header showing clip start / duration / source timing in `hours:minutes:seconds:frames`
 - Empty-lane drag marquee grabbing a large block of clips without needing `Alt`
 - Timeline ruler showing the new marker flag styling versus the warmer playhead indicator
@@ -114,6 +124,8 @@ Good visuals to capture for posts, release notes, or short clips:
 - Empty-space targeting lays the groundwork for ripple delete and future gap actions
 - Ripple delete now makes cleanup faster for both clips and selected dead space
 - Fade handles feel more like an NLE with clearer ramp direction and drag timing feedback
+- Inspector audio gain now boosts quiet clips directly in preview and export without leaving the editor
+- Timeline audio meters now feel more trustworthy with cleaner stop behavior and a clearer ruler
 - Preview transforms feel closer to Photoshop / After Effects with more legible bounds and rotation handles
 - Inspector headers now show clip metadata and timecode more like a real editing app
 - Large timeline selections are faster now that marquee drag works directly from empty track space
@@ -123,9 +135,6 @@ Good visuals to capture for posts, release notes, or short clips:
 
 ## Next Up
 
-Current roadmap order after the shipped work above:
+Current Phase 1 roadmap queue is complete.
 
-1. Dope Sheet clip reference strip
-2. Per-clip enable / disable
-3. Audio gain and future audio controls
-4. Audio meter playback bug and ruler polish
+The next major work now moves into the Phase 2 precision editing items in `ROADMAP.md`.

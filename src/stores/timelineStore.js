@@ -4,6 +4,7 @@ import { TRANSITION_DEFAULT_SETTINGS, FRAME_RATE } from '../constants/transition
 import { buildTextAnimationPresetKeyframes, TEXT_ANIMATION_KEYFRAME_PROPERTIES } from '../utils/textAnimationPresets'
 import { normalizeAdjustmentSettings } from '../utils/adjustments'
 import { clampAudioFadeDuration } from '../utils/audioClipFades'
+import { normalizeAudioClipGainDb } from '../utils/audioClipGain'
 
 // Maximum number of undo states to keep
 const MAX_HISTORY_SIZE = 50
@@ -122,6 +123,7 @@ const getNormalizedLinkGroupId = (value) => {
 }
 
 const buildLinkGroupId = (seed) => `link-${seed}`
+const isClipEnabled = (clip) => clip?.enabled !== false
 
 const dedupeClipIds = (clipIds = []) => [...new Set((clipIds || []).filter(Boolean))]
 const RIPPLE_TIME_EPSILON = 1e-6
@@ -779,10 +781,12 @@ export const useTimelineStore = create(
       sourceTimeScale: 1,
       speed: 1,
       reverse: false,
+      gainDb: asset.type === 'audio' ? normalizeAudioClipGainDb(options?.gainDb) : undefined,
       fadeIn: asset.type === 'audio' ? clampAudioFadeDuration(options?.fadeIn, finalDuration) : undefined,
       fadeOut: asset.type === 'audio' ? clampAudioFadeDuration(options?.fadeOut, finalDuration) : undefined,
       color: track.type === 'video' ? getVideoColor(safeClipCounter) : getAudioColor(track.id),
       type: asset.type,
+      enabled: options?.enabled !== false,
       url: asset.url,
       thumbnail: asset.url, // For video clips
       ...(linkGroupId ? { linkGroupId } : {}),
@@ -878,6 +882,7 @@ export const useTimelineStore = create(
       trimEnd: duration,
       color: '#565C6B', // Muted blue for text clips
       type: 'text',
+      enabled: textOptions?.enabled !== false,
       url: null,
       thumbnail: null,
       // Text-specific properties
@@ -966,6 +971,7 @@ export const useTimelineStore = create(
       reverse: false,
       color: '#6f569a',
       type: 'adjustment',
+      enabled: options?.enabled !== false,
       url: null,
       thumbnail: null,
       adjustments: normalizeAdjustmentSettings(options?.adjustments || {}),
@@ -1254,6 +1260,7 @@ export const useTimelineStore = create(
           reverse: false,
           color: '#6f569a',
           type: 'adjustment',
+          enabled: template.enabled !== false,
           url: null,
           thumbnail: null,
           adjustments: normalizeAdjustmentSettings(template.adjustments || {}),
@@ -1290,6 +1297,7 @@ export const useTimelineStore = create(
           trimEnd: duration,
           color: '#565C6B',
           type: 'text',
+          enabled: template.enabled !== false,
           url: null,
           thumbnail: null,
           textProperties: { ...(template.textProperties || {}) },
@@ -1324,8 +1332,12 @@ export const useTimelineStore = create(
           sourceTimeScale: template.sourceTimeScale ?? 1,
           speed: template.speed ?? 1,
           reverse: template.reverse ?? false,
+          gainDb: template.type === 'audio' ? normalizeAudioClipGainDb(template.gainDb) : undefined,
+          fadeIn: template.type === 'audio' ? clampAudioFadeDuration(template.fadeIn, duration) : undefined,
+          fadeOut: template.type === 'audio' ? clampAudioFadeDuration(template.fadeOut, duration) : undefined,
           color: isVideoTrack ? getVideoColor(clipCounter) : getAudioColor(track.id),
           type: template.type,
+          enabled: template.enabled !== false,
           url: asset.url,
           thumbnail: asset.url,
           transform: { ...(template.transform || {}), blendMode: template.transform?.blendMode ?? 'normal' },
@@ -2119,6 +2131,9 @@ export const useTimelineStore = create(
         return {
           ...clip,
           ...audioUpdates,
+          gainDb: Object.prototype.hasOwnProperty.call(audioUpdates || {}, 'gainDb')
+            ? normalizeAudioClipGainDb(audioUpdates.gainDb)
+            : normalizeAudioClipGainDb(clip.gainDb),
           fadeIn: Object.prototype.hasOwnProperty.call(audioUpdates || {}, 'fadeIn')
             ? clampAudioFadeDuration(audioUpdates.fadeIn, clip.duration)
             : (clip.fadeIn ?? 0),
@@ -3531,6 +3546,7 @@ export const useTimelineStore = create(
       const clip = state.clips.find(c => 
         c.trackId === track.id &&
         (c.type === 'video' || c.type === 'image') &&
+        isClipEnabled(c) &&
         time >= c.startTime &&
         time < c.startTime + c.duration
       )
@@ -3551,6 +3567,7 @@ export const useTimelineStore = create(
       
       const trackClips = state.clips.filter(c =>
         c.trackId === track.id &&
+        isClipEnabled(c) &&
         time >= c.startTime &&
         time < c.startTime + c.duration
       )
@@ -3945,6 +3962,31 @@ export const useTimelineStore = create(
       tracks: state.tracks.map(track =>
         track.id === trackId ? { ...track, visible: !track.visible } : track
       )
+    }))
+  },
+
+  /**
+   * Enable or disable one or more clips.
+   */
+  setClipsEnabled: (clipIds, enabled) => {
+    const state = get()
+    const targetIds = expandClipIdsWithLinked(state.clips, clipIds)
+    if (targetIds.length === 0) return
+
+    const targetSet = new Set(targetIds)
+    const desiredEnabled = enabled !== false
+    const hasChanges = state.clips.some((clip) => (
+      targetSet.has(clip.id) && isClipEnabled(clip) !== desiredEnabled
+    ))
+    if (!hasChanges) return
+
+    get().saveToHistory()
+    set((current) => ({
+      clips: current.clips.map((clip) => (
+        targetSet.has(clip.id)
+          ? { ...clip, enabled: desiredEnabled }
+          : clip
+      )),
     }))
   },
 

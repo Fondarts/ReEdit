@@ -1,6 +1,6 @@
 import { useState, useCallback, useRef, useEffect, useMemo } from 'react'
 import { 
-  Move, RotateCw, Maximize2, Clock, Layers, Volume2, 
+  Move, RotateCw, Maximize2, Clock, Layers,
   ChevronDown, ChevronRight, ChevronLeft, Sparkles,
   Zap, Eye, SlidersHorizontal, CircleDot,
   FlipHorizontal, FlipVertical, Link, Unlink, Crop,
@@ -27,12 +27,23 @@ import {
   getLetterboxContentRect,
   generateLetterboxOverlayBlob,
 } from '../utils/overlayGenerators'
+import {
+  DEFAULT_AUDIO_CLIP_GAIN_DB,
+  MIN_AUDIO_CLIP_GAIN_DB,
+  MAX_AUDIO_CLIP_GAIN_DB,
+  normalizeAudioClipGainDb,
+} from '../utils/audioClipGain'
 
 const TRANSITION_DEFAULT_DURATION_KEY = 'comfystudio-transition-default-duration-frames'
 const INSPECTOR_EXPANDED_SECTIONS_KEY = 'comfystudio-inspector-expanded-sections-v1'
 const DEFAULT_INSPECTOR_EXPANDED_SECTIONS = ['clipInfo', 'transform', 'crop', 'timing', 'effects', 'text', 'style', 'animation', 'adjustments']
 
 const padTimecodeUnit = (value) => String(Math.max(0, Math.trunc(value) || 0)).padStart(2, '0')
+const normalizeLinkGroupId = (value) => {
+  if (typeof value !== 'string') return null
+  const trimmed = value.trim()
+  return trimmed || null
+}
 
 const formatInspectorTimecode = (seconds, fps = FRAME_RATE) => {
   if (!Number.isFinite(Number(seconds))) return 'Unknown'
@@ -372,13 +383,59 @@ function InspectorPanel({ isExpanded, onToggleExpanded }) {
   // Get assets store functions (needed for render cache)
   const { assets, getAssetById, getAllMasks, updateAsset } = useAssetsStore()
   
-  // Get the first selected clip (for now, single selection for inspector)
-  const selectedClip = selectedClipIds.length > 0 
-    ? clips.find(c => c.id === selectedClipIds[0]) 
-    : null
   const selectedTransition = selectedTransitionId
     ? transitions.find(t => t.id === selectedTransitionId) || null
     : null
+  const orderedSelectedClips = useMemo(
+    () => selectedClipIds
+      .map((clipId) => clips.find((clip) => clip.id === clipId))
+      .filter(Boolean),
+    [clips, selectedClipIds]
+  )
+  const linkedInspectorPair = useMemo(() => {
+    if (orderedSelectedClips.length !== 2) return null
+
+    const [firstClip, secondClip] = orderedSelectedClips
+    const linkGroupId = normalizeLinkGroupId(firstClip?.linkGroupId)
+    if (!linkGroupId || linkGroupId !== normalizeLinkGroupId(secondClip?.linkGroupId)) {
+      return null
+    }
+
+    const firstTrack = tracks.find((track) => track.id === firstClip.trackId)
+    const secondTrack = tracks.find((track) => track.id === secondClip.trackId)
+    if (!firstTrack || !secondTrack) return null
+
+    const audioClip = firstTrack.type === 'audio'
+      ? firstClip
+      : (secondTrack.type === 'audio' ? secondClip : null)
+    const visualClip = firstTrack.type === 'video'
+      ? firstClip
+      : (secondTrack.type === 'video' ? secondClip : null)
+
+    if (!audioClip || !visualClip) return null
+
+    return {
+      linkGroupId,
+      audioClip,
+      visualClip,
+    }
+  }, [orderedSelectedClips, tracks])
+  const selectionSignature = useMemo(
+    () => orderedSelectedClips.map((clip) => clip.id).join('|'),
+    [orderedSelectedClips]
+  )
+  const [inspectorClipId, setInspectorClipId] = useState(null)
+  useEffect(() => {
+    setInspectorClipId(orderedSelectedClips[0]?.id || null)
+  }, [selectionSignature])
+  const selectedClip = useMemo(() => {
+    if (orderedSelectedClips.length === 0) return null
+    if (inspectorClipId) {
+      const focusedClip = orderedSelectedClips.find((clip) => clip.id === inspectorClipId)
+      if (focusedClip) return focusedClip
+    }
+    return orderedSelectedClips[0] || null
+  }, [orderedSelectedClips, inspectorClipId])
   const transformHistorySessionClipRef = useRef(null)
   const adjustmentHistorySessionClipRef = useRef(null)
 
@@ -608,14 +665,12 @@ function InspectorPanel({ isExpanded, onToggleExpanded }) {
     applyAdjustmentUpdatesWithHistory(DEFAULT_ADJUSTMENT_SETTINGS, false)
   }, [selectedClip, applyAdjustmentUpdatesWithHistory])
   
-  // Legacy audio data state (for audio clips - will be connected to real data later)
   const [audioData, setAudioData] = useState({
     name: '',
     type: 'audio',
-    volume: 100,
+    gainDb: DEFAULT_AUDIO_CLIP_GAIN_DB,
     fadeIn: 0,
     fadeOut: 0,
-    pan: 0
   })
 
   useEffect(() => {
@@ -624,10 +679,19 @@ function InspectorPanel({ isExpanded, onToggleExpanded }) {
       ...prev,
       name: selectedClip.name || '',
       type: selectedClip.type || 'audio',
+      gainDb: normalizeAudioClipGainDb(selectedClip.gainDb),
       fadeIn: Number.isFinite(Number(selectedClip.fadeIn)) ? Number(selectedClip.fadeIn) : 0,
       fadeOut: Number.isFinite(Number(selectedClip.fadeOut)) ? Number(selectedClip.fadeOut) : 0,
     }))
-  }, [selectedClip?.id, selectedClip?.name, selectedClip?.type, selectedClip?.fadeIn, selectedClip?.fadeOut, isAudioClip])
+  }, [selectedClip?.id, selectedClip?.name, selectedClip?.type, selectedClip?.gainDb, selectedClip?.fadeIn, selectedClip?.fadeOut, isAudioClip])
+
+  const handleAudioGainChange = useCallback((nextValue) => {
+    const value = normalizeAudioClipGainDb(nextValue)
+    setAudioData((prev) => ({ ...prev, gainDb: value }))
+    if (selectedClip?.type === 'audio') {
+      updateAudioClipProperties(selectedClip.id, { gainDb: value }, true)
+    }
+  }, [selectedClip, updateAudioClipProperties])
 
   const toggleSection = (section) => {
     setExpandedSections(prev => 
@@ -3187,38 +3251,48 @@ function InspectorPanel({ isExpanded, onToggleExpanded }) {
         ],
       })}
 
-      {/* Volume & Pan */}
+      {/* Gain */}
       <div className="p-3 space-y-3 border-b border-sf-dark-700">
-        <div>
-          <div className="flex justify-between mb-1">
-            <label className="text-[10px] text-sf-text-muted">Volume</label>
-            <span className="text-[10px] text-sf-text-secondary">{audioData.volume}%</span>
+        <div className="flex items-end justify-between gap-3">
+          <div>
+            <label className="text-[10px] text-sf-text-muted">Gain</label>
+            <p className="mt-1 text-[10px] text-sf-text-secondary">
+              Boost or trim this clip for preview playback and export.
+            </p>
           </div>
-          <input
-            type="range"
-            min="0"
-            max="100"
-            value={audioData.volume}
-            onChange={(e) => setAudioData({ ...audioData, volume: parseInt(e.target.value) })}
-            className="w-full h-1 bg-sf-dark-600 rounded-lg appearance-none cursor-pointer accent-sf-accent"
-          />
+          <div className="w-24">
+            <input
+              type="number"
+              min={MIN_AUDIO_CLIP_GAIN_DB}
+              max={MAX_AUDIO_CLIP_GAIN_DB}
+              step="0.5"
+              value={audioData.gainDb}
+              onChange={(e) => handleAudioGainChange(e.target.value)}
+              className="w-full bg-sf-dark-700 border border-sf-dark-600 rounded px-2 py-1 text-xs text-right text-sf-text-primary focus:outline-none focus:border-sf-accent"
+            />
+          </div>
         </div>
-
         <div>
           <div className="flex justify-between mb-1">
-            <label className="text-[10px] text-sf-text-muted">Pan</label>
+            <span className="text-[10px] text-sf-text-muted">Clip Gain</span>
             <span className="text-[10px] text-sf-text-secondary">
-              {audioData.pan === 0 ? 'Center' : audioData.pan < 0 ? `L${Math.abs(audioData.pan)}` : `R${audioData.pan}`}
+              {audioData.gainDb > 0 ? '+' : ''}{audioData.gainDb.toFixed(1)} dB
             </span>
           </div>
           <input
             type="range"
-            min="-100"
-            max="100"
-            value={audioData.pan}
-            onChange={(e) => setAudioData({ ...audioData, pan: parseInt(e.target.value) })}
+            min={MIN_AUDIO_CLIP_GAIN_DB}
+            max={MAX_AUDIO_CLIP_GAIN_DB}
+            step="0.5"
+            value={audioData.gainDb}
+            onChange={(e) => handleAudioGainChange(e.target.value)}
             className="w-full h-1 bg-sf-dark-600 rounded-lg appearance-none cursor-pointer accent-sf-accent"
           />
+          <div className="mt-1 flex justify-between text-[10px] text-sf-text-muted">
+            <span>{MIN_AUDIO_CLIP_GAIN_DB} dB</span>
+            <span>0 dB</span>
+            <span>+{MAX_AUDIO_CLIP_GAIN_DB} dB</span>
+          </div>
         </div>
       </div>
 
@@ -4099,6 +4173,67 @@ function InspectorPanel({ isExpanded, onToggleExpanded }) {
     </div>
   )
 
+  const renderLinkedPairInspectorSelector = () => {
+    if (!linkedInspectorPair) return null
+
+    const options = [
+      {
+        id: linkedInspectorPair.visualClip.id,
+        label: 'Video',
+        icon: FileVideo,
+      },
+      {
+        id: linkedInspectorPair.audioClip.id,
+        label: 'Audio',
+        icon: FileAudio,
+      },
+    ]
+
+    return (
+      <div className="px-3 py-2 border-b border-sf-dark-700 bg-sf-dark-900/70">
+        <div className="flex items-center justify-between gap-3">
+          <div className="min-w-0">
+            <div className="flex items-center gap-1.5 text-[10px] uppercase tracking-[0.18em] text-sf-text-muted">
+              <Link className="w-3 h-3" />
+              <span>Linked Pair</span>
+            </div>
+            <p className="mt-1 text-[10px] text-sf-text-secondary">
+              Both clips stay selected. Choose which side of the pair to inspect.
+            </p>
+          </div>
+          <div className="inline-flex rounded-md border border-sf-dark-600 bg-sf-dark-800 p-0.5 shrink-0">
+            {options.map(({ id, label, icon: Icon }) => {
+              const isActive = selectedClip?.id === id
+              return (
+                <button
+                  key={id}
+                  type="button"
+                  onClick={() => setInspectorClipId(id)}
+                  className={`inline-flex items-center gap-1.5 rounded px-2 py-1 text-[10px] font-medium transition-colors ${
+                    isActive
+                      ? 'bg-sf-accent text-white'
+                      : 'text-sf-text-secondary hover:bg-sf-dark-700 hover:text-sf-text-primary'
+                  }`}
+                >
+                  <Icon className="w-3 h-3" />
+                  <span>{label}</span>
+                </button>
+              )
+            })}
+          </div>
+        </div>
+      </div>
+    )
+  }
+
+  const renderSelectedClipInspector = () => {
+    if (isAdjustmentClip) return renderAdjustmentClipInspector()
+    if (isTextClip) return renderTextClipInspector()
+    if (isVideoClip) return renderVideoClipInspector()
+    if (isAudioClip) return renderAudioInspector()
+    return renderEmptyState()
+  }
+
   // Content to render
   const renderContent = () => {
     // Transition selection has priority (Resolve-style)
@@ -4108,15 +4243,14 @@ function InspectorPanel({ isExpanded, onToggleExpanded }) {
     if (selectedClipIds.length === 0) return renderEmptyState()
     
     // Multi-selection (show info only)
-    if (selectedClipIds.length > 1) return renderMultiSelectInfo()
-    
-    // Single selection
-    if (isAdjustmentClip) return renderAdjustmentClipInspector()
-    if (isTextClip) return renderTextClipInspector()
-    if (isVideoClip) return renderVideoClipInspector()
-    if (isAudioClip) return renderAudioInspector()
-    
-    return renderEmptyState()
+    if (selectedClipIds.length > 1 && !linkedInspectorPair) return renderMultiSelectInfo()
+
+    return (
+      <>
+        {renderLinkedPairInspectorSelector()}
+        {renderSelectedClipInspector()}
+      </>
+    )
   }
 
   return (

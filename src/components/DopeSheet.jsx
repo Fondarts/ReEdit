@@ -1,11 +1,14 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { Clock3, Diamond, Magnet, Trash2 } from 'lucide-react'
 import useTimelineStore from '../stores/timelineStore'
-import { KEYFRAMEABLE_PROPERTIES, EASING_OPTIONS, getAnimatedTransform, getAnimatedAdjustmentSettings, quantizeTimeToFrame } from '../utils/keyframes'
+import useAssetsStore from '../stores/assetsStore'
+import { KEYFRAMEABLE_PROPERTIES, EASING_OPTIONS, getAnimatedTransform, getAnimatedAdjustmentSettings, quantizeTimeToFrame, getAllKeyframeTimes } from '../utils/keyframes'
+import { getSpriteFramePosition } from '../services/thumbnailSprites'
 
 const LEFT_COLUMN_WIDTH = 148
 const KEYFRAME_MATCH_TOLERANCE = 0.05
 const RULER_HEIGHT = 32
+const REFERENCE_STRIP_HEIGHT = 48
 const PROPERTY_ROW_HEIGHT = 36
 const KEYFRAME_MULTI_DRAG_THRESHOLD_PX = 0.5
 
@@ -36,13 +39,18 @@ function DopeSheet() {
   const [selectedKeyframes, setSelectedKeyframes] = useState([]) // [{ propertyId, time }]
   const [dragState, setDragState] = useState(null)
   const [marqueeState, setMarqueeState] = useState(null) // { startX, startY, currentX, currentY } in scroll-content coords
+  const [isScrubbing, setIsScrubbing] = useState(false)
   const dragHistorySavedRef = useRef(false)
   const lanesScrollRef = useRef(null)
+  const getAssetById = useAssetsStore((state) => state.getAssetById)
+  const getAssetSprite = useAssetsStore((state) => state.getAssetSprite)
 
   const selectedClip = useMemo(() => {
     if (!selectedClipIds.length) return null
     return clips.find((clip) => clip.id === selectedClipIds[0]) || null
   }, [clips, selectedClipIds])
+  const selectedAsset = selectedClip?.assetId ? getAssetById(selectedClip.assetId) : null
+  const selectedSprite = selectedClip?.assetId ? getAssetSprite(selectedClip.assetId) : null
 
   const pixelsPerSecond = zoom / 5
   const clipDuration = Math.max(0.001, Number(selectedClip?.duration) || 0.001)
@@ -158,7 +166,7 @@ function DopeSheet() {
     const hits = []
 
     propertyRows.forEach((property, rowIndex) => {
-      const rowCenterY = RULER_HEIGHT + rowIndex * PROPERTY_ROW_HEIGHT + (PROPERTY_ROW_HEIGHT / 2)
+      const rowCenterY = RULER_HEIGHT + REFERENCE_STRIP_HEIGHT + rowIndex * PROPERTY_ROW_HEIGHT + (PROPERTY_ROW_HEIGHT / 2)
       if (rowCenterY < top || rowCenterY > bottom) return
 
       const keyframes = selectedClip.keyframes?.[property.id] || []
@@ -188,14 +196,23 @@ function DopeSheet() {
     return normalizeKeyframeSelection(hits)
   }, [isSameKeyframeTime, normalizeKeyframeSelection, propertyRows, selectedClip])
 
-  const setPlayheadFromMouseEvent = useCallback((event) => {
-    if (!selectedClip) return
+  const getClipTimeFromClientX = useCallback((clientX) => {
+    if (!lanesScrollRef.current) return 0
+    const scrollElement = lanesScrollRef.current
+    const rect = scrollElement.getBoundingClientRect()
+    const x = clientX - rect.left + scrollElement.scrollLeft - LEFT_COLUMN_WIDTH
+    return normalizeEditableTime(x / pixelsPerSecond)
+  }, [normalizeEditableTime, pixelsPerSecond])
 
-    const rect = event.currentTarget.getBoundingClientRect()
-    const x = event.clientX - rect.left
-    const clipTime = normalizeEditableTime(x / pixelsPerSecond)
+  const setPlayheadFromClientX = useCallback((clientX) => {
+    if (!selectedClip) return
+    const clipTime = getClipTimeFromClientX(clientX)
     setPlayheadPosition(selectedClip.startTime + clipTime)
-  }, [normalizeEditableTime, pixelsPerSecond, selectedClip, setPlayheadPosition])
+  }, [getClipTimeFromClientX, selectedClip, setPlayheadPosition])
+
+  const setPlayheadFromMouseEvent = useCallback((event) => {
+    setPlayheadFromClientX(event.clientX)
+  }, [setPlayheadFromClientX])
 
   const startMarqueeSelection = useCallback((event, addToSelection = false) => {
     if (!selectedClip || !lanesScrollRef.current) return
@@ -228,13 +245,18 @@ function DopeSheet() {
   }, [normalizeKeyframeSelection, selectedClip, selectedKeyframe, selectedKeyframes])
 
   const handleLaneMouseDown = useCallback((event) => {
+    if (event.button !== 0) return
+    event.preventDefault()
+
     if (event.altKey) {
-      event.preventDefault()
       event.stopPropagation()
+      setIsScrubbing(false)
       startMarqueeSelection(event, event.shiftKey || event.ctrlKey || event.metaKey)
       return
     }
+
     setPlayheadFromMouseEvent(event)
+    setIsScrubbing(true)
   }, [setPlayheadFromMouseEvent, startMarqueeSelection])
 
   const addKeyframeAtPlayhead = useCallback((propertyId) => {
@@ -345,6 +367,26 @@ function DopeSheet() {
       currentDelta: 0,
     })
   }
+
+  useEffect(() => {
+    if (!isScrubbing || !selectedClip) return undefined
+
+    const handleMouseMove = (event) => {
+      setPlayheadFromClientX(event.clientX)
+    }
+
+    const handleMouseUp = () => {
+      setIsScrubbing(false)
+    }
+
+    window.addEventListener('mousemove', handleMouseMove)
+    window.addEventListener('mouseup', handleMouseUp)
+
+    return () => {
+      window.removeEventListener('mousemove', handleMouseMove)
+      window.removeEventListener('mouseup', handleMouseUp)
+    }
+  }, [isScrubbing, selectedClip, setPlayheadFromClientX])
 
   useEffect(() => {
     if (!dragState || !selectedClip) return undefined
@@ -708,6 +750,102 @@ function DopeSheet() {
     })
   }, [saveToHistory, selectedClip, selectedKeyframeTargets, setKeyframe])
 
+  const allKeyframeTimes = useMemo(() => {
+    if (!selectedClip?.keyframes) return []
+    return getAllKeyframeTimes(selectedClip.keyframes).map((entry) => Number(entry.time)).filter(Number.isFinite)
+  }, [selectedClip])
+
+  const referenceStripTiles = useMemo(() => {
+    if (!selectedClip) return []
+    const tileCount = Math.max(1, Math.ceil(laneWidth / 96))
+    const tileWidth = laneWidth / tileCount
+    return Array.from({ length: tileCount }).map((_, index) => {
+      const time = tileCount === 1 ? clipDuration / 2 : (index / Math.max(1, tileCount - 1)) * clipDuration
+      const clampedTime = clampToClipRange(time)
+      const tile = {
+        id: `tile-${index}`,
+        time: clampedTime,
+        width: tileWidth,
+      }
+
+      if (selectedClip.type === 'video' && selectedSprite?.url) {
+        const frame = getSpriteFramePosition(selectedSprite, clampedTime)
+        if (frame) {
+          tile.kind = 'sprite'
+          tile.frame = frame
+          return tile
+        }
+      }
+
+      if (selectedClip.type === 'image' && (selectedAsset?.url || selectedClip?.url)) {
+        tile.kind = 'image'
+        tile.url = selectedAsset?.url || selectedClip?.url
+        return tile
+      }
+
+      tile.kind = 'placeholder'
+      return tile
+    })
+  }, [clampToClipRange, clipDuration, laneWidth, selectedAsset?.url, selectedClip, selectedSprite])
+
+  const renderReferenceTile = useCallback((tile) => {
+    const tileStyle = { width: `${tile.width}px` }
+    if (tile.kind === 'sprite' && tile.frame && selectedSprite?.url) {
+      const frame = tile.frame
+      const scale = Math.max(tile.width / Math.max(1, frame.width), REFERENCE_STRIP_HEIGHT / Math.max(1, frame.height))
+      return (
+        <div key={tile.id} className="relative h-full overflow-hidden border-r border-black/20 bg-sf-dark-950/60" style={tileStyle}>
+          <div
+            className="absolute left-1/2 top-1/2 bg-center bg-no-repeat"
+            style={{
+              width: `${frame.width}px`,
+              height: `${frame.height}px`,
+              backgroundImage: `url(${selectedSprite.url})`,
+              backgroundPosition: `${frame.backgroundPositionX}px ${frame.backgroundPositionY}px`,
+              backgroundSize: `${selectedSprite.width}px ${selectedSprite.height}px`,
+              transform: `translate(-50%, -50%) scale(${scale})`,
+              transformOrigin: 'center center',
+            }}
+          />
+        </div>
+      )
+    }
+
+    if (tile.kind === 'image' && tile.url) {
+      return (
+        <div key={tile.id} className="relative h-full overflow-hidden border-r border-black/20 bg-sf-dark-950/60" style={tileStyle}>
+          <img
+            src={tile.url}
+            alt={selectedClip?.name || 'Reference'}
+            className="w-full h-full object-cover opacity-90"
+            draggable={false}
+          />
+        </div>
+      )
+    }
+
+    const isTextClip = selectedClip?.type === 'text'
+    const isAdjustmentClip = selectedClip?.type === 'adjustment'
+    return (
+      <div
+        key={tile.id}
+        className={`relative h-full overflow-hidden border-r border-black/20 ${
+          isTextClip
+            ? 'bg-gradient-to-br from-sf-accent/25 to-sf-accent-muted/30'
+            : isAdjustmentClip
+              ? 'bg-[repeating-linear-gradient(135deg,rgba(168,85,247,0.28)_0px,rgba(168,85,247,0.28)_8px,rgba(30,20,45,0.65)_8px,rgba(30,20,45,0.65)_16px)]'
+              : 'bg-gradient-to-br from-sf-dark-800 to-sf-dark-900'
+        }`}
+        style={tileStyle}
+      >
+        <div className="absolute inset-0 bg-gradient-to-b from-black/10 via-transparent to-black/45" />
+        <div className="absolute inset-x-2 bottom-1 text-[9px] text-white/80 font-medium truncate">
+          {isTextClip ? (selectedClip?.textProperties?.text || 'Text') : (selectedClip?.name || selectedClip?.type)}
+        </div>
+      </div>
+    )
+  }, [selectedClip, selectedSprite])
+
   if (!selectedClip) {
     return (
       <div className="h-full bg-sf-dark-900 border-t border-sf-dark-700 flex items-center justify-center">
@@ -813,6 +951,54 @@ function DopeSheet() {
                   </span>
                 </div>
               ))}
+            </div>
+          </div>
+
+          <div className="flex border-b border-sf-dark-700 bg-sf-dark-800">
+            <div
+              className="sticky left-0 z-20 flex items-center justify-between px-3 text-[10px] uppercase tracking-wide text-sf-text-muted border-r border-sf-dark-700 bg-sf-dark-800"
+              style={{ width: `${LEFT_COLUMN_WIDTH}px`, height: `${REFERENCE_STRIP_HEIGHT}px` }}
+            >
+              <span>Reference</span>
+              <span className="text-[9px] text-sf-text-muted normal-case">{selectedClip.type}</span>
+            </div>
+            <div
+              className="relative border-r border-sf-dark-700 overflow-hidden cursor-pointer"
+              style={{ width: `${laneWidth}px`, height: `${REFERENCE_STRIP_HEIGHT}px` }}
+              onMouseDown={handleLaneMouseDown}
+            >
+              <div className="absolute inset-0 flex">
+                {referenceStripTiles.map((tile) => renderReferenceTile(tile))}
+              </div>
+
+              {selectedKeyframeColumns.map((time) => (
+                <div
+                  key={`reference-selected-column-${time}`}
+                  className="absolute top-0 bottom-0 w-px bg-sky-300/45 pointer-events-none z-10"
+                  style={{
+                    left: `${clampToClipRange(time) * pixelsPerSecond}px`,
+                    boxShadow: '0 0 10px rgba(125, 211, 252, 0.24)',
+                  }}
+                />
+              ))}
+
+              {allKeyframeTimes.map((time, index) => (
+                <div
+                  key={`reference-keyframe-${index}-${time}`}
+                  className="absolute bottom-1 -translate-x-1/2 pointer-events-none z-20"
+                  style={{ left: `${clampToClipRange(time) * pixelsPerSecond}px` }}
+                >
+                  <Diamond className="w-2 h-2 text-yellow-300/90 fill-yellow-400/85 drop-shadow-[0_0_6px_rgba(250,204,21,0.35)]" />
+                </div>
+              ))}
+
+              <div
+                className="absolute top-0 bottom-0 w-px bg-yellow-500/80 pointer-events-none z-20"
+                style={{
+                  left: `${clampToClipRange(clipLocalPlayheadTime) * pixelsPerSecond}px`,
+                  boxShadow: '0 0 8px rgba(250, 204, 21, 0.28)',
+                }}
+              />
             </div>
           </div>
 

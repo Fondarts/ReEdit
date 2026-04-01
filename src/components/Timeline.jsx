@@ -623,6 +623,7 @@ function Timeline({ onOpenAudioGenerate }) {
     toggleTrackMute,
     toggleTrackLock,
     toggleTrackVisibility,
+    setClipsEnabled,
     addTrack,
     addTransition,
     removeTransition,
@@ -697,7 +698,9 @@ function Timeline({ onOpenAudioGenerate }) {
   const unlinkHotkeyLabel = formatEditorHotkey(editorHotkeys[EDITOR_HOTKEY_IDS.UNLINK_SELECTION])
   const snappingHotkeyLabel = formatEditorHotkey(editorHotkeys[EDITOR_HOTKEY_IDS.TOGGLE_SNAPPING])
   const rippleHotkeyLabel = formatEditorHotkey(editorHotkeys[EDITOR_HOTKEY_IDS.TOGGLE_RIPPLE])
+  const toggleClipEnabledHotkeyLabel = formatEditorHotkey(editorHotkeys[EDITOR_HOTKEY_IDS.TOGGLE_CLIP_ENABLED])
   const durationByHotkeyHint = durationByHotkeyLabel === 'Not set' ? '' : durationByHotkeyLabel
+  const isClipEnabled = useCallback((clip) => clip?.enabled !== false, [])
   const getContextSelectionClipIds = useCallback((clipId) => {
     if (!clipId) return []
     if (selectedClipIds.includes(clipId)) return selectedClipIds
@@ -817,6 +820,24 @@ function Timeline({ onOpenAudioGenerate }) {
     clipContextSelectionClips.every((clip) => clip.linkGroupId === clipContextLinkedGroupIds[0])
   )
   const clipContextCanUnlink = clipContextLinkedGroupIds.length > 0
+  const clipContextShouldEnable = useMemo(
+    () => clipContextSelectionClips.length > 0 && clipContextSelectionClips.every((clip) => !isClipEnabled(clip)),
+    [clipContextSelectionClips, isClipEnabled]
+  )
+
+  const setClipSelectionEnabled = useCallback((clipIds, enabled) => {
+    if (!Array.isArray(clipIds) || clipIds.length === 0) return
+    setClipsEnabled(clipIds, enabled)
+  }, [setClipsEnabled])
+
+  const toggleClipSelectionEnabled = useCallback((clipIds = selectedClipIds) => {
+    const targetClips = (clipIds || [])
+      .map((clipId) => clips.find((clip) => clip.id === clipId))
+      .filter(Boolean)
+    if (targetClips.length === 0) return
+    const shouldEnable = targetClips.every((clip) => !isClipEnabled(clip))
+    setClipSelectionEnabled(targetClips.map((clip) => clip.id), shouldEnable)
+  }, [clips, isClipEnabled, selectedClipIds, setClipSelectionEnabled])
   
   const edgeTransitionsByClipId = useMemo(() => {
     const map = new Map()
@@ -1604,6 +1625,7 @@ function Timeline({ onOpenAudioGenerate }) {
       const textOptions = {
         ...(clip.textProperties || {}),
         duration: remainder,
+        enabled: isClipEnabled(clip),
         saveHistory: false,
       }
       return addTextClip(clip.trackId, textOptions, splitPosition)
@@ -1615,6 +1637,7 @@ function Timeline({ onOpenAudioGenerate }) {
         name: clip.name,
         adjustments: clip.adjustments || {},
         transform: clip.transform || {},
+        enabled: isClipEnabled(clip),
         saveHistory: false,
       })
     }
@@ -1627,9 +1650,15 @@ function Timeline({ onOpenAudioGenerate }) {
       duration: remainder,
       trimStart: sourceTimeAtCut,
       trimEnd: sourceTrimEnd,
+      enabled: isClipEnabled(clip),
+      ...(clip.type === 'audio'
+        ? {
+            gainDb: clip.gainDb,
+          }
+        : {}),
       saveHistory: false,
     })
-  }, [assets, saveToHistory, resizeClip, addTextClip, addAdjustmentClip, addClip, timelineFps])
+  }, [assets, saveToHistory, resizeClip, addTextClip, addAdjustmentClip, addClip, timelineFps, isClipEnabled])
 
   const splitAllTracksAtPlayhead = useCallback(() => {
     const clipsToSplit = clips.filter(
@@ -1729,6 +1758,14 @@ function Timeline({ onOpenAudioGenerate }) {
         if (hasLinkedSelection) {
           e.preventDefault()
           unlinkSelectedClips()
+        }
+        return
+      }
+
+      if (matchEditorHotkey(e, editorHotkeys[EDITOR_HOTKEY_IDS.TOGGLE_CLIP_ENABLED])) {
+        if (selectedClipIds.length > 0) {
+          e.preventDefault()
+          toggleClipSelectionEnabled()
         }
         return
       }
@@ -1837,7 +1874,7 @@ function Timeline({ onOpenAudioGenerate }) {
     return () => {
       window.removeEventListener('keydown', handleKeyDown)
     }
-  }, [toggleSnapping, toggleRippleEdit, addMarker, selectedClipIds, selectedGap, selectedTransitionId, selectedMarkerId, removeSelectedClips, rippleDeleteSelectedClips, rippleDeleteSelectedGap, removeTransition, removeMarker, clearSelection, selectMarker, clips, handleUndoAction, handleRedoAction, activeTrackId, playheadPosition, saveToHistory, resizeClip, addClip, addTextClip, addAdjustmentClip, updateClipTrim, assets, timelineFps, copySelectedClips, pasteClipsAtPlayhead, copiedClips, selectClipsFromPlayheadToEnd, selectClipsFromTimelineStartToPlayhead, splitClipAtTime, splitAllTracksAtPlayhead, openMoveOffsetDialog, openDurationDeltaDialog, moveOffsetDialogOpen, durationDeltaDialogOpen, editorHotkeys, linkSelectedClips, unlinkSelectedClips, applyZoomWithPlayheadPivot, zoom, rippleEditMode])
+  }, [toggleSnapping, toggleRippleEdit, addMarker, selectedClipIds, selectedGap, selectedTransitionId, selectedMarkerId, removeSelectedClips, rippleDeleteSelectedClips, rippleDeleteSelectedGap, removeTransition, removeMarker, clearSelection, selectMarker, clips, handleUndoAction, handleRedoAction, activeTrackId, playheadPosition, saveToHistory, resizeClip, addClip, addTextClip, addAdjustmentClip, updateClipTrim, assets, timelineFps, copySelectedClips, pasteClipsAtPlayhead, copiedClips, selectClipsFromPlayheadToEnd, selectClipsFromTimelineStartToPlayhead, splitClipAtTime, splitAllTracksAtPlayhead, openMoveOffsetDialog, openDurationDeltaDialog, moveOffsetDialogOpen, durationDeltaDialogOpen, editorHotkeys, linkSelectedClips, unlinkSelectedClips, toggleClipSelectionEnabled, applyZoomWithPlayheadPivot, zoom, rippleEditMode])
 
   // Spacebar panning key state (dedicated listeners so keyup cannot get "stuck")
   useEffect(() => {
@@ -2474,7 +2511,7 @@ function Timeline({ onOpenAudioGenerate }) {
       case 'duplicate':
         // Duplicate clip right after current position
         if (clip.type === 'text') {
-          const textOptions = { ...(clip.textProperties || {}), duration: clip.duration }
+          const textOptions = { ...(clip.textProperties || {}), duration: clip.duration, enabled: isClipEnabled(clip) }
           addTextClip(clip.trackId, textOptions, clip.startTime + clip.duration + 0.1)
         } else if (clip.type === 'adjustment') {
           addAdjustmentClip(clip.trackId, clip.startTime + clip.duration + 0.1, {
@@ -2482,11 +2519,21 @@ function Timeline({ onOpenAudioGenerate }) {
             name: clip.name,
             adjustments: clip.adjustments || {},
             transform: clip.transform || {},
+            enabled: isClipEnabled(clip),
           })
         } else {
           const asset = assets.find(a => a.id === clip.assetId)
           if (asset) {
-            addClip(clip.trackId, asset, clip.startTime + clip.duration + 0.1, timelineFps)
+            addClip(clip.trackId, asset, clip.startTime + clip.duration + 0.1, timelineFps, {
+              enabled: isClipEnabled(clip),
+              ...(clip.type === 'audio'
+                ? {
+                    gainDb: clip.gainDb,
+                    fadeIn: clip.fadeIn,
+                    fadeOut: clip.fadeOut,
+                  }
+                : {}),
+            })
           }
         }
         break
@@ -2496,6 +2543,15 @@ function Timeline({ onOpenAudioGenerate }) {
       case 'duration-by-amount':
         openDurationDeltaDialog()
         break
+      case 'toggle-enabled': {
+        const targetIds = clipContextSelectionIds.length > 0 ? clipContextSelectionIds : [clip.id]
+        const shouldEnable = targetIds
+          .map((clipId) => clips.find((candidate) => candidate.id === clipId))
+          .filter(Boolean)
+          .every((candidate) => !isClipEnabled(candidate))
+        setClipSelectionEnabled(targetIds, shouldEnable)
+        break
+      }
       case 'link-selection':
         linkSelectedClips()
         break
@@ -4068,6 +4124,7 @@ function Timeline({ onOpenAudioGenerate }) {
                   const thumbCount = Math.max(1, Math.floor(clipWidth / 60))
                   const isTextClip = clip.type === 'text'
                   const isAdjustmentClip = clip.type === 'adjustment'
+                  const clipEnabled = isClipEnabled(clip)
                   
                   return (
                   <div
@@ -4083,6 +4140,8 @@ function Timeline({ onOpenAudioGenerate }) {
                     } ${
                       clipDragState && (clipDragState.clipId === clip.id || (selectedClipIds.includes(clip.id) && selectedClipIds.includes(clipDragState.clipId)))
                         ? 'ring-2 ring-sf-accent cursor-grabbing z-30' : ''
+                    } ${
+                      clipEnabled ? '' : 'opacity-60 saturate-0'
                     }`}
                     style={{ 
                       left: `${clip.startTime * pixelsPerSecond}px`, 
@@ -4399,6 +4458,16 @@ function Timeline({ onOpenAudioGenerate }) {
                       </>
                     )}
                     
+                    {!clipEnabled && (
+                      <>
+                        <div className="absolute inset-0 bg-slate-950/35 pointer-events-none z-10" />
+                        <div className="absolute top-1 right-1 z-20 flex items-center gap-1 rounded bg-slate-950/85 border border-white/10 px-1 py-0.5 text-[8px] text-slate-100 uppercase tracking-[0.14em] pointer-events-none">
+                          <EyeOff className="w-2.5 h-2.5" />
+                          <span>Off</span>
+                        </div>
+                      </>
+                    )}
+
                     {/* Hover overlay */}
                     <div className="absolute inset-0 bg-white/0 group-hover:bg-white/5 transition-colors pointer-events-none" />
                     
@@ -4707,6 +4776,7 @@ function Timeline({ onOpenAudioGenerate }) {
                   const clipWidth = clip.duration * pixelsPerSecond
                   const renderedClipWidth = Math.max(24, clipWidth)
                   const clipUrl = getClipUrl(clip)
+                  const clipEnabled = isClipEnabled(clip)
                   const { fadeIn, fadeOut } = getAudioClipFadeValues(clip)
                   const fadeInWidth = Math.min(renderedClipWidth, fadeIn * pixelsPerSecond)
                   const fadeOutWidth = Math.min(renderedClipWidth, fadeOut * pixelsPerSecond)
@@ -4742,7 +4812,7 @@ function Timeline({ onOpenAudioGenerate }) {
                     className={`absolute top-0.5 bottom-0.5 rounded-sm cursor-grab group overflow-hidden ${
                       selectedClipIds.includes(clip.id) ? 'ring-2 ring-white ring-offset-1 ring-offset-sf-dark-900' : ''
                     } ${slipState?.clipId === clip.id ? 'ring-2 ring-yellow-400 cursor-ew-resize z-30' : ''} ${clipDragState && (clipDragState.clipId === clip.id || (selectedClipIds.includes(clip.id) && selectedClipIds.includes(clipDragState.clipId)))
-                        ? 'ring-2 ring-sf-accent cursor-grabbing z-30' : ''}`}
+                        ? 'ring-2 ring-sf-accent cursor-grabbing z-30' : ''} ${clipEnabled ? '' : 'opacity-60 saturate-0'}`}
                     style={{ 
                       left: `${clip.startTime * pixelsPerSecond}px`, 
                       width: `${clipWidth}px`,
@@ -4814,6 +4884,16 @@ function Timeline({ onOpenAudioGenerate }) {
                         {clip.name}
                       </span>
                     </div>
+
+                    {!clipEnabled && (
+                      <>
+                        <div className="absolute inset-0 bg-slate-950/35 pointer-events-none z-10" />
+                        <div className="absolute top-[4px] right-1 z-20 flex items-center gap-1 rounded bg-slate-950/85 border border-white/10 px-1 py-0.5 text-[8px] text-slate-100 uppercase tracking-[0.14em] pointer-events-none">
+                          <EyeOff className="w-2.5 h-2.5" />
+                          <span>Off</span>
+                        </div>
+                      </>
+                    )}
                     
                     {/* Hover overlay */}
                     <div className="absolute inset-0 bg-white/0 group-hover:bg-white/10 transition-colors pointer-events-none" />
@@ -5281,6 +5361,19 @@ function Timeline({ onOpenAudioGenerate }) {
             {durationByHotkeyHint && (
               <span className="ml-auto text-sf-text-muted text-[10px]">{durationByHotkeyHint}</span>
             )}
+          </button>
+          <button
+            onClick={() => handleContextMenuAction('toggle-enabled')}
+            className="w-full px-3 py-1.5 text-left text-xs text-sf-text-primary hover:bg-sf-dark-700 flex items-center gap-2 transition-colors"
+            title="Enable or disable the current clip selection"
+          >
+            {clipContextShouldEnable ? <Eye className="w-3 h-3" /> : <EyeOff className="w-3 h-3" />}
+            <span>
+              {clipContextShouldEnable
+                ? (clipContextSelectionIds.length > 1 ? `Enable ${clipContextSelectionIds.length} clips` : 'Enable Clip')
+                : (clipContextSelectionIds.length > 1 ? `Disable ${clipContextSelectionIds.length} clips` : 'Disable Clip')}
+            </span>
+            <span className="ml-auto text-sf-text-muted text-[10px]">{toggleClipEnabledHotkeyLabel}</span>
           </button>
           <button
             onClick={() => handleContextMenuAction('link-selection')}

@@ -195,6 +195,7 @@ const LETTERBOX_PRESETS = [
   { id: '1:1', label: '1:1 Square (Instagram)', ratio: 1 },
 ]
 const AUTO_SMOOTH_PREVIEW_KEY = 'comfystudio-auto-smooth-preview'
+const PREVIEW_TRANSFORM_CONTROLS_KEY = 'previewShowTransformControls'
 
 function PreviewPanel() {
   const videoRefA = useRef(null) // Used for asset preview mode
@@ -409,6 +410,14 @@ function PreviewPanel() {
       return false
     }
   })
+  const [showPreviewTransformControls, setShowPreviewTransformControls] = useState(() => {
+    try {
+      const saved = localStorage.getItem(PREVIEW_TRANSFORM_CONTROLS_KEY)
+      return saved !== null ? JSON.parse(saved) : true
+    } catch {
+      return true
+    }
+  })
   const [autoSmoothPreviewEnabled, setAutoSmoothPreviewEnabled] = useState(() => {
     try {
       return localStorage.getItem(AUTO_SMOOTH_PREVIEW_KEY) !== 'false'
@@ -425,6 +434,13 @@ function PreviewPanel() {
       // Ignore localStorage errors.
     }
   }, [showInfoOverlay])
+  useEffect(() => {
+    try {
+      localStorage.setItem(PREVIEW_TRANSFORM_CONTROLS_KEY, JSON.stringify(showPreviewTransformControls))
+    } catch {
+      // Ignore localStorage errors.
+    }
+  }, [showPreviewTransformControls])
   useEffect(() => {
     try {
       localStorage.setItem(AUTO_SMOOTH_PREVIEW_KEY, autoSmoothPreviewEnabled ? 'true' : 'false')
@@ -647,6 +663,7 @@ function PreviewPanel() {
   const selectedPreviewClipTime = selectedPreviewClip
     ? playheadPosition - selectedPreviewClipStartTime
     : 0
+  const canShowPreviewTransformControls = previewMode === 'timeline' && !!selectedPreviewClip
 
   useEffect(() => {
     if (previewTransformHistoryClipRef.current !== selectedPreviewClipId) {
@@ -1312,6 +1329,9 @@ function PreviewPanel() {
       case 'play':
         togglePlay()
         break
+      case 'toggle-transform-controls':
+        setShowPreviewTransformControls((value) => !value)
+        break
       case 'fullscreen':
         toggleFullscreen()
         break
@@ -1756,6 +1776,28 @@ function PreviewPanel() {
               <X className="w-4 h-4 text-sf-text-muted" />
             </button>
           )}
+          {previewMode === 'timeline' && (
+            <button
+              onClick={() => setShowPreviewTransformControls((value) => !value)}
+              disabled={!canShowPreviewTransformControls}
+              className={`p-1 rounded transition-colors ${
+                canShowPreviewTransformControls
+                  ? 'hover:bg-sf-dark-700'
+                  : 'opacity-40 cursor-not-allowed'
+              } ${showPreviewTransformControls ? 'text-sf-accent' : 'text-sf-text-muted'}`}
+              title={
+                canShowPreviewTransformControls
+                  ? (showPreviewTransformControls ? 'Hide transform controls' : 'Show transform controls')
+                  : 'Select an active visual clip to toggle transform controls'
+              }
+            >
+              {showPreviewTransformControls ? (
+                <EyeOff className="w-4 h-4" />
+              ) : (
+                <Eye className="w-4 h-4" />
+              )}
+            </button>
+          )}
           <button 
             onClick={toggleFullscreen}
             className="p-1 hover:bg-sf-dark-700 rounded transition-colors"
@@ -2133,7 +2175,7 @@ function PreviewPanel() {
             )}
           </div>
 
-          {selectedPreviewClip && selectedPreviewTransform && (
+          {showPreviewTransformControls && selectedPreviewClip && selectedPreviewTransform && (
             <div
               className="absolute inset-0 overflow-visible pointer-events-none"
               style={previewStageStyle}
@@ -2522,6 +2564,24 @@ function PreviewPanel() {
           </button>
           
           <div className="h-px bg-sf-dark-600 my-1" />
+
+          {previewMode === 'timeline' && (
+            <>
+              <button
+                onClick={() => handleContextAction('toggle-transform-controls')}
+                className="w-full px-3 py-1.5 text-left text-xs text-sf-text-primary hover:bg-sf-dark-700 flex items-center gap-2 transition-colors"
+              >
+                {showPreviewTransformControls ? (
+                  <EyeOff className="w-3.5 h-3.5" />
+                ) : (
+                  <Eye className="w-3.5 h-3.5" />
+                )}
+                <span>{showPreviewTransformControls ? 'Hide Transform Controls' : 'Show Transform Controls'}</span>
+              </button>
+              
+              <div className="h-px bg-sf-dark-600 my-1" />
+            </>
+          )}
           
           <button
             onClick={() => handleContextAction('fullscreen')}

@@ -125,6 +125,7 @@ function buildClipSignature(clip) {
     trackId: clip.trackId || null,
     assetId: clip.assetId || null,
     type: clip.type || null,
+    enabled: clip.enabled !== false,
     startTime: roundNumber(clip.startTime),
     duration: roundNumber(clip.duration),
     trimStart: roundNumber(clip.trimStart),
@@ -222,6 +223,7 @@ function getMaxConcurrentVideoLayers(clips = [], tracks = []) {
   const events = []
   for (const clip of clips || []) {
     if (!clip || clip.type !== 'video') continue
+    if (clip.enabled === false) continue
     if (!visibleVideoTrackIds.has(clip.trackId)) continue
     const startTime = Number(clip.startTime)
     const duration = Number(clip.duration)
@@ -259,6 +261,7 @@ export function getPreviewComplexity(timelineState) {
 
   for (const clip of clips) {
     if (!clip) continue
+    if (clip.enabled === false) continue
     const track = trackById.get(clip.trackId)
     if (clip.type === 'video' && track?.type === 'video' && track.visible !== false) {
       videoClipCount += 1

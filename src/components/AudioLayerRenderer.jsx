@@ -2,6 +2,7 @@ import { useEffect, useRef, useMemo } from 'react'
 import useTimelineStore from '../stores/timelineStore'
 import useAssetsStore from '../stores/assetsStore'
 import { getAudioClipFadeGain } from '../utils/audioClipFades'
+import { getAudioClipLinearGain } from '../utils/audioClipGain'
 
 /**
  * AudioLayerRenderer - Manages audio playback for audio clips on the timeline
@@ -13,8 +14,10 @@ import { getAudioClipFadeGain } from '../utils/audioClipFades'
  * - Handling multiple overlapping audio clips
  */
 function AudioLayerRenderer() {
-  const audioElementsRef = useRef(new Map()) // clipId -> { element, currentSrc }
+  const audioElementsRef = useRef(new Map()) // clipId -> { element, currentSrc, sourceNode, gainNode }
   const isPlayingRef = useRef(false)
+  const audioContextRef = useRef(null)
+  const masterGainRef = useRef(null)
   
   const {
     clips,
@@ -31,6 +34,37 @@ function AudioLayerRenderer() {
   // Keep isPlayingRef in sync so event handlers always have current value
   useEffect(() => {
     isPlayingRef.current = isPlaying
+  }, [isPlaying])
+
+  useEffect(() => {
+    try {
+      const AudioContextCtor = window.AudioContext || window.webkitAudioContext
+      if (!AudioContextCtor) return undefined
+
+      const audioContext = new AudioContextCtor()
+      const masterGain = audioContext.createGain()
+      masterGain.connect(audioContext.destination)
+
+      audioContextRef.current = audioContext
+      masterGainRef.current = masterGain
+    } catch (err) {
+      console.warn('Failed to initialize preview audio context:', err)
+    }
+
+    return () => {
+      if (audioContextRef.current) {
+        audioContextRef.current.close().catch(() => {})
+      }
+      audioContextRef.current = null
+      masterGainRef.current = null
+    }
+  }, [])
+
+  useEffect(() => {
+    const audioContext = audioContextRef.current
+    if (audioContext && audioContext.state === 'suspended' && isPlaying) {
+      audioContext.resume().catch(() => {})
+    }
   }, [isPlaying])
   
   // Get active audio clips at current playhead position
@@ -51,6 +85,8 @@ function AudioLayerRenderer() {
       if (!activeClipIds.has(clipId)) {
         entry.element.pause()
         entry.element.src = ''
+        entry.sourceNode?.disconnect()
+        entry.gainNode?.disconnect()
         audioEntries.delete(clipId)
       }
     }
@@ -63,11 +99,31 @@ function AudioLayerRenderer() {
       let entry = audioEntries.get(clip.id)
       
       if (!entry) {
-        // Create new audio element
         const audioEl = new Audio()
         audioEl.preload = 'auto'
         audioEl.crossOrigin = 'anonymous'
-        entry = { element: audioEl, currentSrc: null }
+        entry = {
+          element: audioEl,
+          currentSrc: null,
+          sourceNode: null,
+          gainNode: null,
+        }
+
+        const audioContext = audioContextRef.current
+        const masterGain = masterGainRef.current
+        if (audioContext && masterGain) {
+          try {
+            const sourceNode = audioContext.createMediaElementSource(audioEl)
+            const gainNode = audioContext.createGain()
+            sourceNode.connect(gainNode)
+            gainNode.connect(masterGain)
+            entry.sourceNode = sourceNode
+            entry.gainNode = gainNode
+          } catch (err) {
+            console.warn('Failed to connect preview audio through Web Audio:', err)
+          }
+        }
+
         audioEntries.set(clip.id, entry)
       }
 
@@ -148,14 +204,23 @@ function AudioLayerRenderer() {
         }
       }
       
-      // Set volume - use master volume from assets store, multiplied by track volume if available
-      let finalVolume = volume
-      if (track.volume !== undefined) {
-        // Track volume is typically 0-100, convert to 0-1 and multiply with master volume
-        finalVolume = volume * (track.volume / 100)
+      const trackGain = track.volume !== undefined
+        ? Math.max(0, Number(track.volume) || 0) / 100
+        : 1
+      const fadeGain = getAudioClipFadeGain(clip, clipTime)
+      const clipGain = getAudioClipLinearGain(clip) * trackGain * fadeGain
+
+      if (masterGainRef.current && Number.isFinite(volume)) {
+        masterGainRef.current.gain.value = Math.max(0, volume)
       }
-      finalVolume *= getAudioClipFadeGain(clip, clipTime)
-      audioEl.volume = Math.max(0, Math.min(1, finalVolume))
+
+      if (entry.gainNode) {
+        entry.gainNode.gain.value = Math.max(0, clipGain)
+        audioEl.volume = 1
+      } else {
+        const fallbackVolume = Math.max(0, Math.min(1, volume * clipGain))
+        audioEl.volume = fallbackVolume
+      }
     })
   }, [activeAudioClips, playheadPosition, isPlaying, playbackRate, getAssetById, clips, tracks, volume])
   
@@ -166,6 +231,8 @@ function AudioLayerRenderer() {
       for (const entry of audioEntries.values()) {
         entry.element.pause()
         entry.element.src = ''
+        entry.sourceNode?.disconnect()
+        entry.gainNode?.disconnect()
       }
       audioEntries.clear()
     }

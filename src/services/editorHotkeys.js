@@ -4,6 +4,7 @@ export const EDITOR_HOTKEYS_CHANGED_EVENT = 'comfystudio-editor-hotkeys-changed'
 export const EDITOR_HOTKEY_IDS = {
   TOGGLE_SNAPPING: 'timeline.toggleSnapping',
   TOGGLE_RIPPLE: 'timeline.toggleRipple',
+  TOGGLE_CLIP_ENABLED: 'timeline.toggleClipEnabled',
   ADD_MARKER: 'timeline.addMarker',
   SELECT_TO_END: 'timeline.selectToEnd',
   SELECT_FROM_START: 'timeline.selectFromStart',
@@ -11,6 +12,8 @@ export const EDITOR_HOTKEY_IDS = {
   SPLIT_ALL: 'timeline.splitAll',
   OPEN_MOVE_BY: 'timeline.openMoveBy',
   OPEN_DURATION_BY: 'timeline.openDurationBy',
+  LINK_SELECTION: 'timeline.linkSelection',
+  UNLINK_SELECTION: 'timeline.unlinkSelection',
 }
 
 export const EDITOR_HOTKEY_DEFINITIONS = [
@@ -51,6 +54,12 @@ export const EDITOR_HOTKEY_DEFINITIONS = [
     defaultBinding: 'R',
   },
   {
+    id: EDITOR_HOTKEY_IDS.TOGGLE_CLIP_ENABLED,
+    label: 'Enable or disable selected clips',
+    description: 'Timeline clip state',
+    defaultBinding: 'D',
+  },
+  {
     id: EDITOR_HOTKEY_IDS.ADD_MARKER,
     label: 'Add marker at playhead',
     description: 'Timeline navigation',
@@ -67,6 +76,18 @@ export const EDITOR_HOTKEY_DEFINITIONS = [
     label: 'Open Duration By dialog',
     description: 'Precision editing',
     defaultBinding: '',
+  },
+  {
+    id: EDITOR_HOTKEY_IDS.LINK_SELECTION,
+    label: 'Link selected clips',
+    description: 'Timeline linking',
+    defaultBinding: 'Ctrl+L',
+  },
+  {
+    id: EDITOR_HOTKEY_IDS.UNLINK_SELECTION,
+    label: 'Unlink selected clips',
+    description: 'Timeline linking',
+    defaultBinding: 'Ctrl+Shift+L',
   },
 ]
 
