@@ -1,6 +1,6 @@
-# Workflow Starter Pack v0.1.2
+# Workflow Starter Pack v0.1.4
 
-Generated for ComfyStudio v0.1.2.
+Generated for ComfyStudio v0.1.4.
 
 ## What Is Included
 
