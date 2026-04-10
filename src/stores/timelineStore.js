@@ -2,7 +2,7 @@ import { create } from 'zustand'
 import { persist } from 'zustand/middleware'
 import { TRANSITION_DEFAULT_SETTINGS, FRAME_RATE } from '../constants/transitions'
 import { buildTextAnimationPresetKeyframes, TEXT_ANIMATION_KEYFRAME_PROPERTIES } from '../utils/textAnimationPresets'
-import { normalizeAdjustmentSettings } from '../utils/adjustments'
+import { getAdjustmentValue, mergeAdjustmentSettings, normalizeAdjustmentSettings } from '../utils/adjustments'
 import { clampAudioFadeDuration } from '../utils/audioClipFades'
 import { normalizeAudioClipGainDb } from '../utils/audioClipGain'
 
@@ -2128,13 +2128,9 @@ export const useTimelineStore = create(
     set((state) => ({
       clips: state.clips.map((clip) => {
         if (clip.id !== clipId || !supportsClipAdjustments(clip)) return clip
-        const currentAdjustments = normalizeAdjustmentSettings(clip.adjustments || {})
         return {
           ...clip,
-          adjustments: normalizeAdjustmentSettings({
-            ...currentAdjustments,
-            ...(adjustmentUpdates || {}),
-          }),
+          adjustments: mergeAdjustmentSettings(clip.adjustments || {}, adjustmentUpdates || {}),
         }
       })
     }))
@@ -2459,11 +2455,11 @@ export const useTimelineStore = create(
       }
     } else {
       // Add new keyframe with current transform value
-      const hasAdjustmentValue = clip.type === 'adjustment'
-        && Object.prototype.hasOwnProperty.call(clip.adjustments || {}, property)
+      const adjustmentValue = getAdjustmentValue(clip.adjustments || {}, property)
+      const hasAdjustmentValue = adjustmentValue !== undefined
       const currentValue = hasAdjustmentValue
-        ? (clip.adjustments?.[property] ?? 0)
-        : (clip.transform?.[property] ?? clip.adjustments?.[property] ?? 0)
+        ? adjustmentValue
+        : (clip.transform?.[property] ?? adjustmentValue ?? 0)
       get().setKeyframe(clipId, property, clipTime, currentValue, 'easeInOut', { saveHistory: true })
       // If scale is linked, also add keyframe for the other scale property
       if (isLinked) {

@@ -67,6 +67,10 @@
     "appId": "com.comfystudio.app",
     "productName": "ComfyStudio",
     "copyright": "Copyright © 2024-2026",
+    "asarUnpack": [
+      "**/node_modules/ffmpeg-static/**",
+      "**/node_modules/ffprobe-static/**"
+    ],
     "directories": {
       "output": "release",
       "buildResources": "build"
@@ -81,6 +85,21 @@
       {
         "from": "public/workflows",
         "to": "workflows",
+        "filter": [
+          "**/*"
+        ]
+      },
+      {
+        "from": "node_modules/ffmpeg-static",
+        "to": "bin",
+        "filter": [
+          "ffmpeg.exe",
+          "ffmpeg"
+        ]
+      },
+      {
+        "from": "node_modules/ffprobe-static/bin",
+        "to": "bin/ffprobe-static",
         "filter": [
           "**/*"
         ]

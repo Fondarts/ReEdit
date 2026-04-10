@@ -7,7 +7,16 @@ import renderCacheService from '../services/renderCache'
 import { getAnimatedTransform, getAnimatedAdjustmentSettings } from '../utils/keyframes'
 import { loadRenderCache, saveRenderCache } from '../services/fileSystem'
 import { getSpriteFramePosition } from '../services/thumbnailSprites'
-import { buildCssFilterFromAdjustments, hasAdjustmentEffect, normalizeAdjustmentSettings } from '../utils/adjustments'
+import {
+  buildCssFilterFromAdjustments,
+  getAdjustmentSvgFilterStages,
+  getTonalMaskTableValues,
+  hasAdjustmentEffect,
+  hasTonalAdjustmentEffect,
+  normalizeAdjustmentSettings,
+  scaleAdjustmentSettings,
+  TONAL_ADJUSTMENT_GROUP_KEYS,
+} from '../utils/adjustments'
 
 /**
  * Returns true if this layer fully obscures all layers below it (opaque, normal blend, covers frame).
@@ -49,12 +58,153 @@ function isLayerFullyObscuring(clip, playheadPosition, getAssetById) {
   return true
 }
 
-function getClipAdjustmentFilter(clip, clipTime) {
-  const settings = normalizeAdjustmentSettings(
-    getAnimatedAdjustmentSettings(clip, clipTime) || clip?.adjustments || {}
-  )
-  return buildCssFilterFromAdjustments(settings)
+function sanitizeAdjustmentFilterId(value) {
+  return String(value || 'adjustment-filter').replace(/[^a-zA-Z0-9_-]/g, '_')
 }
+
+function buildSvgAdjustmentStageNodes(stages, inputName, prefix) {
+  const nodes = []
+  let currentInput = inputName
+
+  stages.forEach((stage, index) => {
+    const resultName = `${prefix}-${stage.type}-${index}`
+    if (stage.type === 'linear') {
+      nodes.push(
+        <feComponentTransfer in={currentInput} result={resultName} key={resultName}>
+          <feFuncR type="linear" slope={stage.slope} intercept={stage.intercept} />
+          <feFuncG type="linear" slope={stage.slope} intercept={stage.intercept} />
+          <feFuncB type="linear" slope={stage.slope} intercept={stage.intercept} />
+        </feComponentTransfer>
+      )
+    } else if (stage.type === 'saturate') {
+      nodes.push(
+        <feColorMatrix
+          in={currentInput}
+          type="saturate"
+          values={stage.value}
+          result={resultName}
+          key={resultName}
+        />
+      )
+    } else if (stage.type === 'hueRotate') {
+      nodes.push(
+        <feColorMatrix
+          in={currentInput}
+          type="hueRotate"
+          values={stage.value}
+          result={resultName}
+          key={resultName}
+        />
+      )
+    } else if (stage.type === 'gaussianBlur') {
+      nodes.push(
+        <feGaussianBlur
+          in={currentInput}
+          stdDeviation={stage.stdDeviation}
+          result={resultName}
+          key={resultName}
+        />
+      )
+    }
+    currentInput = resultName
+  })
+
+  return { nodes, result: currentInput }
+}
+
+const AdjustmentSvgFilter = memo(function AdjustmentSvgFilter({ filterId, settings }) {
+  const normalized = normalizeAdjustmentSettings(settings)
+  const globalStages = getAdjustmentSvgFilterStages(normalized, { includeBlur: false })
+  const globalStageData = buildSvgAdjustmentStageNodes(globalStages, 'SourceGraphic', `${filterId}-global`)
+  const globalResult = globalStageData.result || 'SourceGraphic'
+  const nodes = [...globalStageData.nodes]
+  let currentResult = globalResult
+
+  for (const groupKey of TONAL_ADJUSTMENT_GROUP_KEYS) {
+    if (!hasAdjustmentEffect(normalized[groupKey])) continue
+
+    const groupStages = getAdjustmentSvgFilterStages(normalized[groupKey], { includeBlur: false })
+    const adjustedStageData = buildSvgAdjustmentStageNodes(groupStages, globalResult, `${filterId}-${groupKey}`)
+    const adjustedResult = adjustedStageData.result || globalResult
+    const luminanceResult = `${filterId}-${groupKey}-luma`
+    const maskResult = `${filterId}-${groupKey}-mask`
+    const maskedResult = `${filterId}-${groupKey}-masked`
+    const compositeResult = `${filterId}-${groupKey}-composite`
+
+    nodes.push(...adjustedStageData.nodes)
+    nodes.push(
+      <feColorMatrix
+        in={globalResult}
+        type="luminanceToAlpha"
+        result={luminanceResult}
+        key={luminanceResult}
+      />
+    )
+    nodes.push(
+      <feComponentTransfer in={luminanceResult} result={maskResult} key={maskResult}>
+        <feFuncA type="table" tableValues={getTonalMaskTableValues(groupKey)} />
+      </feComponentTransfer>
+    )
+    nodes.push(
+      <feComposite
+        in={adjustedResult}
+        in2={maskResult}
+        operator="in"
+        result={maskedResult}
+        key={maskedResult}
+      />
+    )
+    nodes.push(
+      <feComposite
+        in={maskedResult}
+        in2={currentResult}
+        operator="over"
+        result={compositeResult}
+        key={compositeResult}
+      />
+    )
+    currentResult = compositeResult
+  }
+
+  if (normalized.blur > 0) {
+    const blurResult = `${filterId}-blur`
+    nodes.push(
+      <feGaussianBlur
+        in={currentResult}
+        stdDeviation={normalized.blur}
+        result={blurResult}
+        key={blurResult}
+      />
+    )
+    currentResult = blurResult
+  }
+
+  return (
+    <svg
+      aria-hidden="true"
+      className="pointer-events-none absolute h-0 w-0 overflow-hidden"
+      focusable="false"
+    >
+      <defs>
+        <filter
+          id={filterId}
+          x="-25%"
+          y="-25%"
+          width="150%"
+          height="150%"
+          colorInterpolationFilters="sRGB"
+        >
+          {nodes}
+          {currentResult === 'SourceGraphic' ? (
+            <feComponentTransfer in="SourceGraphic">
+              <feFuncA type="identity" />
+            </feComponentTransfer>
+          ) : null}
+        </filter>
+      </defs>
+    </svg>
+  )
+})
 
 /**
  * Get scaled sprite style that fills the container while showing the correct frame
@@ -994,14 +1144,33 @@ const VideoLayer = memo(function VideoLayer({
 
   // Use animated transform instead of base transform
   const transformStyle = buildVideoTransform(animatedTransform)
-  const adjustmentFilter = getClipAdjustmentFilter(clip, clipTime)
-  const adjustmentFilterValue = adjustmentFilter !== 'none' ? adjustmentFilter : undefined
+  const adjustmentSettings = useMemo(() => (
+    normalizeAdjustmentSettings(getAnimatedAdjustmentSettings(clip, clipTime) || clip?.adjustments || {})
+  ), [clip, clipTime])
+  const hasTonalAdjustments = useMemo(
+    () => hasTonalAdjustmentEffect(adjustmentSettings),
+    [adjustmentSettings]
+  )
+  const adjustmentFilterId = useMemo(
+    () => `clip-adjustment-${sanitizeAdjustmentFilterId(clip?.id)}-video`,
+    [clip?.id]
+  )
+  const adjustmentFilterValue = useMemo(() => {
+    if (hasTonalAdjustments) {
+      return `url(#${adjustmentFilterId})`
+    }
+    const filterValue = buildCssFilterFromAdjustments(adjustmentSettings)
+    return filterValue !== 'none' ? filterValue : undefined
+  }, [adjustmentFilterId, adjustmentSettings, hasTonalAdjustments])
   // Combine blur (from transform) with mask filter (e.g. invert) so both apply
   const combinedFilter = [adjustmentFilterValue, transformStyle.filter, maskStyles.filter].filter(Boolean).join(' ') || undefined
   const spriteCombinedFilter = [adjustmentFilterValue, transformStyle.filter, spriteMaskStyles.filter].filter(Boolean).join(' ') || undefined
 
   return (
     <>
+      {hasTonalAdjustments && (
+        <AdjustmentSvgFilter filterId={adjustmentFilterId} settings={adjustmentSettings} />
+      )}
       {/* Container for cached video element (displaying cache = no black flash at cuts) */}
       <div
         ref={containerRef}
@@ -1100,42 +1269,63 @@ const ImageLayer = memo(function ImageLayer({
   }, [clip, clipTime])
   
   const transformStyle = buildVideoTransform(animatedTransform)
-  const adjustmentFilter = getClipAdjustmentFilter(clip, clipTime)
-  const adjustmentFilterValue = adjustmentFilter !== 'none' ? adjustmentFilter : undefined
+  const adjustmentSettings = useMemo(() => (
+    normalizeAdjustmentSettings(getAnimatedAdjustmentSettings(clip, clipTime) || clip?.adjustments || {})
+  ), [clip, clipTime])
+  const hasTonalAdjustments = useMemo(
+    () => hasTonalAdjustmentEffect(adjustmentSettings),
+    [adjustmentSettings]
+  )
+  const adjustmentFilterId = useMemo(
+    () => `clip-adjustment-${sanitizeAdjustmentFilterId(clip?.id)}-image`,
+    [clip?.id]
+  )
+  const adjustmentFilterValue = useMemo(() => {
+    if (hasTonalAdjustments) {
+      return `url(#${adjustmentFilterId})`
+    }
+    const filterValue = buildCssFilterFromAdjustments(adjustmentSettings)
+    return filterValue !== 'none' ? filterValue : undefined
+  }, [adjustmentFilterId, adjustmentSettings, hasTonalAdjustments])
   const combinedFilter = [adjustmentFilterValue, transformStyle.filter, maskStyles.filter].filter(Boolean).join(' ') || undefined
 
   return (
-    <div
-      className="bg-transparent w-full h-full"
-      style={{
-        position: layerIndex === 0 ? 'relative' : 'absolute',
-        top: 0,
-        left: 0,
-        right: 0,
-        bottom: 0,
-        zIndex: layerIndex + 1,
-        ...transformStyle,
-        ...maskStyles,
-        filter: combinedFilter,
-      }}
-      onPointerDown={(e) => {
-        if (typeof onClipPointerDown === 'function') {
-          onClipPointerDown(clip, e)
-        }
-      }}
-    >
-      <img
-        src={clipUrl}
-        alt={clip.name || 'Image'}
-        className="bg-transparent"
+    <>
+      {hasTonalAdjustments && (
+        <AdjustmentSvgFilter filterId={adjustmentFilterId} settings={adjustmentSettings} />
+      )}
+      <div
+        className="bg-transparent w-full h-full"
         style={{
-          ...getCenteredMediaFitStyle(),
-          objectFit: 'contain',
+          position: layerIndex === 0 ? 'relative' : 'absolute',
+          top: 0,
+          left: 0,
+          right: 0,
+          bottom: 0,
+          zIndex: layerIndex + 1,
+          ...transformStyle,
+          ...maskStyles,
+          filter: combinedFilter,
         }}
-        onContextMenu={(e) => e.preventDefault()}
-        draggable={false}
-      />
-    </div>
+        onPointerDown={(e) => {
+          if (typeof onClipPointerDown === 'function') {
+            onClipPointerDown(clip, e)
+          }
+        }}
+      >
+        <img
+          src={clipUrl}
+          alt={clip.name || 'Image'}
+          className="bg-transparent"
+          style={{
+            ...getCenteredMediaFitStyle(),
+            objectFit: 'contain',
+          }}
+          onContextMenu={(e) => e.preventDefault()}
+          draggable={false}
+        />
+      </div>
+    </>
   )
 })
 
@@ -1165,8 +1355,24 @@ const TextLayer = memo(function TextLayer({
   }, [clip, clipTime])
   
   const transformStyle = buildVideoTransform(animatedTransform)
-  const adjustmentFilter = getClipAdjustmentFilter(clip, clipTime)
-  const adjustmentFilterValue = adjustmentFilter !== 'none' ? adjustmentFilter : undefined
+  const adjustmentSettings = useMemo(() => (
+    normalizeAdjustmentSettings(getAnimatedAdjustmentSettings(clip, clipTime) || clip?.adjustments || {})
+  ), [clip, clipTime])
+  const hasTonalAdjustments = useMemo(
+    () => hasTonalAdjustmentEffect(adjustmentSettings),
+    [adjustmentSettings]
+  )
+  const adjustmentFilterId = useMemo(
+    () => `clip-adjustment-${sanitizeAdjustmentFilterId(clip?.id)}-text`,
+    [clip?.id]
+  )
+  const adjustmentFilterValue = useMemo(() => {
+    if (hasTonalAdjustments) {
+      return `url(#${adjustmentFilterId})`
+    }
+    const filterValue = buildCssFilterFromAdjustments(adjustmentSettings)
+    return filterValue !== 'none' ? filterValue : undefined
+  }, [adjustmentFilterId, adjustmentSettings, hasTonalAdjustments])
   const combinedFilter = [adjustmentFilterValue, transformStyle.filter].filter(Boolean).join(' ') || undefined
   const textProps = clip.textProperties || {}
   const safePreviewScale = Number.isFinite(previewScale) && previewScale > 0 ? previewScale : 1
@@ -1217,37 +1423,42 @@ const TextLayer = memo(function TextLayer({
   }
 
   return (
-    <div
-      className="absolute inset-0 flex items-center justify-center"
-      onPointerDown={(e) => {
-        if (typeof onClipPointerDown === 'function') {
-          onClipPointerDown(clip, e)
-        }
-      }}
-      onDoubleClick={(e) => {
-        if (typeof onClipDoubleClick === 'function') {
-          onClipDoubleClick(clip, e)
-        }
-      }}
-      style={{
-        zIndex: layerIndex + 1,
-        alignItems: getVerticalAlign(),
-        ...transformStyle,
-        filter: combinedFilter,
-      }}
-    >
-      <div 
-        className="relative"
-        style={backgroundStyle}
+    <>
+      {hasTonalAdjustments && (
+        <AdjustmentSvgFilter filterId={adjustmentFilterId} settings={adjustmentSettings} />
+      )}
+      <div
+        className="absolute inset-0 flex items-center justify-center"
+        onPointerDown={(e) => {
+          if (typeof onClipPointerDown === 'function') {
+            onClipPointerDown(clip, e)
+          }
+        }}
+        onDoubleClick={(e) => {
+          if (typeof onClipDoubleClick === 'function') {
+            onClipDoubleClick(clip, e)
+          }
+        }}
+        style={{
+          zIndex: layerIndex + 1,
+          alignItems: getVerticalAlign(),
+          ...transformStyle,
+          filter: combinedFilter,
+        }}
       >
-        <span 
-          style={textStyle}
-          className="whitespace-pre-wrap"
+        <div 
+          className="relative"
+          style={backgroundStyle}
         >
-          {textProps.text || 'Sample Text'}
-        </span>
+          <span 
+            style={textStyle}
+            className="whitespace-pre-wrap"
+          >
+            {textProps.text || 'Sample Text'}
+          </span>
+        </div>
       </div>
-    </div>
+    </>
   )
 })
 
@@ -1278,18 +1489,10 @@ const AdjustmentWrapper = memo(function AdjustmentWrapper({ clip, playheadPositi
     // Scale adjustment values by opacity so 50% opacity = half-strength filter.
     // Mathematically correct for linear filters (brightness, contrast, saturation)
     // and a close approximation for hue-rotate and blur.
-    const scaledSettings = {
-      brightness: adjustmentSettings.brightness * opacityFactor,
-      contrast: adjustmentSettings.contrast * opacityFactor,
-      saturation: adjustmentSettings.saturation * opacityFactor,
-      gain: adjustmentSettings.gain * opacityFactor,
-      gamma: adjustmentSettings.gamma * opacityFactor,
-      offset: adjustmentSettings.offset * opacityFactor,
-      hue: adjustmentSettings.hue * opacityFactor,
-      blur: adjustmentSettings.blur * opacityFactor,
-    }
-    const effectiveFilter = buildCssFilterFromAdjustments(scaledSettings)
-    const hasEffect = effectiveFilter !== 'none'
+    const scaledSettings = scaleAdjustmentSettings(adjustmentSettings, opacityFactor)
+    const cssFilter = buildCssFilterFromAdjustments(scaledSettings)
+    const effectiveFilter = cssFilter !== 'none' ? cssFilter : null
+    const hasEffect = hasAdjustmentEffect(scaledSettings)
 
     // Use buildVideoTransform to get properly scaled CSS styles (position,
     // scale, rotation, anchor, crop, blend mode — all preview-scale aware).
@@ -1307,7 +1510,7 @@ const AdjustmentWrapper = memo(function AdjustmentWrapper({ clip, playheadPositi
     // Don't apply baseStyle.filter — that's the transform blur; adjustment
     // filter is the one we care about.
 
-    if (hasEffect) {
+    if (effectiveFilter) {
       ws.filter = effectiveFilter
       ws.WebkitFilter = effectiveFilter
     }
@@ -1315,6 +1518,23 @@ const AdjustmentWrapper = memo(function AdjustmentWrapper({ clip, playheadPositi
     ws._hasVisualEffect = hasEffect
     return ws
   }, [clip, clipTime, buildVideoTransform, adjustmentSettings])
+
+  const scaledAdjustmentSettings = useMemo(() => {
+    const animatedTransform = getAnimatedTransform(clip, clipTime)
+    const t = animatedTransform || clip?.transform || {}
+    const opacity = typeof t.opacity === 'number' ? t.opacity : 100
+    const opacityFactor = Math.max(0, Math.min(1, opacity / 100))
+    return scaleAdjustmentSettings(adjustmentSettings, opacityFactor)
+  }, [adjustmentSettings, clip, clipTime])
+
+  const hasTonalAdjustments = useMemo(
+    () => hasTonalAdjustmentEffect(scaledAdjustmentSettings),
+    [scaledAdjustmentSettings]
+  )
+  const adjustmentFilterId = useMemo(
+    () => `clip-adjustment-${sanitizeAdjustmentFilterId(clip?.id)}-adjustment`,
+    [clip?.id]
+  )
 
   const hasTransform = wrapperStyle.transform || wrapperStyle.clipPath
   if (!wrapperStyle._hasVisualEffect && !hasTransform) {
@@ -1325,9 +1545,22 @@ const AdjustmentWrapper = memo(function AdjustmentWrapper({ clip, playheadPositi
   delete style._hasVisualEffect
 
   return (
-    <div style={style}>
-      {children}
-    </div>
+    <>
+      {hasTonalAdjustments && (
+        <AdjustmentSvgFilter filterId={adjustmentFilterId} settings={scaledAdjustmentSettings} />
+      )}
+      <div
+        style={{
+          ...style,
+          ...(hasTonalAdjustments ? {
+            filter: [`url(#${adjustmentFilterId})`, style.filter].filter(Boolean).join(' ') || undefined,
+            WebkitFilter: [`url(#${adjustmentFilterId})`, style.WebkitFilter].filter(Boolean).join(' ') || undefined,
+          } : null),
+        }}
+      >
+        {children}
+      </div>
+    </>
   )
 })
 

@@ -8,7 +8,8 @@ import {
   AlignVerticalJustifyStart, AlignVerticalJustifyCenter, AlignVerticalJustifyEnd,
   Diamond, ChevronFirst, ChevronLast,
   FileVideo, FileImage, FileAudio, HardDrive, Calendar, Info,
-  Wand2, Trash2, EyeOff, Plus, Play, Loader2, Check, AlertTriangle, X
+  Wand2, Trash2, EyeOff, Plus, Play, Loader2, Check, AlertTriangle, X,
+  Copy, ClipboardPaste
 } from 'lucide-react'
 import useTimelineStore from '../stores/timelineStore'
 import useAssetsStore from '../stores/assetsStore'
@@ -17,7 +18,15 @@ import renderCacheService from '../services/renderCache'
 import { saveRenderCache, deleteRenderCache, writeGeneratedOverlayToProject, isElectron } from '../services/fileSystem'
 import { getKeyframeAtTime, getAnimatedTransform, getAnimatedAdjustmentSettings, EASING_OPTIONS } from '../utils/keyframes'
 import { TEXT_ANIMATION_PRESETS, TEXT_ANIMATION_MODE_OPTIONS } from '../utils/textAnimationPresets'
-import { DEFAULT_ADJUSTMENT_SETTINGS, normalizeAdjustmentSettings } from '../utils/adjustments'
+import {
+  COLOR_ADJUSTMENT_KEYS,
+  DEFAULT_ADJUSTMENT_SETTINGS,
+  getAdjustmentValue,
+  mergeAdjustmentSettings,
+  normalizeAdjustmentSettings,
+  setAdjustmentValue,
+  TONAL_ADJUSTMENT_GROUP_KEYS,
+} from '../utils/adjustments'
 import { clearDiskCacheUrl } from './VideoLayerRenderer'
 import { FRAME_RATE, TRANSITION_TYPES, TRANSITION_DEFAULT_SETTINGS } from '../constants/transitions'
 import {
@@ -36,7 +45,93 @@ import {
 
 const TRANSITION_DEFAULT_DURATION_KEY = 'comfystudio-transition-default-duration-frames'
 const INSPECTOR_EXPANDED_SECTIONS_KEY = 'comfystudio-inspector-expanded-sections-v1'
+const INSPECTOR_EXPANDED_ADJUSTMENT_GROUPS_KEY = 'comfystudio-inspector-expanded-adjustment-groups-v1'
 const DEFAULT_INSPECTOR_EXPANDED_SECTIONS = ['clipInfo', 'transform', 'crop', 'timing', 'effects', 'text', 'style', 'animation', 'adjustments']
+const DEFAULT_EXPANDED_ADJUSTMENT_GROUPS = ['global']
+const INSPECTOR_SETTINGS_SCOPE = {
+  ALL: 'all',
+  TRANSFORM: 'transform',
+  CROP: 'crop',
+  ADJUSTMENTS: 'adjustments',
+  TIMING: 'timing',
+}
+const INSPECTOR_SETTINGS_SCOPE_LABELS = {
+  [INSPECTOR_SETTINGS_SCOPE.ALL]: 'all settings',
+  [INSPECTOR_SETTINGS_SCOPE.TRANSFORM]: 'transform settings',
+  [INSPECTOR_SETTINGS_SCOPE.CROP]: 'crop settings',
+  [INSPECTOR_SETTINGS_SCOPE.ADJUSTMENTS]: 'color settings',
+  [INSPECTOR_SETTINGS_SCOPE.TIMING]: 'timing settings',
+}
+const TRANSFORM_SETTINGS_KEYS = ['positionX', 'positionY', 'scaleX', 'scaleY', 'scaleLinked', 'rotation', 'anchorX', 'anchorY', 'opacity', 'flipH', 'flipV', 'blendMode', 'blur']
+const CROP_SETTINGS_KEYS = ['cropTop', 'cropBottom', 'cropLeft', 'cropRight']
+const TONAL_ADJUSTMENT_GROUP_LABELS = {
+  shadows: 'Shadows',
+  midtones: 'Midtones',
+  highlights: 'Highlights',
+}
+const ADJUSTMENT_CONTROL_DEFINITIONS = [
+  { key: 'brightness', label: 'Exposure', min: -100, max: 100, step: 1, resetTitle: 'Double-click to reset to 0', formatValue: (value) => `${Math.round(value)}` },
+  { key: 'contrast', label: 'Contrast', min: -100, max: 100, step: 1, resetTitle: 'Double-click to reset to 0', formatValue: (value) => `${Math.round(value)}` },
+  { key: 'saturation', label: 'Saturation', min: -100, max: 100, step: 1, resetTitle: 'Double-click to reset to 0', formatValue: (value) => `${Math.round(value)}` },
+  { key: 'gain', label: 'Gain', min: -100, max: 100, step: 1, resetTitle: 'Double-click to reset to 0', formatValue: (value) => `${Math.round(value)}` },
+  { key: 'gamma', label: 'Gamma', min: -100, max: 100, step: 1, resetTitle: 'Double-click to reset to 0', formatValue: (value) => `${Math.round(value)}` },
+  { key: 'offset', label: 'Offset', min: -100, max: 100, step: 1, resetTitle: 'Double-click to reset to 0', formatValue: (value) => `${Math.round(value)}` },
+  { key: 'hue', label: 'Hue', min: -180, max: 180, step: 1, resetTitle: 'Double-click to reset to 0deg', formatValue: (value) => `${Math.round(value)}deg` },
+]
+const GLOBAL_COLOR_CONTROLS = [...ADJUSTMENT_CONTROL_DEFINITIONS]
+const ADJUSTMENT_BLUR_CONTROL = {
+  key: 'blur',
+  label: 'Blur',
+  min: 0,
+  max: 50,
+  step: 0.25,
+  resetTitle: 'Double-click to reset to 0px',
+  formatValue: (value) => `${Number(value).toFixed(1)}px`,
+}
+const RESET_CROP_SETTINGS = {
+  cropTop: 0,
+  cropBottom: 0,
+  cropLeft: 0,
+  cropRight: 0,
+}
+
+const getCopyableTextStyleProperties = (textProperties = {}) => {
+  if (!textProperties || typeof textProperties !== 'object') return {}
+  const { text, ...styleProps } = textProperties
+  return { ...styleProps }
+}
+
+const getInspectorSettingsSourceLabel = (clip, track) => {
+  if (!clip) return 'clip'
+  if (clip.type === 'text') return 'text clip'
+  if (clip.type === 'adjustment') return 'adjustment clip'
+  if (clip.type === 'audio' || track?.type === 'audio') return 'audio clip'
+  if (clip.type === 'image') return 'image clip'
+  return 'video clip'
+}
+
+const objectHasDifferences = (current, next) => {
+  if (!next || typeof next !== 'object') return false
+  return Object.entries(next).some(([key, value]) => {
+    if (value && typeof value === 'object' && !Array.isArray(value)) {
+      return objectHasDifferences(current?.[key], value)
+    }
+    return current?.[key] !== value
+  })
+}
+
+const hasOwn = (value, key) => Object.prototype.hasOwnProperty.call(value || {}, key)
+
+const pickInspectorSettings = (source, keys = []) => {
+  if (!source || typeof source !== 'object') return null
+  const next = keys.reduce((acc, key) => {
+    if (hasOwn(source, key)) {
+      acc[key] = source[key]
+    }
+    return acc
+  }, {})
+  return Object.keys(next).length > 0 ? next : null
+}
 
 const padTimecodeUnit = (value) => String(Math.max(0, Math.trunc(value) || 0)).padStart(2, '0')
 const normalizeLinkGroupId = (value) => {
@@ -328,6 +423,19 @@ function InspectorPanel({ isExpanded, onToggleExpanded }) {
     } catch (_) {}
     return DEFAULT_INSPECTOR_EXPANDED_SECTIONS
   })
+  const [expandedAdjustmentGroups, setExpandedAdjustmentGroups] = useState(() => {
+    try {
+      const raw = localStorage.getItem(INSPECTOR_EXPANDED_ADJUSTMENT_GROUPS_KEY)
+      const parsed = raw ? JSON.parse(raw) : null
+      if (Array.isArray(parsed)) {
+        const normalized = parsed.filter((section) => typeof section === 'string')
+        if (normalized.length > 0) {
+          return normalized
+        }
+      }
+    } catch (_) {}
+    return DEFAULT_EXPANDED_ADJUSTMENT_GROUPS
+  })
   const [showMaskPicker, setShowMaskPicker] = useState(false)
   const [renderProgress, setRenderProgress] = useState(null) // { status, progress, error }
   const [isRendering, setIsRendering] = useState(false)
@@ -337,6 +445,7 @@ function InspectorPanel({ isExpanded, onToggleExpanded }) {
   const [letterboxBarColor, setLetterboxBarColor] = useState('#000000')
   const [isUpdatingLetterbox, setIsUpdatingLetterbox] = useState(false)
   const [letterboxUpdateError, setLetterboxUpdateError] = useState(null)
+  const [inspectorSettingsClipboard, setInspectorSettingsClipboard] = useState(null)
   const textContentInputRef = useRef(null)
   
   // Get selected clip from timeline store
@@ -597,6 +706,32 @@ function InspectorPanel({ isExpanded, onToggleExpanded }) {
       getAnimatedAdjustmentSettings(selectedClip, clipTime) || selectedClip.adjustments || {}
     )
   }, [selectedClip, clipTime])
+
+  const getTextProps = useCallback(() => {
+    if (!selectedClip || selectedClip.type !== 'text') return null
+    return selectedClip.textProperties || {
+      text: 'Sample Text',
+      fontFamily: 'Inter',
+      fontSize: 64,
+      fontWeight: 'bold',
+      fontStyle: 'normal',
+      textColor: '#FFFFFF',
+      backgroundColor: '#000000',
+      backgroundOpacity: 0,
+      backgroundPadding: 20,
+      textAlign: 'center',
+      verticalAlign: 'center',
+      strokeColor: '#000000',
+      strokeWidth: 0,
+      letterSpacing: 0,
+      lineHeight: 1.2,
+      shadow: false,
+      shadowColor: 'rgba(0,0,0,0.5)',
+      shadowBlur: 4,
+      shadowOffsetX: 2,
+      shadowOffsetY: 2,
+    }
+  }, [selectedClip])
   
   // Check if a property has keyframes
   const propertyHasKeyframes = useCallback((property) => {
@@ -618,9 +753,159 @@ function InspectorPanel({ isExpanded, onToggleExpanded }) {
     [selectedClip?.adjustments]
   )
 
+  const buildGlobalTimingSettings = useCallback((clip) => {
+    if (!clip || clip.type !== 'video') return null
+    return {
+      speed: Number.isFinite(Number(clip.speed)) ? Number(clip.speed) : 1,
+      reverse: !!clip.reverse,
+    }
+  }, [])
+
+  const buildScopedTimingSettings = useCallback((clip) => {
+    if (!clip || clip.type === 'audio') return null
+    const next = {}
+    if (Number.isFinite(Number(clip.duration))) {
+      next.duration = Number(clip.duration)
+    }
+    if (clip.type === 'video') {
+      next.speed = Number.isFinite(Number(clip.speed)) ? Number(clip.speed) : 1
+      next.reverse = !!clip.reverse
+    }
+    return Object.keys(next).length > 0 ? next : null
+  }, [])
+
+  const getCompatibleTimingSettings = useCallback((scope, clip, timingPayload) => {
+    if (!clip || !timingPayload || typeof timingPayload !== 'object') return null
+    const next = {}
+
+    if (scope === INSPECTOR_SETTINGS_SCOPE.TIMING && clip.type !== 'audio' && Number.isFinite(Number(timingPayload.duration))) {
+      next.duration = Number(timingPayload.duration)
+    }
+    if (clip.type === 'video') {
+      if (Number.isFinite(Number(timingPayload.speed))) {
+        next.speed = Number(timingPayload.speed)
+      }
+      if (hasOwn(timingPayload, 'reverse')) {
+        next.reverse = !!timingPayload.reverse
+      }
+    }
+
+    return Object.keys(next).length > 0 ? next : null
+  }, [])
+
+  const buildInspectorClipboardPayload = useCallback((scope = INSPECTOR_SETTINGS_SCOPE.ALL) => {
+    if (!selectedClip) return null
+
+    const supportsVisualSettings = selectedTrack?.type === 'video'
+    const clipSourceLabel = getInspectorSettingsSourceLabel(selectedClip, selectedTrack)
+    const fullTransform = supportsVisualSettings && transform ? { ...transform } : null
+    const transformSettings = pickInspectorSettings(fullTransform, TRANSFORM_SETTINGS_KEYS)
+    const cropSettings = pickInspectorSettings(fullTransform, CROP_SETTINGS_KEYS)
+    const globalTimingSettings = buildGlobalTimingSettings(selectedClip)
+    const scopedTimingSettings = buildScopedTimingSettings(selectedClip)
+    const nextClipboard = {
+      version: 2,
+      scope,
+      scopeLabel: INSPECTOR_SETTINGS_SCOPE_LABELS[scope] || 'settings',
+      sourceClipId: selectedClip.id,
+      sourceClipType: selectedClip.type,
+      sourceLabel: clipSourceLabel,
+      transform: null,
+      crop: null,
+      adjustments: null,
+      timing: null,
+      textStyle: null,
+      titleAnimation: undefined,
+      audio: null,
+    }
+
+    switch (scope) {
+      case INSPECTOR_SETTINGS_SCOPE.TRANSFORM:
+        nextClipboard.transform = transformSettings
+        break
+      case INSPECTOR_SETTINGS_SCOPE.CROP:
+        nextClipboard.crop = cropSettings
+        break
+      case INSPECTOR_SETTINGS_SCOPE.ADJUSTMENTS:
+        if (supportsVisualSettings) {
+          const { blur, ...colorSettings } = normalizeAdjustmentSettings(selectedClip.adjustments || {})
+          nextClipboard.adjustments = colorSettings
+        }
+        break
+      case INSPECTOR_SETTINGS_SCOPE.TIMING:
+        nextClipboard.timing = scopedTimingSettings
+        break
+      case INSPECTOR_SETTINGS_SCOPE.ALL:
+      default:
+        nextClipboard.transform = fullTransform
+        nextClipboard.adjustments = supportsVisualSettings
+          ? normalizeAdjustmentSettings(selectedClip.adjustments || {})
+          : null
+        nextClipboard.timing = globalTimingSettings
+        nextClipboard.textStyle = selectedClip.type === 'text'
+          ? getCopyableTextStyleProperties(getTextProps() || {})
+          : null
+        nextClipboard.titleAnimation = selectedClip.type === 'text'
+          ? (selectedClip.titleAnimation?.presetId
+              ? {
+                  presetId: selectedClip.titleAnimation.presetId,
+                  mode: selectedClip.titleAnimation.mode || 'inOut',
+                }
+              : null)
+          : undefined
+        nextClipboard.audio = selectedClip.type === 'audio'
+          ? {
+              gainDb: normalizeAudioClipGainDb(selectedClip.gainDb),
+              fadeIn: Number.isFinite(Number(selectedClip.fadeIn)) ? Number(selectedClip.fadeIn) : 0,
+              fadeOut: Number.isFinite(Number(selectedClip.fadeOut)) ? Number(selectedClip.fadeOut) : 0,
+            }
+          : null
+        break
+    }
+
+    return nextClipboard
+  }, [buildGlobalTimingSettings, buildScopedTimingSettings, getTextProps, selectedClip, selectedTrack, transform])
+
+  const canCopyInspectorSettings = useMemo(
+    () => Boolean(selectedClip) && !selectedTransition,
+    [selectedClip, selectedTransition]
+  )
+
+  const canPasteInspectorSettings = useCallback((scope = INSPECTOR_SETTINGS_SCOPE.ALL) => {
+    if (!selectedClip || selectedTransition || !inspectorSettingsClipboard) return false
+    if (inspectorSettingsClipboard.scope !== scope) return false
+
+    const supportsVisualSettings = selectedTrack?.type === 'video'
+    const supportsTextSettings = selectedClip.type === 'text'
+    const supportsAudioSettings = selectedClip.type === 'audio'
+
+    switch (scope) {
+      case INSPECTOR_SETTINGS_SCOPE.TRANSFORM:
+        return Boolean(supportsVisualSettings && inspectorSettingsClipboard.transform)
+      case INSPECTOR_SETTINGS_SCOPE.CROP:
+        return Boolean(supportsVisualSettings && inspectorSettingsClipboard.crop)
+      case INSPECTOR_SETTINGS_SCOPE.ADJUSTMENTS:
+        return Boolean(supportsVisualSettings && inspectorSettingsClipboard.adjustments)
+      case INSPECTOR_SETTINGS_SCOPE.TIMING:
+        return Boolean(getCompatibleTimingSettings(scope, selectedClip, inspectorSettingsClipboard.timing))
+      case INSPECTOR_SETTINGS_SCOPE.ALL:
+      default:
+        return Boolean(
+          (supportsVisualSettings && (inspectorSettingsClipboard.transform || inspectorSettingsClipboard.adjustments))
+          || getCompatibleTimingSettings(scope, selectedClip, inspectorSettingsClipboard.timing)
+          || (supportsTextSettings && (
+            inspectorSettingsClipboard.textStyle
+            || inspectorSettingsClipboard.titleAnimation !== undefined
+          ))
+          || (supportsAudioSettings && inspectorSettingsClipboard.audio)
+        )
+    }
+  }, [getCompatibleTimingSettings, inspectorSettingsClipboard, selectedClip, selectedTrack?.type, selectedTransition])
+
   const hasAdjustmentChanges = useCallback((updates) => {
     if (!updates || typeof updates !== 'object') return false
-    return Object.entries(updates).some(([property, nextValue]) => baseAdjustments[property] !== nextValue)
+    const nextAdjustments = mergeAdjustmentSettings(baseAdjustments, updates)
+    return JSON.stringify(nextAdjustments) !== JSON.stringify(baseAdjustments)
   }, [baseAdjustments])
 
   const applyTransformUpdatesWithHistory = useCallback((updates, keepSessionOpen = false) => {
@@ -712,24 +997,410 @@ function InspectorPanel({ isExpanded, onToggleExpanded }) {
   }, [selectedClip, resetClipTransform])
 
   // Shared clip adjustment handlers (video/image/text/adjustment)
+  const buildAdjustmentUpdatePayload = useCallback((propertyPath, value) => {
+    return setAdjustmentValue(baseAdjustments, propertyPath, value)
+  }, [baseAdjustments])
+
   const handleClipAdjustmentChange = useCallback((key, value) => {
     if (!selectedClip) return
-    const applied = applyAdjustmentUpdatesWithHistory({ [key]: value }, true)
+    const applied = applyAdjustmentUpdatesWithHistory(buildAdjustmentUpdatePayload(key, value), true)
     if (!applied) return
     if (propertyHasKeyframes(key)) {
       setKeyframe(selectedClip.id, key, clipTime, value, 'easeInOut', { saveHistory: false })
     }
-  }, [selectedClip, applyAdjustmentUpdatesWithHistory, propertyHasKeyframes, setKeyframe, clipTime])
+  }, [selectedClip, applyAdjustmentUpdatesWithHistory, buildAdjustmentUpdatePayload, propertyHasKeyframes, setKeyframe, clipTime])
 
   const handleClipAdjustmentCommit = useCallback((key, value) => {
     if (!selectedClip) return
-    applyAdjustmentUpdatesWithHistory({ [key]: value }, false)
-  }, [selectedClip, applyAdjustmentUpdatesWithHistory])
+    applyAdjustmentUpdatesWithHistory(buildAdjustmentUpdatePayload(key, value), false)
+  }, [selectedClip, applyAdjustmentUpdatesWithHistory, buildAdjustmentUpdatePayload])
+
+  const handleClipAdjustmentGroupReset = useCallback((groupKey = 'all') => {
+    if (!selectedClip) return false
+
+    const updates = groupKey === 'all'
+      ? DEFAULT_ADJUSTMENT_SETTINGS
+      : groupKey === 'global'
+        ? GLOBAL_COLOR_CONTROLS.reduce((acc, { key }) => {
+            acc[key] = DEFAULT_ADJUSTMENT_SETTINGS[key]
+            return acc
+          }, {})
+        : { [groupKey]: DEFAULT_ADJUSTMENT_SETTINGS[groupKey] }
+    const applied = applyAdjustmentUpdatesWithHistory(updates, false)
+    if (!applied) return false
+
+    const propertyPaths = groupKey === 'all'
+      ? [
+        ...GLOBAL_COLOR_CONTROLS.map(({ key }) => key),
+        ADJUSTMENT_BLUR_CONTROL.key,
+        ...TONAL_ADJUSTMENT_GROUP_KEYS.flatMap((tonalGroupKey) => (
+          COLOR_ADJUSTMENT_KEYS.map((key) => `${tonalGroupKey}.${key}`)
+        )),
+      ]
+      : groupKey === 'global'
+        ? GLOBAL_COLOR_CONTROLS.map(({ key }) => key)
+        : COLOR_ADJUSTMENT_KEYS.map((key) => `${groupKey}.${key}`)
+
+    for (const propertyPath of propertyPaths) {
+      if (propertyHasKeyframes(propertyPath)) {
+        const resetValue = groupKey === 'all'
+          ? getAdjustmentValue(updates, propertyPath) ?? 0
+          : groupKey === 'global'
+            ? updates[propertyPath] ?? 0
+            : getAdjustmentValue(updates, propertyPath) ?? 0
+        setKeyframe(selectedClip.id, propertyPath, clipTime, resetValue, 'easeInOut', { saveHistory: false })
+      }
+    }
+
+    return true
+  }, [applyAdjustmentUpdatesWithHistory, clipTime, propertyHasKeyframes, selectedClip, setKeyframe])
 
   const handleClipAdjustmentsReset = useCallback(() => {
-    if (!selectedClip) return
-    applyAdjustmentUpdatesWithHistory(DEFAULT_ADJUSTMENT_SETTINGS, false)
-  }, [selectedClip, applyAdjustmentUpdatesWithHistory])
+    handleClipAdjustmentGroupReset('all')
+  }, [handleClipAdjustmentGroupReset])
+
+  const handleResetCrop = useCallback(() => {
+    if (!selectedClip) return false
+    const applied = applyTransformUpdatesWithHistory(RESET_CROP_SETTINGS, false)
+    if (!applied) return false
+
+    for (const [property, value] of Object.entries(RESET_CROP_SETTINGS)) {
+      if (propertyHasKeyframes(property)) {
+        setKeyframe(selectedClip.id, property, clipTime, value, 'easeInOut', { saveHistory: false })
+      }
+    }
+    return true
+  }, [applyTransformUpdatesWithHistory, clipTime, propertyHasKeyframes, selectedClip, setKeyframe])
+
+  const canResetTiming = useMemo(
+    () => selectedClip?.type === 'video' || selectedClip?.type === 'audio',
+    [selectedClip?.type]
+  )
+
+  const hasTimingResetChanges = useMemo(() => {
+    if (!selectedClip || !canResetTiming) return false
+    const currentSpeed = Number.isFinite(Number(selectedClip.speed)) ? Number(selectedClip.speed) : 1
+    const currentReverse = !!selectedClip.reverse
+    return currentSpeed !== 1 || (selectedClip.type === 'video' && currentReverse)
+  }, [canResetTiming, selectedClip])
+
+  const handleResetTiming = useCallback(() => {
+    if (!selectedClip || !canResetTiming || !hasTimingResetChanges) return false
+
+    const currentSpeed = Number.isFinite(Number(selectedClip.speed)) ? Number(selectedClip.speed) : 1
+    const currentReverse = !!selectedClip.reverse
+    const shouldResetSpeed = currentSpeed !== 1
+    const shouldResetReverse = selectedClip.type === 'video' && currentReverse
+
+    if (!shouldResetSpeed && !shouldResetReverse) {
+      return false
+    }
+
+    saveToHistory()
+    if (shouldResetSpeed) {
+      updateClipSpeed(selectedClip.id, 1, false)
+    }
+    if (shouldResetReverse) {
+      updateClipReverse(selectedClip.id, false, false)
+    }
+    return true
+  }, [canResetTiming, hasTimingResetChanges, saveToHistory, selectedClip, updateClipReverse, updateClipSpeed])
+
+  const renderAdjustmentSlider = (control, values, groupKey = null) => {
+    const propertyPath = groupKey ? `${groupKey}.${control.key}` : control.key
+    const defaultValue = getAdjustmentValue(DEFAULT_ADJUSTMENT_SETTINGS, propertyPath) ?? 0
+    const currentValue = getAdjustmentValue(values, propertyPath) ?? defaultValue
+
+    return (
+      <div key={propertyPath}>
+        <div className="flex justify-between items-center mb-1">
+          <label className="text-[10px] text-sf-text-muted">{control.label}</label>
+          <div className="flex items-center gap-1">
+            <KeyframeButton
+              clipId={selectedClip?.id}
+              property={propertyPath}
+              clip={selectedClip}
+              playheadPosition={playheadPosition}
+            />
+            <span className="text-[10px] text-sf-text-secondary">{control.formatValue(currentValue)}</span>
+          </div>
+        </div>
+        <input
+          type="range"
+          min={control.min}
+          max={control.max}
+          step={control.step}
+          value={currentValue}
+          onChange={(e) => handleClipAdjustmentChange(propertyPath, Number(e.target.value))}
+          onMouseUp={(e) => handleClipAdjustmentCommit(propertyPath, Number(e.target.value))}
+          onDoubleClick={() => handleClipAdjustmentCommit(propertyPath, defaultValue)}
+          title={control.resetTitle}
+          className="w-full h-1 bg-sf-dark-600 rounded-lg appearance-none cursor-pointer accent-sf-accent"
+        />
+      </div>
+    )
+  }
+
+  const renderAdjustmentGroup = ({
+    title,
+    values,
+    groupKey = null,
+    description = null,
+  }) => {
+    const controls = groupKey ? ADJUSTMENT_CONTROL_DEFINITIONS : GLOBAL_COLOR_CONTROLS
+    const groupId = groupKey || 'global'
+    const isCollapsible = true
+    const isExpanded = expandedAdjustmentGroups.includes(groupId)
+    const wrapperClassName = groupKey
+      ? 'rounded-md border border-sf-dark-700 bg-sf-dark-800/50'
+      : 'rounded-md border border-sf-dark-700 bg-sf-dark-900/40'
+    const resetLabel = groupKey ? `Reset ${title}` : 'Reset Global'
+    const resetTitle = groupKey ? `Reset ${title.toLowerCase()} controls` : 'Reset global controls'
+    const headerContent = (
+      <div className="min-w-0">
+        <div className="text-[11px] font-medium text-sf-text-primary">{title}</div>
+        {description && (
+          <div className="text-[10px] text-sf-text-muted">{description}</div>
+        )}
+      </div>
+    )
+
+    return (
+      <div key={groupKey || 'global'} className={wrapperClassName}>
+        <div className="flex items-start justify-between gap-2 p-3">
+          {isCollapsible ? (
+            <button
+              type="button"
+              onClick={() => toggleAdjustmentGroup(groupId)}
+              className="flex min-w-0 flex-1 items-start gap-2 text-left"
+              aria-expanded={isExpanded}
+              title={`${isExpanded ? 'Collapse' : 'Expand'} ${title.toLowerCase()} controls`}
+            >
+              {isExpanded ? (
+                <ChevronDown className="mt-0.5 h-3.5 w-3.5 shrink-0 text-sf-text-muted" />
+              ) : (
+                <ChevronRight className="mt-0.5 h-3.5 w-3.5 shrink-0 text-sf-text-muted" />
+              )}
+              {headerContent}
+            </button>
+          ) : (
+            <div className="min-w-0 flex-1">
+              {headerContent}
+            </div>
+          )}
+          {renderHeaderActionButton({
+            icon: RotateCcw,
+            label: resetLabel,
+            onClick: () => handleClipAdjustmentGroupReset(groupKey || 'global'),
+            title: resetTitle,
+          })}
+        </div>
+        {isExpanded && (
+          <div className="space-y-3 px-3 pb-3">
+            {controls.map((control) => renderAdjustmentSlider(control, values, groupKey))}
+          </div>
+        )}
+      </div>
+    )
+  }
+
+  const renderSharedAdjustmentsContent = (values, description) => (
+    <div className="p-3 space-y-3 border-b border-sf-dark-700">
+      <p className="text-[10px] text-sf-text-muted">
+        {description}
+      </p>
+      {renderAdjustmentGroup({
+        title: 'Global',
+        description: 'Affects the full image. Blur now lives in Effects.',
+        values,
+      })}
+      {TONAL_ADJUSTMENT_GROUP_KEYS.map((groupKey) => renderAdjustmentGroup({
+        title: TONAL_ADJUSTMENT_GROUP_LABELS[groupKey],
+        values,
+        groupKey,
+      }))}
+    </div>
+  )
+
+  const renderAdjustmentBlurControl = (description = null) => {
+    const currentValue = animatedAdjustments?.blur ?? baseAdjustments?.blur ?? 0
+
+    return (
+      <div className="rounded-md border border-sf-dark-700 bg-sf-dark-800/50 p-3 space-y-3">
+        {description && (
+          <p className="text-[10px] text-sf-text-muted">
+            {description}
+          </p>
+        )}
+        <div>
+          <div className="flex justify-between items-center mb-1">
+            <label className="text-[10px] text-sf-text-muted">{ADJUSTMENT_BLUR_CONTROL.label}</label>
+            <div className="flex items-center gap-1">
+              <KeyframeButton
+                clipId={selectedClip?.id}
+                property={ADJUSTMENT_BLUR_CONTROL.key}
+                clip={selectedClip}
+                playheadPosition={playheadPosition}
+              />
+              <span className="text-[10px] text-sf-text-secondary">{ADJUSTMENT_BLUR_CONTROL.formatValue(currentValue)}</span>
+            </div>
+          </div>
+          <input
+            type="range"
+            min={ADJUSTMENT_BLUR_CONTROL.min}
+            max={ADJUSTMENT_BLUR_CONTROL.max}
+            step={ADJUSTMENT_BLUR_CONTROL.step}
+            value={currentValue}
+            onChange={(e) => handleClipAdjustmentChange(ADJUSTMENT_BLUR_CONTROL.key, Number(e.target.value))}
+            onMouseUp={(e) => handleClipAdjustmentCommit(ADJUSTMENT_BLUR_CONTROL.key, Number(e.target.value))}
+            onDoubleClick={() => handleClipAdjustmentCommit(ADJUSTMENT_BLUR_CONTROL.key, DEFAULT_ADJUSTMENT_SETTINGS.blur)}
+            title={ADJUSTMENT_BLUR_CONTROL.resetTitle}
+            className="w-full h-1 bg-sf-dark-600 rounded-lg appearance-none cursor-pointer accent-sf-accent"
+          />
+        </div>
+      </div>
+    )
+  }
+
+  const handleCopyInspectorSettings = useCallback((scope = INSPECTOR_SETTINGS_SCOPE.ALL) => {
+    const nextClipboard = buildInspectorClipboardPayload(scope)
+    if (!nextClipboard) return false
+    setInspectorSettingsClipboard(nextClipboard)
+    return true
+  }, [buildInspectorClipboardPayload])
+
+  const handlePasteInspectorSettings = useCallback((scope = INSPECTOR_SETTINGS_SCOPE.ALL) => {
+    if (!selectedClip || !selectedTrack || !inspectorSettingsClipboard) return false
+    if (!canPasteInspectorSettings(scope)) return false
+
+    const supportsVisualSettings = selectedTrack.type === 'video'
+    const supportsTextSettings = selectedClip.type === 'text'
+    const supportsAudioSettings = selectedClip.type === 'audio'
+    const targetTransformSettings = pickInspectorSettings(transform || {}, TRANSFORM_SETTINGS_KEYS) || {}
+    const targetCropSettings = pickInspectorSettings(transform || {}, CROP_SETTINGS_KEYS) || {}
+    const targetAllTransformSettings = transform || {}
+    const targetAllTimingSettings = buildGlobalTimingSettings(selectedClip) || {}
+    const targetScopedTimingSettings = buildScopedTimingSettings(selectedClip) || {}
+    const targetAudioSettings = {
+      gainDb: normalizeAudioClipGainDb(selectedClip.gainDb),
+      fadeIn: Number.isFinite(Number(selectedClip.fadeIn)) ? Number(selectedClip.fadeIn) : 0,
+      fadeOut: Number.isFinite(Number(selectedClip.fadeOut)) ? Number(selectedClip.fadeOut) : 0,
+    }
+    const targetTextStyle = supportsTextSettings ? getCopyableTextStyleProperties(getTextProps() || {}) : {}
+
+    const nextAllTransformSettings = supportsVisualSettings && inspectorSettingsClipboard.transform
+      ? inspectorSettingsClipboard.transform
+      : null
+    const nextTransformSettings = supportsVisualSettings
+      ? pickInspectorSettings(inspectorSettingsClipboard.transform, TRANSFORM_SETTINGS_KEYS)
+      : null
+    const nextCropSettings = supportsVisualSettings
+      ? pickInspectorSettings(inspectorSettingsClipboard.crop, CROP_SETTINGS_KEYS)
+      : null
+    const nextAdjustments = supportsVisualSettings && inspectorSettingsClipboard.adjustments
+      ? inspectorSettingsClipboard.adjustments
+      : null
+    const nextTiming = getCompatibleTimingSettings(scope, selectedClip, inspectorSettingsClipboard.timing)
+    const nextAudio = supportsAudioSettings && inspectorSettingsClipboard.audio
+      ? inspectorSettingsClipboard.audio
+      : null
+    const nextTextStyle = supportsTextSettings && inspectorSettingsClipboard.textStyle
+      ? inspectorSettingsClipboard.textStyle
+      : null
+    const nextTitleAnimation = supportsTextSettings && scope === INSPECTOR_SETTINGS_SCOPE.ALL && hasOwn(inspectorSettingsClipboard, 'titleAnimation')
+      ? inspectorSettingsClipboard.titleAnimation
+      : undefined
+
+    const shouldApplyTransform = scope === INSPECTOR_SETTINGS_SCOPE.ALL
+      ? objectHasDifferences(targetAllTransformSettings, nextAllTransformSettings)
+      : objectHasDifferences(targetTransformSettings, nextTransformSettings)
+    const shouldApplyCrop = objectHasDifferences(targetCropSettings, nextCropSettings)
+    const shouldApplyAdjustments = objectHasDifferences(baseAdjustments, nextAdjustments)
+    const currentTimingSettings = scope === INSPECTOR_SETTINGS_SCOPE.ALL
+      ? targetAllTimingSettings
+      : targetScopedTimingSettings
+    const shouldApplyTimingSpeed = Boolean(nextTiming && hasOwn(nextTiming, 'speed') && currentTimingSettings.speed !== nextTiming.speed)
+    const shouldApplyTimingReverse = Boolean(nextTiming && hasOwn(nextTiming, 'reverse') && currentTimingSettings.reverse !== nextTiming.reverse)
+    const shouldApplyTimingDuration = Boolean(nextTiming && hasOwn(nextTiming, 'duration') && currentTimingSettings.duration !== nextTiming.duration)
+    const shouldApplyTiming = shouldApplyTimingSpeed || shouldApplyTimingReverse || shouldApplyTimingDuration
+    const shouldApplyAudio = objectHasDifferences(targetAudioSettings, nextAudio)
+    const shouldApplyTextStyle = objectHasDifferences(targetTextStyle, nextTextStyle)
+    const shouldApplyTitleAnimation = nextTitleAnimation !== undefined && (
+      (selectedClip.titleAnimation?.presetId || null) !== (nextTitleAnimation?.presetId || null)
+      || (selectedClip.titleAnimation?.mode || 'inOut') !== (nextTitleAnimation?.mode || 'inOut')
+    )
+
+    if (
+      !shouldApplyTransform
+      && !shouldApplyCrop
+      && !shouldApplyAdjustments
+      && !shouldApplyTiming
+      && !shouldApplyAudio
+      && !shouldApplyTextStyle
+      && !shouldApplyTitleAnimation
+    ) {
+      return false
+    }
+
+    saveToHistory()
+
+    if (scope === INSPECTOR_SETTINGS_SCOPE.ALL && shouldApplyTransform) {
+      updateClipTransform(selectedClip.id, nextAllTransformSettings, false)
+    } else if (scope === INSPECTOR_SETTINGS_SCOPE.TRANSFORM && shouldApplyTransform) {
+      updateClipTransform(selectedClip.id, nextTransformSettings, false)
+    }
+    if (scope === INSPECTOR_SETTINGS_SCOPE.CROP && shouldApplyCrop) {
+      updateClipTransform(selectedClip.id, nextCropSettings, false)
+    }
+    if ((scope === INSPECTOR_SETTINGS_SCOPE.ALL || scope === INSPECTOR_SETTINGS_SCOPE.ADJUSTMENTS) && shouldApplyAdjustments) {
+      updateClipAdjustments(selectedClip.id, nextAdjustments, false)
+    }
+    if (shouldApplyTimingSpeed) {
+      updateClipSpeed(selectedClip.id, nextTiming.speed, false)
+    }
+    if (shouldApplyTimingReverse) {
+      updateClipReverse(selectedClip.id, nextTiming.reverse, false)
+    }
+    if (shouldApplyTimingDuration) {
+      resizeClip(selectedClip.id, nextTiming.duration)
+    }
+    if (scope === INSPECTOR_SETTINGS_SCOPE.ALL && shouldApplyAudio) {
+      updateAudioClipProperties(selectedClip.id, nextAudio, false)
+    }
+    if (scope === INSPECTOR_SETTINGS_SCOPE.ALL && shouldApplyTextStyle) {
+      updateTextProperties(selectedClip.id, nextTextStyle, false)
+    }
+    if (scope === INSPECTOR_SETTINGS_SCOPE.ALL && shouldApplyTitleAnimation) {
+      if (nextTitleAnimation?.presetId) {
+        applyTextAnimationPreset(selectedClip.id, nextTitleAnimation.presetId, nextTitleAnimation.mode || 'inOut', { saveHistory: false })
+      } else {
+        clearTextAnimationPreset(selectedClip.id, { saveHistory: false })
+      }
+    }
+
+    return true
+  }, [
+    applyTextAnimationPreset,
+    baseAdjustments,
+    buildGlobalTimingSettings,
+    buildScopedTimingSettings,
+    canPasteInspectorSettings,
+    clearTextAnimationPreset,
+    getCompatibleTimingSettings,
+    getTextProps,
+    inspectorSettingsClipboard,
+    resizeClip,
+    saveToHistory,
+    selectedClip,
+    selectedTrack,
+    transform,
+    updateAudioClipProperties,
+    updateClipAdjustments,
+    updateClipReverse,
+    updateClipSpeed,
+    updateClipTransform,
+    updateTextProperties,
+  ])
   
   const [audioData, setAudioData] = useState({
     name: '',
@@ -767,11 +1438,25 @@ function InspectorPanel({ isExpanded, onToggleExpanded }) {
     )
   }
 
+  const toggleAdjustmentGroup = useCallback((groupId) => {
+    setExpandedAdjustmentGroups((prev) => (
+      prev.includes(groupId)
+        ? prev.filter((value) => value !== groupId)
+        : [...prev, groupId]
+    ))
+  }, [])
+
   useEffect(() => {
     try {
       localStorage.setItem(INSPECTOR_EXPANDED_SECTIONS_KEY, JSON.stringify(expandedSections))
     } catch (_) {}
   }, [expandedSections])
+
+  useEffect(() => {
+    try {
+      localStorage.setItem(INSPECTOR_EXPANDED_ADJUSTMENT_GROUPS_KEY, JSON.stringify(expandedAdjustmentGroups))
+    } catch (_) {}
+  }, [expandedAdjustmentGroups])
 
   // Get project handle for saving cache to disk
   const { currentProjectHandle, getCurrentTimelineSettings } = useProjectStore()
@@ -932,23 +1617,82 @@ function InspectorPanel({ isExpanded, onToggleExpanded }) {
     }
   }, [selectedClip, clearClipCache, currentProjectHandle])
 
-  const renderSectionHeader = (id, title, icon) => {
+  const renderSectionHeader = (id, title, icon, options = {}) => {
+    const { actions = null } = options
     const Icon = icon
     const isSectionExpanded = expandedSections.includes(id)
     return (
-      <button
-        onClick={() => toggleSection(id)}
-        className="w-full flex items-center gap-2 px-3 py-2 bg-sf-dark-800 hover:bg-sf-dark-700 transition-colors"
-      >
-        {isSectionExpanded ? (
-          <ChevronDown className="w-3 h-3 text-sf-text-muted" />
-        ) : (
-          <ChevronRight className="w-3 h-3 text-sf-text-muted" />
+      <div className="w-full flex items-center bg-sf-dark-800">
+        <button
+          type="button"
+          onClick={() => toggleSection(id)}
+          className="flex-1 min-w-0 flex items-center gap-2 px-3 py-2 hover:bg-sf-dark-700 transition-colors"
+        >
+          {isSectionExpanded ? (
+            <ChevronDown className="w-3 h-3 text-sf-text-muted" />
+          ) : (
+            <ChevronRight className="w-3 h-3 text-sf-text-muted" />
+          )}
+          <Icon className="w-4 h-4 text-sf-text-muted" />
+          <span className="text-xs font-medium text-sf-text-primary uppercase tracking-wider">{title}</span>
+        </button>
+        {actions && (
+          <div className="flex items-center gap-1 pr-2">
+            {actions}
+          </div>
         )}
-        <Icon className="w-4 h-4 text-sf-text-muted" />
-        <span className="text-xs font-medium text-sf-text-primary uppercase tracking-wider">{title}</span>
-      </button>
+      </div>
     )
+  }
+
+  const renderHeaderActionButton = ({ icon: Icon, label, onClick, title, disabled = false }) => (
+    <button
+      type="button"
+      onClick={onClick}
+      disabled={disabled}
+      aria-label={label || title}
+      className={`inline-flex h-7 w-7 items-center justify-center rounded transition-colors ${
+        disabled
+          ? 'bg-sf-dark-800 text-sf-text-muted/50 cursor-not-allowed'
+          : 'bg-sf-dark-700 text-sf-text-secondary hover:bg-sf-dark-600 hover:text-sf-text-primary'
+      }`}
+      title={title}
+    >
+      <Icon className="w-3.5 h-3.5" />
+    </button>
+  )
+
+  const renderInspectorClipboardButtons = ({ scope, extraActions = null }) => {
+    const scopeLabel = INSPECTOR_SETTINGS_SCOPE_LABELS[scope] || 'settings'
+    const canPasteForScope = canPasteInspectorSettings(scope)
+
+    return (
+      <>
+        {renderHeaderActionButton({
+          icon: Copy,
+          label: scope === INSPECTOR_SETTINGS_SCOPE.ALL ? 'Copy All' : 'Copy',
+          onClick: () => handleCopyInspectorSettings(scope),
+          disabled: !canCopyInspectorSettings,
+          title: `Copy ${scopeLabel} from this clip`,
+        })}
+        {renderHeaderActionButton({
+          icon: ClipboardPaste,
+          label: scope === INSPECTOR_SETTINGS_SCOPE.ALL ? 'Paste All' : 'Paste',
+          onClick: () => handlePasteInspectorSettings(scope),
+          disabled: !canPasteForScope,
+          title: canPasteForScope
+            ? `Paste copied ${scopeLabel} onto this clip`
+            : `Copy ${scopeLabel} first`,
+        })}
+        {extraActions}
+      </>
+    )
+  }
+
+  const renderInspectorSettingsHeaderActions = () => {
+    return renderInspectorClipboardButtons({
+      scope: INSPECTOR_SETTINGS_SCOPE.ALL,
+    })
   }
 
   // Render Video Clip Inspector (with 2D transforms)
@@ -976,20 +1720,20 @@ function InspectorPanel({ isExpanded, onToggleExpanded }) {
               value: `${timecodeFps} FPS`,
             },
           ],
-          actions: (
-            <button 
-              onClick={handleResetTransform}
-              className="w-full py-1.5 bg-sf-dark-700 hover:bg-sf-dark-600 rounded text-[11px] text-sf-text-secondary hover:text-sf-text-primary transition-colors flex items-center justify-center gap-1.5"
-              title="Reset all transform properties to default"
-            >
-              <RotateCcw className="w-3.5 h-3.5" />
-              Reset Transform
-            </button>
-          ),
         })}
 
         {/* Transform Section */}
-        {renderSectionHeader('transform', 'Transform', Move)}
+        {renderSectionHeader('transform', 'Transform', Move, {
+          actions: renderInspectorClipboardButtons({
+            scope: INSPECTOR_SETTINGS_SCOPE.TRANSFORM,
+            extraActions: renderHeaderActionButton({
+              icon: RotateCcw,
+              label: 'Reset',
+              onClick: handleResetTransform,
+              title: 'Reset all transform properties to default',
+            }),
+          }),
+        })}
         {expandedSections.includes('transform') && (
           <div className="p-3 space-y-3 border-b border-sf-dark-700">
             {/* Position */}
@@ -1332,7 +2076,17 @@ function InspectorPanel({ isExpanded, onToggleExpanded }) {
         )}
 
         {/* Crop Section */}
-        {renderSectionHeader('crop', 'Crop', Crop)}
+        {renderSectionHeader('crop', 'Crop', Crop, {
+          actions: renderInspectorClipboardButtons({
+            scope: INSPECTOR_SETTINGS_SCOPE.CROP,
+            extraActions: renderHeaderActionButton({
+              icon: RotateCcw,
+              label: 'Reset Crop',
+              onClick: handleResetCrop,
+              title: 'Reset crop to 0 on all sides',
+            }),
+          }),
+        })}
         {expandedSections.includes('crop') && (
           <div className="p-3 space-y-3 border-b border-sf-dark-700">
             {/* Visual Crop Preview */}
@@ -1424,24 +2178,24 @@ function InspectorPanel({ isExpanded, onToggleExpanded }) {
               </div>
             </div>
 
-            <button 
-              onClick={() => {
-                handleTransformChange('cropTop', 0)
-                handleTransformChange('cropBottom', 0)
-                handleTransformChange('cropLeft', 0)
-                handleTransformCommit('cropRight', 0)
-              }}
-              className="w-full text-[10px] text-sf-accent hover:text-sf-accent-hover transition-colors"
-            >
-              Reset Crop
-            </button>
           </div>
         )}
 
         {renderStandardClipAdjustmentsSection()}
 
         {/* Timing Section */}
-        {renderSectionHeader('timing', 'Timing', Clock)}
+        {renderSectionHeader('timing', 'Timing', Clock, {
+          actions: renderInspectorClipboardButtons({
+            scope: INSPECTOR_SETTINGS_SCOPE.TIMING,
+            extraActions: canResetTiming ? renderHeaderActionButton({
+              icon: RotateCcw,
+              label: 'Reset Timing',
+              onClick: handleResetTiming,
+              disabled: !hasTimingResetChanges,
+              title: 'Reset speed to 1x and clear reverse',
+            }) : null,
+          }),
+        })}
         {expandedSections.includes('timing') && (
           <div className="p-3 space-y-3 border-b border-sf-dark-700">
             <div className="grid grid-cols-2 gap-3">
@@ -1565,6 +2319,7 @@ function InspectorPanel({ isExpanded, onToggleExpanded }) {
         {renderSectionHeader('effects', 'Effects', Zap)}
         {expandedSections.includes('effects') && (
           <div className="p-3 space-y-2 border-b border-sf-dark-700">
+            {renderAdjustmentBlurControl('Applies blur as an effect on this clip.')}
             {/* Render existing effects */}
             {(selectedClip.effects || []).map((effect, index) => (
               <div key={effect.id} className="bg-sf-dark-800 rounded overflow-hidden">
@@ -1805,9 +2560,6 @@ function InspectorPanel({ isExpanded, onToggleExpanded }) {
     if (!selectedClip || !transform) return null
     const adjustments = animatedAdjustments
 
-    const handleAdjustmentChange = (key, value) => handleClipAdjustmentChange(key, value)
-    const handleAdjustmentCommit = (key, value) => handleClipAdjustmentCommit(key, value)
-
     return (
       <>
         {renderClipSummaryHeader({
@@ -1827,29 +2579,19 @@ function InspectorPanel({ isExpanded, onToggleExpanded }) {
               value: `${timecodeFps} FPS`,
             },
           ],
-          actions: (
-            <div className="grid grid-cols-2 gap-2">
-              <button
-                onClick={handleResetTransform}
-                className="py-1.5 bg-sf-dark-700 hover:bg-sf-dark-600 rounded text-[11px] text-sf-text-secondary hover:text-sf-text-primary transition-colors flex items-center justify-center gap-1.5"
-                title="Reset transform properties"
-              >
-                <RotateCcw className="w-3.5 h-3.5" />
-                Reset Transform
-              </button>
-              <button
-                onClick={handleClipAdjustmentsReset}
-                className="py-1.5 bg-sf-dark-700 hover:bg-sf-dark-600 rounded text-[11px] text-sf-text-secondary hover:text-sf-text-primary transition-colors flex items-center justify-center gap-1.5"
-                title="Reset adjustment controls"
-              >
-                <RotateCcw className="w-3.5 h-3.5" />
-                Reset Adjustments
-              </button>
-            </div>
-          ),
         })}
 
-        {renderSectionHeader('transform', 'Transform', Move)}
+        {renderSectionHeader('transform', 'Transform', Move, {
+          actions: renderInspectorClipboardButtons({
+            scope: INSPECTOR_SETTINGS_SCOPE.TRANSFORM,
+            extraActions: renderHeaderActionButton({
+              icon: RotateCcw,
+              label: 'Reset',
+              onClick: handleResetTransform,
+              title: 'Reset transform properties',
+            }),
+          }),
+        })}
         {expandedSections.includes('transform') && (
           <div className="p-3 space-y-3 border-b border-sf-dark-700">
             <div>
@@ -2112,7 +2854,17 @@ function InspectorPanel({ isExpanded, onToggleExpanded }) {
           </div>
         )}
 
-        {renderSectionHeader('crop', 'Crop', Crop)}
+        {renderSectionHeader('crop', 'Crop', Crop, {
+          actions: renderInspectorClipboardButtons({
+            scope: INSPECTOR_SETTINGS_SCOPE.CROP,
+            extraActions: renderHeaderActionButton({
+              icon: RotateCcw,
+              label: 'Reset Crop',
+              onClick: handleResetCrop,
+              title: 'Reset crop to 0 on all sides',
+            }),
+          }),
+        })}
         {expandedSections.includes('crop') && (
           <div className="p-3 space-y-3 border-b border-sf-dark-700">
             <div className="relative w-full aspect-video bg-sf-dark-800 rounded overflow-hidden">
@@ -2234,255 +2986,43 @@ function InspectorPanel({ isExpanded, onToggleExpanded }) {
               </div>
             </div>
 
-            <button
-              onClick={() => {
-                const resetCrop = {
-                  cropTop: 0,
-                  cropBottom: 0,
-                  cropLeft: 0,
-                  cropRight: 0,
-                }
-                const applied = applyTransformUpdatesWithHistory(resetCrop, false)
-                if (!applied) return
-                for (const [property, value] of Object.entries(resetCrop)) {
-                  if (propertyHasKeyframes(property)) {
-                    setKeyframe(selectedClip.id, property, clipTime, value, 'easeInOut', { saveHistory: false })
-                  }
-                }
-              }}
-              className="w-full text-[10px] text-sf-accent hover:text-sf-accent-hover transition-colors"
-            >
-              Reset Crop
-            </button>
           </div>
         )}
 
-        {renderSectionHeader('adjustments', 'Adjustments', Sparkles)}
+        {renderSectionHeader('effects', 'Effects', Zap)}
+        {expandedSections.includes('effects') && (
+          <div className="p-3 space-y-2 border-b border-sf-dark-700">
+            {renderAdjustmentBlurControl('Applies blur as an effect on the clips below this layer.')}
+          </div>
+        )}
+
+        {renderSectionHeader('adjustments', 'Color', Sparkles, {
+          actions: renderInspectorClipboardButtons({
+            scope: INSPECTOR_SETTINGS_SCOPE.ADJUSTMENTS,
+            extraActions: renderHeaderActionButton({
+              icon: RotateCcw,
+              label: 'Reset',
+              onClick: handleClipAdjustmentsReset,
+              title: 'Reset color controls',
+            }),
+          }),
+        })}
         {expandedSections.includes('adjustments') && (
-          <div className="p-3 space-y-3 border-b border-sf-dark-700">
-            <p className="text-[10px] text-sf-text-muted">
-              Applies to clips below this layer.
-            </p>
-
-            <div>
-              <div className="flex justify-between items-center mb-1">
-                <label className="text-[10px] text-sf-text-muted">Exposure</label>
-                <div className="flex items-center gap-1">
-                  <KeyframeButton
-                    clipId={selectedClip?.id}
-                    property="brightness"
-                    clip={selectedClip}
-                    playheadPosition={playheadPosition}
-                  />
-                  <span className="text-[10px] text-sf-text-secondary">{Math.round(adjustments.brightness)}</span>
-                </div>
-              </div>
-              <input
-                type="range"
-                min="-100"
-                max="100"
-                step="1"
-                value={adjustments.brightness}
-                onChange={(e) => handleAdjustmentChange('brightness', Number(e.target.value))}
-                onMouseUp={(e) => handleAdjustmentCommit('brightness', Number(e.target.value))}
-                onDoubleClick={() => handleAdjustmentCommit('brightness', DEFAULT_ADJUSTMENT_SETTINGS.brightness)}
-                title="Double-click to reset to 0"
-                className="w-full h-1 bg-sf-dark-600 rounded-lg appearance-none cursor-pointer accent-sf-accent"
-              />
-            </div>
-
-            <div>
-              <div className="flex justify-between items-center mb-1">
-                <label className="text-[10px] text-sf-text-muted">Contrast</label>
-                <div className="flex items-center gap-1">
-                  <KeyframeButton
-                    clipId={selectedClip?.id}
-                    property="contrast"
-                    clip={selectedClip}
-                    playheadPosition={playheadPosition}
-                  />
-                  <span className="text-[10px] text-sf-text-secondary">{Math.round(adjustments.contrast)}</span>
-                </div>
-              </div>
-              <input
-                type="range"
-                min="-100"
-                max="100"
-                step="1"
-                value={adjustments.contrast}
-                onChange={(e) => handleAdjustmentChange('contrast', Number(e.target.value))}
-                onMouseUp={(e) => handleAdjustmentCommit('contrast', Number(e.target.value))}
-                onDoubleClick={() => handleAdjustmentCommit('contrast', DEFAULT_ADJUSTMENT_SETTINGS.contrast)}
-                title="Double-click to reset to 0"
-                className="w-full h-1 bg-sf-dark-600 rounded-lg appearance-none cursor-pointer accent-sf-accent"
-              />
-            </div>
-
-            <div>
-              <div className="flex justify-between items-center mb-1">
-                <label className="text-[10px] text-sf-text-muted">Saturation</label>
-                <div className="flex items-center gap-1">
-                  <KeyframeButton
-                    clipId={selectedClip?.id}
-                    property="saturation"
-                    clip={selectedClip}
-                    playheadPosition={playheadPosition}
-                  />
-                  <span className="text-[10px] text-sf-text-secondary">{Math.round(adjustments.saturation)}</span>
-                </div>
-              </div>
-              <input
-                type="range"
-                min="-100"
-                max="100"
-                step="1"
-                value={adjustments.saturation}
-                onChange={(e) => handleAdjustmentChange('saturation', Number(e.target.value))}
-                onMouseUp={(e) => handleAdjustmentCommit('saturation', Number(e.target.value))}
-                onDoubleClick={() => handleAdjustmentCommit('saturation', DEFAULT_ADJUSTMENT_SETTINGS.saturation)}
-                title="Double-click to reset to 0"
-                className="w-full h-1 bg-sf-dark-600 rounded-lg appearance-none cursor-pointer accent-sf-accent"
-              />
-            </div>
-
-            <div>
-              <div className="flex justify-between items-center mb-1">
-                <label className="text-[10px] text-sf-text-muted">Gain</label>
-                <div className="flex items-center gap-1">
-                  <KeyframeButton
-                    clipId={selectedClip?.id}
-                    property="gain"
-                    clip={selectedClip}
-                    playheadPosition={playheadPosition}
-                  />
-                  <span className="text-[10px] text-sf-text-secondary">{Math.round(adjustments.gain)}</span>
-                </div>
-              </div>
-              <input
-                type="range"
-                min="-100"
-                max="100"
-                step="1"
-                value={adjustments.gain}
-                onChange={(e) => handleAdjustmentChange('gain', Number(e.target.value))}
-                onMouseUp={(e) => handleAdjustmentCommit('gain', Number(e.target.value))}
-                onDoubleClick={() => handleAdjustmentCommit('gain', DEFAULT_ADJUSTMENT_SETTINGS.gain)}
-                title="Double-click to reset to 0"
-                className="w-full h-1 bg-sf-dark-600 rounded-lg appearance-none cursor-pointer accent-sf-accent"
-              />
-            </div>
-
-            <div>
-              <div className="flex justify-between items-center mb-1">
-                <label className="text-[10px] text-sf-text-muted">Gamma</label>
-                <div className="flex items-center gap-1">
-                  <KeyframeButton
-                    clipId={selectedClip?.id}
-                    property="gamma"
-                    clip={selectedClip}
-                    playheadPosition={playheadPosition}
-                  />
-                  <span className="text-[10px] text-sf-text-secondary">{Math.round(adjustments.gamma)}</span>
-                </div>
-              </div>
-              <input
-                type="range"
-                min="-100"
-                max="100"
-                step="1"
-                value={adjustments.gamma}
-                onChange={(e) => handleAdjustmentChange('gamma', Number(e.target.value))}
-                onMouseUp={(e) => handleAdjustmentCommit('gamma', Number(e.target.value))}
-                onDoubleClick={() => handleAdjustmentCommit('gamma', DEFAULT_ADJUSTMENT_SETTINGS.gamma)}
-                title="Double-click to reset to 0"
-                className="w-full h-1 bg-sf-dark-600 rounded-lg appearance-none cursor-pointer accent-sf-accent"
-              />
-            </div>
-
-            <div>
-              <div className="flex justify-between items-center mb-1">
-                <label className="text-[10px] text-sf-text-muted">Offset</label>
-                <div className="flex items-center gap-1">
-                  <KeyframeButton
-                    clipId={selectedClip?.id}
-                    property="offset"
-                    clip={selectedClip}
-                    playheadPosition={playheadPosition}
-                  />
-                  <span className="text-[10px] text-sf-text-secondary">{Math.round(adjustments.offset)}</span>
-                </div>
-              </div>
-              <input
-                type="range"
-                min="-100"
-                max="100"
-                step="1"
-                value={adjustments.offset}
-                onChange={(e) => handleAdjustmentChange('offset', Number(e.target.value))}
-                onMouseUp={(e) => handleAdjustmentCommit('offset', Number(e.target.value))}
-                onDoubleClick={() => handleAdjustmentCommit('offset', DEFAULT_ADJUSTMENT_SETTINGS.offset)}
-                title="Double-click to reset to 0"
-                className="w-full h-1 bg-sf-dark-600 rounded-lg appearance-none cursor-pointer accent-sf-accent"
-              />
-            </div>
-
-            <div>
-              <div className="flex justify-between items-center mb-1">
-                <label className="text-[10px] text-sf-text-muted">Hue</label>
-                <div className="flex items-center gap-1">
-                  <KeyframeButton
-                    clipId={selectedClip?.id}
-                    property="hue"
-                    clip={selectedClip}
-                    playheadPosition={playheadPosition}
-                  />
-                  <span className="text-[10px] text-sf-text-secondary">{Math.round(adjustments.hue)}deg</span>
-                </div>
-              </div>
-              <input
-                type="range"
-                min="-180"
-                max="180"
-                step="1"
-                value={adjustments.hue}
-                onChange={(e) => handleAdjustmentChange('hue', Number(e.target.value))}
-                onMouseUp={(e) => handleAdjustmentCommit('hue', Number(e.target.value))}
-                onDoubleClick={() => handleAdjustmentCommit('hue', DEFAULT_ADJUSTMENT_SETTINGS.hue)}
-                title="Double-click to reset to 0deg"
-                className="w-full h-1 bg-sf-dark-600 rounded-lg appearance-none cursor-pointer accent-sf-accent"
-              />
-            </div>
-
-            <div>
-              <div className="flex justify-between items-center mb-1">
-                <label className="text-[10px] text-sf-text-muted">Blur</label>
-                <div className="flex items-center gap-1">
-                  <KeyframeButton
-                    clipId={selectedClip?.id}
-                    property="blur"
-                    clip={selectedClip}
-                    playheadPosition={playheadPosition}
-                  />
-                  <span className="text-[10px] text-sf-text-secondary">{adjustments.blur.toFixed(1)}px</span>
-                </div>
-              </div>
-              <input
-                type="range"
-                min="0"
-                max="50"
-                step="0.25"
-                value={adjustments.blur}
-                onChange={(e) => handleAdjustmentChange('blur', Number(e.target.value))}
-                onMouseUp={(e) => handleAdjustmentCommit('blur', Number(e.target.value))}
-                onDoubleClick={() => handleAdjustmentCommit('blur', DEFAULT_ADJUSTMENT_SETTINGS.blur)}
-                title="Double-click to reset to 0px"
-                className="w-full h-1 bg-sf-dark-600 rounded-lg appearance-none cursor-pointer accent-sf-accent"
-              />
-            </div>
-          </div>
+          renderSharedAdjustmentsContent(adjustments, 'Applies color controls to clips below this layer.')
         )}
 
-        {renderSectionHeader('timing', 'Timing', Clock)}
+        {renderSectionHeader('timing', 'Timing', Clock, {
+          actions: renderInspectorClipboardButtons({
+            scope: INSPECTOR_SETTINGS_SCOPE.TIMING,
+            extraActions: canResetTiming ? renderHeaderActionButton({
+              icon: RotateCcw,
+              label: 'Reset Timing',
+              onClick: handleResetTiming,
+              disabled: !hasTimingResetChanges,
+              title: 'Reset speed to 1x and clear reverse',
+            }) : null,
+          }),
+        })}
         {expandedSections.includes('timing') && (
           <div className="p-3 space-y-3 border-b border-sf-dark-700">
             <div className="grid grid-cols-2 gap-3">
@@ -2526,229 +3066,19 @@ function InspectorPanel({ isExpanded, onToggleExpanded }) {
 
   const renderStandardClipAdjustmentsSection = () => (
     <>
-      {renderSectionHeader('adjustments', 'Adjustments', Sparkles)}
+      {renderSectionHeader('adjustments', 'Color', Sparkles, {
+        actions: renderInspectorClipboardButtons({
+          scope: INSPECTOR_SETTINGS_SCOPE.ADJUSTMENTS,
+          extraActions: renderHeaderActionButton({
+            icon: RotateCcw,
+            label: 'Reset',
+            onClick: handleClipAdjustmentsReset,
+            title: 'Reset color controls',
+          }),
+        }),
+      })}
       {expandedSections.includes('adjustments') && (
-        <div className="p-3 space-y-3 border-b border-sf-dark-700">
-          <p className="text-[10px] text-sf-text-muted">
-            Applies to this clip.
-          </p>
-
-          <div>
-            <div className="flex justify-between items-center mb-1">
-              <label className="text-[10px] text-sf-text-muted">Exposure</label>
-              <div className="flex items-center gap-1">
-                <KeyframeButton
-                  clipId={selectedClip?.id}
-                  property="brightness"
-                  clip={selectedClip}
-                  playheadPosition={playheadPosition}
-                />
-                <span className="text-[10px] text-sf-text-secondary">{Math.round(animatedAdjustments.brightness)}</span>
-              </div>
-            </div>
-            <input
-              type="range"
-              min="-100"
-              max="100"
-              step="1"
-              value={animatedAdjustments.brightness}
-              onChange={(e) => handleClipAdjustmentChange('brightness', Number(e.target.value))}
-              onMouseUp={(e) => handleClipAdjustmentCommit('brightness', Number(e.target.value))}
-              onDoubleClick={() => handleClipAdjustmentCommit('brightness', DEFAULT_ADJUSTMENT_SETTINGS.brightness)}
-              title="Double-click to reset to 0"
-              className="w-full h-1 bg-sf-dark-600 rounded-lg appearance-none cursor-pointer accent-sf-accent"
-            />
-          </div>
-
-          <div>
-            <div className="flex justify-between items-center mb-1">
-              <label className="text-[10px] text-sf-text-muted">Contrast</label>
-              <div className="flex items-center gap-1">
-                <KeyframeButton
-                  clipId={selectedClip?.id}
-                  property="contrast"
-                  clip={selectedClip}
-                  playheadPosition={playheadPosition}
-                />
-                <span className="text-[10px] text-sf-text-secondary">{Math.round(animatedAdjustments.contrast)}</span>
-              </div>
-            </div>
-            <input
-              type="range"
-              min="-100"
-              max="100"
-              step="1"
-              value={animatedAdjustments.contrast}
-              onChange={(e) => handleClipAdjustmentChange('contrast', Number(e.target.value))}
-              onMouseUp={(e) => handleClipAdjustmentCommit('contrast', Number(e.target.value))}
-              onDoubleClick={() => handleClipAdjustmentCommit('contrast', DEFAULT_ADJUSTMENT_SETTINGS.contrast)}
-              title="Double-click to reset to 0"
-              className="w-full h-1 bg-sf-dark-600 rounded-lg appearance-none cursor-pointer accent-sf-accent"
-            />
-          </div>
-
-          <div>
-            <div className="flex justify-between items-center mb-1">
-              <label className="text-[10px] text-sf-text-muted">Saturation</label>
-              <div className="flex items-center gap-1">
-                <KeyframeButton
-                  clipId={selectedClip?.id}
-                  property="saturation"
-                  clip={selectedClip}
-                  playheadPosition={playheadPosition}
-                />
-                <span className="text-[10px] text-sf-text-secondary">{Math.round(animatedAdjustments.saturation)}</span>
-              </div>
-            </div>
-            <input
-              type="range"
-              min="-100"
-              max="100"
-              step="1"
-              value={animatedAdjustments.saturation}
-              onChange={(e) => handleClipAdjustmentChange('saturation', Number(e.target.value))}
-              onMouseUp={(e) => handleClipAdjustmentCommit('saturation', Number(e.target.value))}
-              onDoubleClick={() => handleClipAdjustmentCommit('saturation', DEFAULT_ADJUSTMENT_SETTINGS.saturation)}
-              title="Double-click to reset to 0"
-              className="w-full h-1 bg-sf-dark-600 rounded-lg appearance-none cursor-pointer accent-sf-accent"
-            />
-          </div>
-
-          <div>
-            <div className="flex justify-between items-center mb-1">
-              <label className="text-[10px] text-sf-text-muted">Gain</label>
-              <div className="flex items-center gap-1">
-                <KeyframeButton
-                  clipId={selectedClip?.id}
-                  property="gain"
-                  clip={selectedClip}
-                  playheadPosition={playheadPosition}
-                />
-                <span className="text-[10px] text-sf-text-secondary">{Math.round(animatedAdjustments.gain)}</span>
-              </div>
-            </div>
-            <input
-              type="range"
-              min="-100"
-              max="100"
-              step="1"
-              value={animatedAdjustments.gain}
-              onChange={(e) => handleClipAdjustmentChange('gain', Number(e.target.value))}
-              onMouseUp={(e) => handleClipAdjustmentCommit('gain', Number(e.target.value))}
-              onDoubleClick={() => handleClipAdjustmentCommit('gain', DEFAULT_ADJUSTMENT_SETTINGS.gain)}
-              title="Double-click to reset to 0"
-              className="w-full h-1 bg-sf-dark-600 rounded-lg appearance-none cursor-pointer accent-sf-accent"
-            />
-          </div>
-
-          <div>
-            <div className="flex justify-between items-center mb-1">
-              <label className="text-[10px] text-sf-text-muted">Gamma</label>
-              <div className="flex items-center gap-1">
-                <KeyframeButton
-                  clipId={selectedClip?.id}
-                  property="gamma"
-                  clip={selectedClip}
-                  playheadPosition={playheadPosition}
-                />
-                <span className="text-[10px] text-sf-text-secondary">{Math.round(animatedAdjustments.gamma)}</span>
-              </div>
-            </div>
-            <input
-              type="range"
-              min="-100"
-              max="100"
-              step="1"
-              value={animatedAdjustments.gamma}
-              onChange={(e) => handleClipAdjustmentChange('gamma', Number(e.target.value))}
-              onMouseUp={(e) => handleClipAdjustmentCommit('gamma', Number(e.target.value))}
-              onDoubleClick={() => handleClipAdjustmentCommit('gamma', DEFAULT_ADJUSTMENT_SETTINGS.gamma)}
-              title="Double-click to reset to 0"
-              className="w-full h-1 bg-sf-dark-600 rounded-lg appearance-none cursor-pointer accent-sf-accent"
-            />
-          </div>
-
-          <div>
-            <div className="flex justify-between items-center mb-1">
-              <label className="text-[10px] text-sf-text-muted">Offset</label>
-              <div className="flex items-center gap-1">
-                <KeyframeButton
-                  clipId={selectedClip?.id}
-                  property="offset"
-                  clip={selectedClip}
-                  playheadPosition={playheadPosition}
-                />
-                <span className="text-[10px] text-sf-text-secondary">{Math.round(animatedAdjustments.offset)}</span>
-              </div>
-            </div>
-            <input
-              type="range"
-              min="-100"
-              max="100"
-              step="1"
-              value={animatedAdjustments.offset}
-              onChange={(e) => handleClipAdjustmentChange('offset', Number(e.target.value))}
-              onMouseUp={(e) => handleClipAdjustmentCommit('offset', Number(e.target.value))}
-              onDoubleClick={() => handleClipAdjustmentCommit('offset', DEFAULT_ADJUSTMENT_SETTINGS.offset)}
-              title="Double-click to reset to 0"
-              className="w-full h-1 bg-sf-dark-600 rounded-lg appearance-none cursor-pointer accent-sf-accent"
-            />
-          </div>
-
-          <div>
-            <div className="flex justify-between items-center mb-1">
-              <label className="text-[10px] text-sf-text-muted">Hue</label>
-              <div className="flex items-center gap-1">
-                <KeyframeButton
-                  clipId={selectedClip?.id}
-                  property="hue"
-                  clip={selectedClip}
-                  playheadPosition={playheadPosition}
-                />
-                <span className="text-[10px] text-sf-text-secondary">{Math.round(animatedAdjustments.hue)}deg</span>
-              </div>
-            </div>
-            <input
-              type="range"
-              min="-180"
-              max="180"
-              step="1"
-              value={animatedAdjustments.hue}
-              onChange={(e) => handleClipAdjustmentChange('hue', Number(e.target.value))}
-              onMouseUp={(e) => handleClipAdjustmentCommit('hue', Number(e.target.value))}
-              onDoubleClick={() => handleClipAdjustmentCommit('hue', DEFAULT_ADJUSTMENT_SETTINGS.hue)}
-              title="Double-click to reset to 0deg"
-              className="w-full h-1 bg-sf-dark-600 rounded-lg appearance-none cursor-pointer accent-sf-accent"
-            />
-          </div>
-
-          <div>
-            <div className="flex justify-between items-center mb-1">
-              <label className="text-[10px] text-sf-text-muted">Blur</label>
-              <div className="flex items-center gap-1">
-                <KeyframeButton
-                  clipId={selectedClip?.id}
-                  property="blur"
-                  clip={selectedClip}
-                  playheadPosition={playheadPosition}
-                />
-                <span className="text-[10px] text-sf-text-secondary">{animatedAdjustments.blur.toFixed(1)}px</span>
-              </div>
-            </div>
-            <input
-              type="range"
-              min="0"
-              max="50"
-              step="0.25"
-              value={animatedAdjustments.blur}
-              onChange={(e) => handleClipAdjustmentChange('blur', Number(e.target.value))}
-              onMouseUp={(e) => handleClipAdjustmentCommit('blur', Number(e.target.value))}
-              onDoubleClick={() => handleClipAdjustmentCommit('blur', DEFAULT_ADJUSTMENT_SETTINGS.blur)}
-              title="Double-click to reset to 0px"
-              className="w-full h-1 bg-sf-dark-600 rounded-lg appearance-none cursor-pointer accent-sf-accent"
-            />
-          </div>
-        </div>
+        renderSharedAdjustmentsContent(animatedAdjustments, 'Applies color controls to this clip.')
       )}
     </>
   )
@@ -2773,33 +3103,6 @@ function InspectorPanel({ isExpanded, onToggleExpanded }) {
     if (!selectedClip || selectedClip.type !== 'text') return
     clearTextAnimationPreset(selectedClip.id)
   }, [selectedClip, clearTextAnimationPreset])
-
-  // Get text properties with defaults
-  const getTextProps = useCallback(() => {
-    if (!selectedClip || selectedClip.type !== 'text') return null
-    return selectedClip.textProperties || {
-      text: 'Sample Text',
-      fontFamily: 'Inter',
-      fontSize: 64,
-      fontWeight: 'bold',
-      fontStyle: 'normal',
-      textColor: '#FFFFFF',
-      backgroundColor: '#000000',
-      backgroundOpacity: 0,
-      backgroundPadding: 20,
-      textAlign: 'center',
-      verticalAlign: 'center',
-      strokeColor: '#000000',
-      strokeWidth: 0,
-      letterSpacing: 0,
-      lineHeight: 1.2,
-      shadow: false,
-      shadowColor: 'rgba(0,0,0,0.5)',
-      shadowBlur: 4,
-      shadowOffsetX: 2,
-      shadowOffsetY: 2,
-    }
-  }, [selectedClip])
 
   // Render Text Clip Inspector
   const renderTextClipInspector = () => {
@@ -2827,16 +3130,6 @@ function InspectorPanel({ isExpanded, onToggleExpanded }) {
               value: `${timecodeFps} FPS`,
             },
           ],
-          actions: (
-            <button 
-              onClick={handleResetTransform}
-              className="w-full py-1.5 bg-sf-dark-700 hover:bg-sf-dark-600 rounded text-[11px] text-sf-text-secondary hover:text-sf-text-primary transition-colors flex items-center justify-center gap-1.5"
-              title="Reset all transform properties to default"
-            >
-              <RotateCcw className="w-3.5 h-3.5" />
-              Reset Transform
-            </button>
-          ),
         })}
 
         {/* Text Content Section */}
@@ -3107,7 +3400,17 @@ function InspectorPanel({ isExpanded, onToggleExpanded }) {
         )}
 
         {/* Transform Section (shared with video) */}
-        {renderSectionHeader('transform', 'Transform', Move)}
+        {renderSectionHeader('transform', 'Transform', Move, {
+          actions: renderInspectorClipboardButtons({
+            scope: INSPECTOR_SETTINGS_SCOPE.TRANSFORM,
+            extraActions: renderHeaderActionButton({
+              icon: RotateCcw,
+              label: 'Reset',
+              onClick: handleResetTransform,
+              title: 'Reset all transform properties to default',
+            }),
+          }),
+        })}
         {expandedSections.includes('transform') && (
           <div className="p-3 space-y-3 border-b border-sf-dark-700">
             {/* Position */}
@@ -3254,7 +3557,11 @@ function InspectorPanel({ isExpanded, onToggleExpanded }) {
         {renderStandardClipAdjustmentsSection()}
 
         {/* Timing Section */}
-        {renderSectionHeader('timing', 'Timing', Clock)}
+        {renderSectionHeader('timing', 'Timing', Clock, {
+          actions: renderInspectorClipboardButtons({
+            scope: INSPECTOR_SETTINGS_SCOPE.TIMING,
+          }),
+        })}
         {expandedSections.includes('timing') && (
           <div className="p-3 space-y-3 border-b border-sf-dark-700">
             <div className="grid grid-cols-2 gap-3">
@@ -4326,8 +4633,11 @@ function InspectorPanel({ isExpanded, onToggleExpanded }) {
       {isExpanded && (
         <div className="flex-1 bg-sf-dark-900 border-l border-sf-dark-700 flex flex-col min-w-0 overflow-hidden">
           {/* Panel Header */}
-          <div className="flex-shrink-0 h-9 bg-sf-dark-800 border-b border-sf-dark-700 flex items-center px-3">
+          <div className="flex-shrink-0 h-9 bg-sf-dark-800 border-b border-sf-dark-700 flex items-center justify-between gap-2 px-3">
             <span className="text-xs font-medium text-sf-text-primary">Inspector</span>
+            <div className="flex items-center gap-1">
+              {renderInspectorSettingsHeaderActions()}
+            </div>
           </div>
           
           {/* Panel Content */}

@@ -9,6 +9,16 @@
  * }
  */
 
+import {
+  DEFAULT_ADJUSTMENT_SETTINGS,
+  GLOBAL_ADJUSTMENT_KEYS,
+  TONAL_ADJUSTMENT_GROUP_KEYS,
+  TONAL_ADJUSTMENT_PROPERTY_IDS,
+  getAdjustmentValue,
+  normalizeAdjustmentSettings,
+  setAdjustmentValue,
+} from './adjustments'
+
 // Easing functions (t is normalized 0-1)
 export const easingFunctions = {
   linear: (t) => t,
@@ -69,9 +79,18 @@ export const KEYFRAMEABLE_PROPERTIES = [
   { id: 'gamma', label: 'Gamma', group: 'adjustments', unit: '' },
   { id: 'offset', label: 'Offset', group: 'adjustments', unit: '' },
   { id: 'hue', label: 'Hue', group: 'adjustments', unit: 'deg' },
+  ...TONAL_ADJUSTMENT_GROUP_KEYS.flatMap((groupKey) => [
+    { id: `${groupKey}.brightness`, label: `${groupKey.charAt(0).toUpperCase() + groupKey.slice(1)} Exposure`, group: 'adjustments', unit: '' },
+    { id: `${groupKey}.contrast`, label: `${groupKey.charAt(0).toUpperCase() + groupKey.slice(1)} Contrast`, group: 'adjustments', unit: '' },
+    { id: `${groupKey}.saturation`, label: `${groupKey.charAt(0).toUpperCase() + groupKey.slice(1)} Saturation`, group: 'adjustments', unit: '' },
+    { id: `${groupKey}.gain`, label: `${groupKey.charAt(0).toUpperCase() + groupKey.slice(1)} Gain`, group: 'adjustments', unit: '' },
+    { id: `${groupKey}.gamma`, label: `${groupKey.charAt(0).toUpperCase() + groupKey.slice(1)} Gamma`, group: 'adjustments', unit: '' },
+    { id: `${groupKey}.offset`, label: `${groupKey.charAt(0).toUpperCase() + groupKey.slice(1)} Offset`, group: 'adjustments', unit: '' },
+    { id: `${groupKey}.hue`, label: `${groupKey.charAt(0).toUpperCase() + groupKey.slice(1)} Hue`, group: 'adjustments', unit: 'deg' },
+  ]),
 ]
 
-export const ADJUSTMENT_KEYFRAME_PROPERTIES = ['brightness', 'contrast', 'saturation', 'gain', 'gamma', 'offset', 'hue', 'blur']
+export const ADJUSTMENT_KEYFRAME_PROPERTIES = [...GLOBAL_ADJUSTMENT_KEYS, ...TONAL_ADJUSTMENT_PROPERTY_IDS]
 
 /**
  * Get the value of a property at a specific time, interpolating between keyframes
@@ -173,26 +192,30 @@ export function getAnimatedTransform(clip, clipTime) {
  *
  * @param {Object} clip - Clip containing adjustments and keyframes
  * @param {number} clipTime - Time relative to clip start (seconds)
- * @returns {Object} - Adjustment values (brightness/contrast/saturation/gain/gamma/offset/hue/blur)
+ * @returns {Object} - Adjustment values including tonal groups
  */
 export function getAnimatedAdjustmentSettings(clip, clipTime) {
   if (!clip) return null
 
-  const baseAdjustments = clip.adjustments || {}
+  const baseAdjustments = normalizeAdjustmentSettings(clip.adjustments || {})
   const keyframes = clip.keyframes || {}
-  const animatedAdjustments = { ...baseAdjustments }
+  let animatedAdjustments = { ...baseAdjustments }
 
   for (const propertyId of ADJUSTMENT_KEYFRAME_PROPERTIES) {
     const propertyKeyframes = keyframes[propertyId]
-    const baseValue = baseAdjustments[propertyId] ?? 0
+    const baseValue = getAdjustmentValue(baseAdjustments, propertyId) ?? 0
     if (propertyKeyframes && propertyKeyframes.length > 0) {
-      animatedAdjustments[propertyId] = getValueAtTime(propertyKeyframes, clipTime, baseValue)
-    } else if (!Object.prototype.hasOwnProperty.call(animatedAdjustments, propertyId)) {
-      animatedAdjustments[propertyId] = baseValue
+      animatedAdjustments = setAdjustmentValue(
+        animatedAdjustments,
+        propertyId,
+        getValueAtTime(propertyKeyframes, clipTime, baseValue)
+      )
+    } else if (getAdjustmentValue(animatedAdjustments, propertyId) == null) {
+      animatedAdjustments = setAdjustmentValue(animatedAdjustments, propertyId, baseValue)
     }
   }
 
-  return animatedAdjustments
+  return normalizeAdjustmentSettings(animatedAdjustments)
 }
 
 /**

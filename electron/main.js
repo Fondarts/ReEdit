@@ -5,9 +5,9 @@ const fsSync = require('fs')
 const http = require('http')
 const { spawn } = require('child_process')
 const { fileURLToPath } = require('url')
-const ffmpegPath = require('ffmpeg-static')
+const ffmpegStaticPath = require('ffmpeg-static')
 const ffprobeStatic = require('ffprobe-static')
-const ffprobePath = ffprobeStatic?.path || ffprobeStatic
+const ffprobeStaticPath = ffprobeStatic?.path || ffprobeStatic
 
 const isDev = !app.isPackaged
 
@@ -25,6 +25,36 @@ let splashWindow = null
 let exportWorkerWindow = null
 let restoreFullscreenAfterMinimize = false
 const settingsPath = path.join(app.getPath('userData'), 'settings.json')
+
+function resolvePackagedBinaryPath(binaryPath) {
+  if (!binaryPath || typeof binaryPath !== 'string') return binaryPath
+  if (!app.isPackaged) return binaryPath
+
+  const packagedCandidates = []
+
+  if (binaryPath === ffmpegStaticPath) {
+    packagedCandidates.push(path.join(process.resourcesPath, 'bin', path.basename(binaryPath)))
+  }
+
+  if (binaryPath === ffprobeStaticPath) {
+    packagedCandidates.push(
+      path.join(process.resourcesPath, 'bin', 'ffprobe-static', process.platform, process.arch, path.basename(binaryPath))
+    )
+  }
+
+  packagedCandidates.push(binaryPath.replace(/app\.asar([\\/])/i, 'app.asar.unpacked$1'))
+
+  for (const candidate of packagedCandidates) {
+    if (candidate && candidate !== binaryPath && fsSync.existsSync(candidate)) {
+      return candidate
+    }
+  }
+
+  return binaryPath
+}
+
+const ffmpegPath = resolvePackagedBinaryPath(ffmpegStaticPath)
+const ffprobePath = resolvePackagedBinaryPath(ffprobeStaticPath)
 
 async function writeFileAtomic(filePath, data, options) {
   const dir = path.dirname(filePath)
