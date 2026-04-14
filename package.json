@@ -1,6 +1,6 @@
 {
   "name": "comfystudio",
-  "version": "0.1.5",
+  "version": "0.1.6",
   "description": "AI-Powered Animatic Studio for Pre-Production",
   "main": "electron/main.js",
   "scripts": {
