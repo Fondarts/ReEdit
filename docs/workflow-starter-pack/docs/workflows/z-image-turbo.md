@@ -16,19 +16,31 @@ Generate image from text prompt using Z Image Turbo
 - This is a local workflow: expect to install the listed custom nodes and local model files before it runs successfully.
 
 ## Required Custom Nodes
-- `CLIPLoader`
-- `KSampler`
-- `ModelSamplingAuraFlow`
-- `SaveImage`
-- `UNETLoader`
-- `VAELoader`
+- `CLIPLoader` - Built into newer ComfyUI builds
+  - Core text-encoder loader. Missing this usually means the ComfyUI install is incomplete or very outdated.
+  - Docs: https://registry.comfy.org
+- `KSampler` - Built into newer ComfyUI builds
+  - Core sampler node. Missing this usually means the ComfyUI install is incomplete or very outdated.
+  - Docs: https://registry.comfy.org
+- `ModelSamplingAuraFlow` - Built into newer ComfyUI builds
+  - This sampler ships with newer ComfyUI builds.
+  - Docs: https://docs.comfy.org/built-in-nodes/ModelSamplingAuraFlow
+- `SaveImage` - Built into newer ComfyUI builds
+  - Core image output node. Missing this usually means the ComfyUI install is incomplete or very outdated.
+  - Docs: https://registry.comfy.org
+- `UNETLoader` - Built into newer ComfyUI builds
+  - Core diffusion model loader. Missing this usually means the ComfyUI install is incomplete or very outdated.
+  - Docs: https://registry.comfy.org
+- `VAELoader` - Built into newer ComfyUI builds
+  - Core VAE loader. Missing this usually means the ComfyUI install is incomplete or very outdated.
+  - Docs: https://registry.comfy.org
 
 ## Required Models
-| Filename | ComfyUI Folder | Loader | Input Key |
-|---|---|---|---|
-| `ae.safetensors` | `models/vae` | `VAELoader` | `vae_name` |
-| `qwen_3_4b.safetensors` | `models/text_encoders` | `CLIPLoader` | `clip_name` |
-| `z_image_turbo_bf16.safetensors` | `models/diffusion_models` | `UNETLoader` | `unet_name` |
+| Filename | ComfyUI Folder | Loader | Input Key | Download |
+|---|---|---|---|---|
+| `ae.safetensors` | `models/vae` | `VAELoader` | `vae_name` | [Download](https://huggingface.co/Comfy-Org/z_image_turbo/resolve/main/split_files/vae/ae.safetensors) |
+| `qwen_3_4b.safetensors` | `models/text_encoders` | `CLIPLoader` | `clip_name` | [Download](https://huggingface.co/Comfy-Org/z_image_turbo/resolve/main/split_files/text_encoders/qwen_3_4b.safetensors) |
+| `z_image_turbo_bf16.safetensors` | `models/diffusion_models` | `UNETLoader` | `unet_name` | [Download](https://huggingface.co/Comfy-Org/z_image_turbo/resolve/main/split_files/diffusion_models/z_image_turbo_bf16.safetensors) |
 
 ## API Key
 - Not required for this workflow.

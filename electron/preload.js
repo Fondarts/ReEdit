@@ -317,6 +317,50 @@ contextBridge.exposeInMainWorld('electronAPI', {
   deleteSetting: (key) => ipcRenderer.invoke('settings:delete', key),
 
   // ============================================
+  // Workflow Setup Manager
+  // ============================================
+
+  loadComfyUiWorkflowGraph: (payload = {}) => ipcRenderer.invoke('comfyui:loadWorkflowGraph', payload),
+  validateWorkflowSetupRoot: (rootPath) => ipcRenderer.invoke('workflowSetup:validateRoot', rootPath),
+  checkWorkflowSetupFiles: (payload = {}) => ipcRenderer.invoke('workflowSetup:checkFiles', payload),
+  openExternalUrl: (url) => ipcRenderer.invoke('shell:openExternal', url),
+  installWorkflowSetup: (payload = {}) => ipcRenderer.invoke('workflowSetup:install', payload),
+  onWorkflowSetupProgress: (cb) => {
+    const handler = (_, data) => cb(data)
+    ipcRenderer.on('workflowSetup:progress', handler)
+    return () => ipcRenderer.removeListener('workflowSetup:progress', handler)
+  },
+
+  // ============================================
+  // ComfyUI Launcher (process manager)
+  // ============================================
+
+  comfyLauncher: {
+    getState: () => ipcRenderer.invoke('comfyLauncher:getState'),
+    getConfig: () => ipcRenderer.invoke('comfyLauncher:getConfig'),
+    setConfig: (partial) => ipcRenderer.invoke('comfyLauncher:setConfig', partial),
+    start: () => ipcRenderer.invoke('comfyLauncher:start'),
+    stop: () => ipcRenderer.invoke('comfyLauncher:stop'),
+    restart: () => ipcRenderer.invoke('comfyLauncher:restart'),
+    detach: () => ipcRenderer.invoke('comfyLauncher:detach'),
+    refresh: () => ipcRenderer.invoke('comfyLauncher:refresh'),
+    getLogs: (options) => ipcRenderer.invoke('comfyLauncher:getLogs', options),
+    openLogFile: () => ipcRenderer.invoke('comfyLauncher:openLogFile'),
+    detectLaunchers: (payload) => ipcRenderer.invoke('comfyLauncher:detectLaunchers', payload),
+    pickLauncherScript: () => ipcRenderer.invoke('comfyLauncher:pickLauncherScript'),
+    onState: (cb) => {
+      const handler = (_, state) => cb(state)
+      ipcRenderer.on('comfyLauncher:state', handler)
+      return () => ipcRenderer.removeListener('comfyLauncher:state', handler)
+    },
+    onLog: (cb) => {
+      const handler = (_, entry) => cb(entry)
+      ipcRenderer.on('comfyLauncher:log', handler)
+      return () => ipcRenderer.removeListener('comfyLauncher:log', handler)
+    },
+  },
+
+  // ============================================
   // Window Controls
   // ============================================
 

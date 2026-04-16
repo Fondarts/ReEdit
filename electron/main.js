@@ -1,13 +1,22 @@
 const { app, BrowserWindow, ipcMain, dialog, protocol, net } = require('electron')
+const crypto = require('crypto')
 const path = require('path')
 const fs = require('fs').promises
 const fsSync = require('fs')
 const http = require('http')
 const { spawn } = require('child_process')
+const { Readable } = require('stream')
 const { fileURLToPath } = require('url')
 const ffmpegStaticPath = require('ffmpeg-static')
 const ffprobeStatic = require('ffprobe-static')
 const ffprobeStaticPath = ffprobeStatic?.path || ffprobeStatic
+const {
+  ComfyLauncher,
+  detectLaunchersForComfyRoot,
+  DEFAULT_CONFIG: DEFAULT_LAUNCHER_CONFIG,
+  LAUNCHER_SETTING_KEY,
+  safeCloneConfig: safeCloneLauncherConfig,
+} = require('./comfyLauncher')
 
 const isDev = !app.isPackaged
 
@@ -156,6 +165,641 @@ function captureCommandOutput(command, args = [], timeoutMs = 2500) {
   })
 }
 
+function emitWorkflowSetupProgress(payload = {}) {
+  if (!mainWindow || mainWindow.isDestroyed()) return
+  mainWindow.webContents.send('workflowSetup:progress', {
+    ts: Date.now(),
+    level: 'info',
+    stage: '',
+    message: '',
+    ...payload,
+  })
+}
+
+function clampPercent(value) {
+  const numeric = Number(value)
+  if (!Number.isFinite(numeric)) return null
+  return Math.max(0, Math.min(100, numeric))
+}
+
+function getWorkflowSetupOverallPercent({ completedTasks = 0, totalTasks = 0, taskPercent = null } = {}) {
+  const total = Number(totalTasks)
+  if (!Number.isFinite(total) || total <= 0) return 0
+
+  const completed = Math.max(0, Math.min(total, Number(completedTasks) || 0))
+  const normalizedTaskPercent = clampPercent(taskPercent)
+  const unitsDone = completed + (normalizedTaskPercent == null ? 0 : (normalizedTaskPercent / 100))
+  return clampPercent(Math.round((unitsDone / total) * 100)) ?? 0
+}
+
+async function pathExists(targetPath) {
+  try {
+    await fs.access(targetPath)
+    return true
+  } catch {
+    return false
+  }
+}
+
+async function isDirectoryPath(targetPath) {
+  try {
+    const stat = await fs.stat(targetPath)
+    return stat.isDirectory()
+  } catch {
+    return false
+  }
+}
+
+function normalizePythonCommand(pythonInfo = null) {
+  if (!pythonInfo?.command) return ''
+  return [pythonInfo.command, ...(Array.isArray(pythonInfo.baseArgs) ? pythonInfo.baseArgs : [])].join(' ').trim()
+}
+
+async function detectPythonCommandForComfyRoot(rootPath) {
+  const windowsCandidates = [
+    path.join(rootPath, 'python_embeded', 'python.exe'),
+    path.join(rootPath, 'python_embedded', 'python.exe'),
+    path.join(rootPath, '.venv', 'Scripts', 'python.exe'),
+    path.join(rootPath, 'venv', 'Scripts', 'python.exe'),
+    path.join(rootPath, 'env', 'Scripts', 'python.exe'),
+  ]
+  const posixCandidates = [
+    path.join(rootPath, '.venv', 'bin', 'python'),
+    path.join(rootPath, 'venv', 'bin', 'python'),
+    path.join(rootPath, 'env', 'bin', 'python'),
+  ]
+
+  const directCandidates = process.platform === 'win32' ? windowsCandidates : posixCandidates
+  for (const candidate of directCandidates) {
+    if (!candidate) continue
+    if (!(await pathExists(candidate))) continue
+    if (await isDirectoryPath(candidate)) continue
+    return {
+      command: candidate,
+      baseArgs: [],
+      source: 'embedded',
+    }
+  }
+
+  const systemCandidates = process.platform === 'win32'
+    ? [
+        { command: 'python', baseArgs: [] },
+        { command: 'py', baseArgs: ['-3'] },
+      ]
+    : [
+        { command: 'python3', baseArgs: [] },
+        { command: 'python', baseArgs: [] },
+      ]
+
+  for (const candidate of systemCandidates) {
+    const result = await captureCommandOutput(candidate.command, [...candidate.baseArgs, '--version'], 3000)
+    if (!result.success) continue
+    return {
+      ...candidate,
+      source: 'system',
+      version: result.output || '',
+    }
+  }
+
+  return {
+    command: '',
+    baseArgs: [],
+    source: '',
+    version: '',
+  }
+}
+
+async function validateWorkflowSetupRootInternal(rootPath) {
+  const normalizedInput = String(rootPath || '').trim()
+  if (!normalizedInput) {
+    return {
+      success: false,
+      isValid: false,
+      error: 'Select your local ComfyUI folder first.',
+      warnings: [],
+      normalizedPath: '',
+      customNodesPath: '',
+      modelsPath: '',
+      pythonCommand: '',
+      python: null,
+    }
+  }
+
+  const normalizedPath = path.resolve(normalizedInput)
+  if (!(await pathExists(normalizedPath))) {
+    return {
+      success: false,
+      isValid: false,
+      error: 'The selected ComfyUI folder does not exist.',
+      warnings: [],
+      normalizedPath,
+      customNodesPath: '',
+      modelsPath: '',
+      pythonCommand: '',
+      python: null,
+    }
+  }
+
+  if (!(await isDirectoryPath(normalizedPath))) {
+    return {
+      success: false,
+      isValid: false,
+      error: 'The selected ComfyUI path is not a folder.',
+      warnings: [],
+      normalizedPath,
+      customNodesPath: '',
+      modelsPath: '',
+      pythonCommand: '',
+      python: null,
+    }
+  }
+
+  const mainPyPath = path.join(normalizedPath, 'main.py')
+  const customNodesPath = path.join(normalizedPath, 'custom_nodes')
+  const modelsPath = path.join(normalizedPath, 'models')
+  const looksLikeComfyRoot = (
+    await pathExists(mainPyPath)
+    || await isDirectoryPath(customNodesPath)
+    || await isDirectoryPath(modelsPath)
+  )
+
+  if (!looksLikeComfyRoot) {
+    return {
+      success: false,
+      isValid: false,
+      error: 'This folder does not look like a ComfyUI root. Pick the folder that contains main.py, custom_nodes, or models.',
+      warnings: [],
+      normalizedPath,
+      customNodesPath,
+      modelsPath,
+      pythonCommand: '',
+      python: null,
+    }
+  }
+
+  const warnings = []
+  if (!(await pathExists(mainPyPath))) {
+    warnings.push('Could not find main.py directly inside this folder. If installs fail, pick the top-level ComfyUI directory instead.')
+  }
+
+  const python = await detectPythonCommandForComfyRoot(normalizedPath)
+  if (!python.command) {
+    warnings.push('Could not detect a dedicated Python interpreter for this ComfyUI install. Model downloads can still work, but custom-node dependency installs may fail.')
+  }
+
+  return {
+    success: true,
+    isValid: true,
+    error: '',
+    warnings,
+    normalizedPath,
+    customNodesPath,
+    modelsPath,
+    pythonCommand: normalizePythonCommand(python),
+    python,
+  }
+}
+
+function emitProcessLines(prefix, buffer, level = 'info') {
+  const lines = String(buffer || '')
+    .split(/\r?\n/)
+    .map((line) => line.trim())
+    .filter(Boolean)
+
+  for (const line of lines) {
+    emitWorkflowSetupProgress({
+      level,
+      stage: 'command',
+      message: prefix ? `${prefix}: ${line}` : line,
+    })
+  }
+}
+
+function runCommandStreaming({ command, args = [], cwd = undefined, label = 'Command' }) {
+  return new Promise((resolve, reject) => {
+    let stdout = ''
+    let stderr = ''
+
+    emitWorkflowSetupProgress({
+      stage: 'command',
+      message: `${label}: ${command} ${args.join(' ')}`.trim(),
+    })
+
+    let child = null
+    try {
+      child = spawn(command, args, { cwd, windowsHide: true })
+    } catch (error) {
+      reject(error)
+      return
+    }
+
+    child.stdout.on('data', (chunk) => {
+      const text = chunk.toString()
+      stdout += text
+      emitProcessLines(label, text, 'info')
+    })
+
+    child.stderr.on('data', (chunk) => {
+      const text = chunk.toString()
+      stderr += text
+      emitProcessLines(label, text, 'warning')
+    })
+
+    child.on('error', (error) => {
+      reject(error)
+    })
+
+    child.on('close', (code) => {
+      if (code === 0) {
+        resolve({ stdout, stderr })
+        return
+      }
+
+      reject(new Error(stderr.trim() || stdout.trim() || `${label} exited with code ${code}`))
+    })
+  })
+}
+
+async function installNodePackTask(task, validation, progressMeta = {}) {
+  const label = task?.displayName || task?.id || 'Custom node pack'
+  const targetDir = path.join(validation.customNodesPath, task.installDirName)
+  const currentTaskIndex = Number(progressMeta.currentTaskIndex) || 0
+  const totalTasks = Number(progressMeta.totalTasks) || 0
+  const completedTasks = Number(progressMeta.completedTasks) || 0
+
+  emitWorkflowSetupProgress({
+    stage: 'node-pack',
+    status: 'active',
+    taskType: 'node-pack',
+    currentLabel: label,
+    currentTaskIndex,
+    totalTasks,
+    completedTasks,
+    taskPercent: null,
+    overallPercent: getWorkflowSetupOverallPercent({ completedTasks, totalTasks }),
+    message: `Installing ${label}...`,
+  })
+
+  await fs.mkdir(validation.customNodesPath, { recursive: true })
+
+  if (await isDirectoryPath(targetDir)) {
+    if (await isDirectoryPath(path.join(targetDir, '.git'))) {
+      await runCommandStreaming({
+        command: 'git',
+        args: ['-C', targetDir, 'pull', '--ff-only'],
+        cwd: validation.normalizedPath,
+        label: `Update ${label}`,
+      })
+    } else {
+      emitWorkflowSetupProgress({
+        stage: 'node-pack',
+        status: 'complete',
+        level: 'warning',
+        taskType: 'node-pack',
+        currentLabel: label,
+        currentTaskIndex,
+        totalTasks,
+        completedTasks: completedTasks + 1,
+        taskPercent: 100,
+        overallPercent: getWorkflowSetupOverallPercent({ completedTasks: completedTasks + 1, totalTasks }),
+        message: `${label}: skipped auto-update because ${targetDir} already exists but is not a git checkout.`,
+      })
+      return {
+        id: task.id,
+        displayName: label,
+        targetDir,
+        skipped: true,
+      }
+    }
+  } else {
+    await runCommandStreaming({
+      command: 'git',
+      args: ['clone', task.repoUrl, targetDir],
+      cwd: validation.normalizedPath,
+      label: `Install ${label}`,
+    })
+  }
+
+  if (task.requirementsStrategy === 'requirements-txt') {
+    const requirementsPath = path.join(targetDir, 'requirements.txt')
+    if (await pathExists(requirementsPath)) {
+      if (!validation.python?.command) {
+        throw new Error(`Could not find a Python interpreter for ${label}.`)
+      }
+
+      await runCommandStreaming({
+        command: validation.python.command,
+        args: [...(validation.python.baseArgs || []), '-m', 'pip', 'install', '-r', requirementsPath],
+        cwd: targetDir,
+        label: `${label} requirements`,
+      })
+    }
+  }
+
+  emitWorkflowSetupProgress({
+    stage: 'node-pack',
+    status: 'complete',
+    level: 'success',
+    taskType: 'node-pack',
+    currentLabel: label,
+    currentTaskIndex,
+    totalTasks,
+    completedTasks: completedTasks + 1,
+    taskPercent: 100,
+    overallPercent: getWorkflowSetupOverallPercent({ completedTasks: completedTasks + 1, totalTasks }),
+    message: `${label}: ready in ${targetDir}`,
+  })
+
+  return {
+    id: task.id,
+    displayName: label,
+    targetDir,
+    skipped: false,
+  }
+}
+
+async function downloadFileWithProgress(task, targetPath, progressMeta = {}) {
+  const currentLabel = task?.displayName || task?.filename || 'Model'
+  const currentTaskIndex = Number(progressMeta.currentTaskIndex) || 0
+  const totalTasks = Number(progressMeta.totalTasks) || 0
+  const completedTasks = Number(progressMeta.completedTasks) || 0
+
+  if (await pathExists(targetPath)) {
+    emitWorkflowSetupProgress({
+      stage: 'download',
+      status: 'complete',
+      level: 'info',
+      taskType: 'model',
+      currentLabel,
+      currentTaskIndex,
+      totalTasks,
+      completedTasks: completedTasks + 1,
+      taskPercent: 100,
+      overallPercent: getWorkflowSetupOverallPercent({ completedTasks: completedTasks + 1, totalTasks }),
+      message: `${task.filename}: already exists, skipping download.`,
+    })
+    return {
+      filename: task.filename,
+      targetPath,
+      skipped: true,
+      sha256: '',
+      bytesDownloaded: 0,
+    }
+  }
+
+  await fs.mkdir(path.dirname(targetPath), { recursive: true })
+  const tempPath = `${targetPath}.${process.pid}.${Date.now()}.download`
+
+  emitWorkflowSetupProgress({
+    stage: 'download',
+    status: 'active',
+    taskType: 'model',
+    currentLabel,
+    currentTaskIndex,
+    totalTasks,
+    completedTasks,
+    taskPercent: 0,
+    bytesDownloaded: 0,
+    totalBytes: Number(task.sizeBytes) || 0,
+    overallPercent: getWorkflowSetupOverallPercent({ completedTasks, totalTasks, taskPercent: 0 }),
+    message: `Downloading ${task.filename}...`,
+  })
+
+  let response = null
+  try {
+    response = await net.fetch(task.downloadUrl)
+  } catch (error) {
+    throw new Error(`Could not reach ${task.downloadUrl}: ${error.message}`)
+  }
+
+  if (!response.ok) {
+    throw new Error(`Download failed for ${task.filename} (${response.status} ${response.statusText})`)
+  }
+
+  const totalBytes = Number(response.headers.get('content-length') || task.sizeBytes || 0)
+  const digest = crypto.createHash('sha256')
+  let bytesDownloaded = 0
+  let lastProgressAt = 0
+
+  try {
+    if (!response.body) {
+      const arrayBuffer = await response.arrayBuffer()
+      const buffer = Buffer.from(arrayBuffer)
+      digest.update(buffer)
+      bytesDownloaded = buffer.length
+      await fs.writeFile(tempPath, buffer)
+    } else {
+      await new Promise((resolve, reject) => {
+        const fileStream = fsSync.createWriteStream(tempPath)
+        const sourceStream = Readable.fromWeb(response.body)
+
+        sourceStream.on('data', (chunk) => {
+          bytesDownloaded += chunk.length
+          digest.update(chunk)
+          const now = Date.now()
+          if (now - lastProgressAt < 500 && (!totalBytes || bytesDownloaded < totalBytes)) return
+          lastProgressAt = now
+          const percent = totalBytes > 0
+            ? Math.min(100, Math.round((bytesDownloaded / totalBytes) * 100))
+            : `${Math.round(bytesDownloaded / (1024 * 1024))} MB`
+          emitWorkflowSetupProgress({
+            stage: 'download',
+            status: 'active',
+            taskType: 'model',
+            currentLabel,
+            currentTaskIndex,
+            totalTasks,
+            completedTasks,
+            taskPercent: Number.isFinite(percent) ? percent : null,
+            bytesDownloaded,
+            totalBytes,
+            overallPercent: getWorkflowSetupOverallPercent({
+              completedTasks,
+              totalTasks,
+              taskPercent: Number.isFinite(percent) ? percent : null,
+            }),
+            message: Number.isFinite(percent)
+              ? `Downloading ${task.filename}: ${percent}%`
+              : `Downloading ${task.filename}: ${percent}`,
+          })
+        })
+
+        sourceStream.on('error', reject)
+        fileStream.on('error', reject)
+        fileStream.on('finish', resolve)
+        sourceStream.pipe(fileStream)
+      })
+    }
+
+    const actualSha256 = digest.digest('hex')
+    if (task.sha256 && actualSha256 !== String(task.sha256).trim().toLowerCase()) {
+      throw new Error(`Checksum mismatch for ${task.filename}. Expected ${task.sha256}, got ${actualSha256}.`)
+    }
+
+    await fs.rename(tempPath, targetPath)
+    emitWorkflowSetupProgress({
+      stage: 'download',
+      status: 'complete',
+      level: 'success',
+      taskType: 'model',
+      currentLabel,
+      currentTaskIndex,
+      totalTasks,
+      completedTasks: completedTasks + 1,
+      taskPercent: 100,
+      bytesDownloaded,
+      totalBytes,
+      overallPercent: getWorkflowSetupOverallPercent({ completedTasks: completedTasks + 1, totalTasks }),
+      message: `${task.filename}: downloaded to ${targetPath}`,
+    })
+
+    return {
+      filename: task.filename,
+      targetPath,
+      skipped: false,
+      sha256: actualSha256,
+      bytesDownloaded,
+    }
+  } catch (error) {
+    try {
+      await fs.unlink(tempPath)
+    } catch (_) {
+      // Ignore temp cleanup failures.
+    }
+    throw error
+  }
+}
+
+function normalizeFrameUrlForComparison(value) {
+  try {
+    const parsed = new URL(String(value || ''))
+    return `${parsed.origin}${parsed.pathname}`.replace(/\/+$/, '')
+  } catch {
+    return String(value || '').trim().replace(/\/+$/, '')
+  }
+}
+
+function collectFrameTree(frame, output = []) {
+  if (!frame) return output
+  output.push(frame)
+  const children = Array.isArray(frame.frames) ? frame.frames : []
+  for (const child of children) {
+    collectFrameTree(child, output)
+  }
+  return output
+}
+
+function getMainWindowFrames() {
+  if (!mainWindow || mainWindow.isDestroyed()) return []
+  const rootFrame = mainWindow.webContents?.mainFrame
+  if (!rootFrame) return []
+
+  if (Array.isArray(rootFrame.framesInSubtree) && rootFrame.framesInSubtree.length > 0) {
+    const seen = new Set()
+    const frames = [rootFrame, ...rootFrame.framesInSubtree].filter((frame) => {
+      if (!frame) return false
+      const dedupeKey = `${frame.routingId ?? ''}:${frame.processId ?? ''}:${frame.url ?? ''}`
+      if (seen.has(dedupeKey)) return false
+      seen.add(dedupeKey)
+      return true
+    })
+    return frames
+  }
+
+  return collectFrameTree(rootFrame, [])
+}
+
+async function findEmbeddedComfyFrame(comfyBaseUrl, timeoutMs = 12000) {
+  const normalizedBase = normalizeFrameUrlForComparison(comfyBaseUrl)
+  const deadline = Date.now() + timeoutMs
+
+  while (Date.now() <= deadline) {
+    const frame = getMainWindowFrames().find((candidate) => {
+      const candidateUrl = normalizeFrameUrlForComparison(candidate?.url)
+      return candidateUrl && normalizedBase && candidateUrl.startsWith(normalizedBase)
+    })
+
+    if (frame) return frame
+    await delay(250)
+  }
+
+  return null
+}
+
+async function loadWorkflowGraphInEmbeddedComfy({ workflowGraph, comfyBaseUrl, waitForMs = 12000 }) {
+  const frame = await findEmbeddedComfyFrame(comfyBaseUrl, waitForMs)
+  if (!frame) {
+    throw new Error('Could not locate the embedded ComfyUI tab. Enable the ComfyUI tab and make sure the local server is running.')
+  }
+
+  const script = `
+    (async () => {
+      const graphData = ${JSON.stringify(workflowGraph)};
+      const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
+      const ensureCanvasVisible = async (appInstance) => {
+        for (let attempt = 0; attempt < 20; attempt += 1) {
+          const canvasEl = appInstance?.canvasEl || appInstance?.canvas?.canvas || document.querySelector('canvas');
+          const rect = canvasEl?.getBoundingClientRect?.();
+          if (rect && rect.width > 0 && rect.height > 0) {
+            return true;
+          }
+          await sleep(100);
+        }
+        return false;
+      };
+
+      let comfyApp = globalThis.app || globalThis.__COMFYUI_APP__ || null;
+      for (let attempt = 0; attempt < 20; attempt += 1) {
+        if (!comfyApp) {
+          try {
+            const appModule = await import('/scripts/app.js');
+            comfyApp = appModule?.app || globalThis.app || globalThis.__COMFYUI_APP__ || null;
+          } catch (_) {
+            // Ignore temporary frontend boot timing failures and keep polling.
+          }
+        }
+
+        if (comfyApp?.loadGraphData) break;
+        await sleep(250);
+        comfyApp = comfyApp || globalThis.app || globalThis.__COMFYUI_APP__ || null;
+      }
+
+      if (!comfyApp?.loadGraphData) {
+        return { success: false, error: 'ComfyUI frontend app is not ready yet.' };
+      }
+
+      try {
+        const canvasVisible = await ensureCanvasVisible(comfyApp);
+        if (!canvasVisible) {
+          return { success: false, error: 'ComfyUI canvas is still hidden, so the workflow could not be loaded safely yet.' };
+        }
+
+        await comfyApp.loadGraphData(graphData);
+        await sleep(0);
+        if (comfyApp.canvas?.resize) {
+          comfyApp.canvas.resize();
+        }
+        if (comfyApp.canvas?.setDirty) {
+          comfyApp.canvas.setDirty(true, true);
+        }
+        if (comfyApp.canvas?.draw) {
+          comfyApp.canvas.draw(true, true);
+        }
+        return { success: true };
+      } catch (error) {
+        return { success: false, error: error?.message || String(error) };
+      }
+    })()
+  `
+
+  const result = await frame.executeJavaScript(script, true)
+  if (!result?.success) {
+    throw new Error(result?.error || 'ComfyUI refused to load the workflow graph.')
+  }
+
+  return result
+}
+
 async function detectNvidiaGpuName() {
   const commands = process.platform === 'win32'
     ? [{
@@ -218,6 +862,96 @@ async function checkComfyUIRunning(portOverride = null) {
       resolve({ ok: false, port })
     })
   })
+}
+
+// ============================================
+// ComfyUI launcher (process manager)
+// ============================================
+
+const COMFY_ROOT_SETTING_KEY = 'comfyRootPath'
+const launcherLogDir = path.join(app.getPath('userData'), 'logs')
+let cachedLauncherConfig = safeCloneLauncherConfig(DEFAULT_LAUNCHER_CONFIG)
+let cachedHttpBase = `http://127.0.0.1:${DEFAULT_LOCAL_COMFY_PORT}`
+let launcherQuitConfirmed = false
+
+async function readSettingsRaw() {
+  try {
+    const data = await fs.readFile(settingsPath, 'utf8')
+    return JSON.parse(data)
+  } catch {
+    return {}
+  }
+}
+
+async function writeSettingsRaw(mutator) {
+  const current = await readSettingsRaw()
+  const next = mutator(current)
+  await writeFileAtomic(settingsPath, JSON.stringify(next, null, 2), 'utf8')
+  return next
+}
+
+async function refreshLauncherConfigCache() {
+  const settings = await readSettingsRaw()
+  cachedLauncherConfig = safeCloneLauncherConfig(settings?.[LAUNCHER_SETTING_KEY])
+  const port = sanitizeLocalComfyPort(
+    settings?.[COMFY_CONNECTION_SETTING_KEY]?.port
+    ?? settings?.[COMFY_CONNECTION_SETTING_KEY]
+  ) || DEFAULT_LOCAL_COMFY_PORT
+  cachedHttpBase = `http://127.0.0.1:${port}`
+  return { config: cachedLauncherConfig, httpBase: cachedHttpBase, comfyRootPath: settings?.[COMFY_ROOT_SETTING_KEY] || '' }
+}
+
+const comfyLauncher = new ComfyLauncher({
+  logDir: launcherLogDir,
+  getHttpBase: () => cachedHttpBase,
+  getConfig: () => cachedLauncherConfig,
+  setConfig: async (partial) => {
+    await writeSettingsRaw((settings) => ({
+      ...settings,
+      [LAUNCHER_SETTING_KEY]: safeCloneLauncherConfig({ ...cachedLauncherConfig, ...(partial || {}) }),
+    }))
+    await refreshLauncherConfigCache()
+    return cachedLauncherConfig
+  },
+  getComfyRootPath: async () => (await readSettingsRaw())?.[COMFY_ROOT_SETTING_KEY] || '',
+})
+
+function broadcast(channel, payload) {
+  try {
+    if (mainWindow && !mainWindow.isDestroyed()) {
+      mainWindow.webContents.send(channel, payload)
+    }
+  } catch (_) {
+    /* ignore send errors during shutdown */
+  }
+}
+
+comfyLauncher.on('state', (state) => {
+  broadcast('comfyLauncher:state', state)
+})
+comfyLauncher.on('log', (entry) => {
+  broadcast('comfyLauncher:log', entry)
+})
+
+async function initComfyLauncher() {
+  await refreshLauncherConfigCache()
+  await comfyLauncher.init()
+}
+
+async function maybeAutoStartComfyLauncher() {
+  try {
+    const config = cachedLauncherConfig
+    if (!config?.autoStart) return
+    if (!config.launcherScript) return
+    const state = comfyLauncher.getState()
+    if (state.state === 'external' || state.state === 'starting' || state.state === 'running') return
+    const result = await comfyLauncher.start()
+    if (result?.success === false) {
+      console.warn('[comfyLauncher] auto-start failed:', result.error)
+    }
+  } catch (error) {
+    console.warn('[comfyLauncher] auto-start error:', error?.message || error)
+  }
 }
 
 async function runStartupChecks() {
@@ -377,6 +1111,44 @@ async function createWindow() {
   // Start in fullscreen (F11-style: takes over entire screen, no taskbar)
   mainWindow.setFullScreen(true)
 
+  // Route every external link to the user's default browser instead of
+  // letting Electron spawn an in-app BrowserWindow. This covers:
+  //   - window.open(url, '_blank', ...)
+  //   - <a href="..." target="_blank">
+  //   - plain navigations that target an http(s) URL outside our app bundle.
+  // Safe because we only hand off http(s) and mailto; anything else is denied.
+  {
+    const { shell } = require('electron')
+    const isSafeExternalUrl = (url) => /^(https?:|mailto:)/i.test(String(url || ''))
+
+    mainWindow.webContents.setWindowOpenHandler(({ url }) => {
+      if (isSafeExternalUrl(url)) {
+        shell.openExternal(url).catch((err) => {
+          console.warn('[shell.openExternal] failed:', err?.message || err)
+        })
+      }
+      return { action: 'deny' }
+    })
+
+    mainWindow.webContents.on('will-navigate', (event, url) => {
+      // Only intercept real external URLs — let in-app navigations
+      // (localhost dev server, file:// bundled assets) through untouched.
+      if (!isSafeExternalUrl(url)) return
+      try {
+        const currentUrl = mainWindow.webContents.getURL()
+        const nextOrigin = new URL(url).origin
+        const currentOrigin = currentUrl ? new URL(currentUrl).origin : ''
+        if (nextOrigin && nextOrigin === currentOrigin) return
+      } catch (_) {
+        // If URL parsing fails, fall through to the external handoff.
+      }
+      event.preventDefault()
+      shell.openExternal(url).catch((err) => {
+        console.warn('[shell.openExternal] failed:', err?.message || err)
+      })
+    })
+  }
+
   // Load the app
   if (isDev) {
     // Try common Vite ports in case 5173 is in use
@@ -401,6 +1173,44 @@ async function createWindow() {
     mainWindow.loadFile(path.join(__dirname, '../dist/index.html'))
   }
   
+  mainWindow.on('close', async (event) => {
+    if (launcherQuitConfirmed) return
+    const state = comfyLauncher.getState()
+    const ownsRunning = state.ownership === 'ours' && (state.state === 'running' || state.state === 'starting')
+    if (!ownsRunning) return
+
+    event.preventDefault()
+    try {
+      const choice = await dialog.showMessageBox(mainWindow, {
+        type: 'question',
+        buttons: ['Stop ComfyUI & quit', 'Leave ComfyUI running', 'Cancel'],
+        defaultId: 0,
+        cancelId: 2,
+        title: 'Quit ComfyStudio?',
+        message: 'ComfyUI is still running.',
+        detail: 'ComfyStudio started ComfyUI. Choose what happens to it when you quit.\n\n• Stop ComfyUI & quit — shuts down ComfyUI and cancels any in-flight generation jobs.\n• Leave ComfyUI running — ComfyStudio will quit but ComfyUI stays up. Handy when you\'re just relaunching ComfyStudio and don\'t want to wait for ComfyUI to boot again.',
+      })
+      if (choice.response === 2) return
+      launcherQuitConfirmed = true
+      try {
+        if (choice.response === 1) {
+          await comfyLauncher.detach()
+        } else {
+          await comfyLauncher.shutdown({ confirmStop: true })
+        }
+      } catch (error) {
+        console.warn('[comfyLauncher] shutdown/detach during close failed:', error?.message || error)
+      }
+      if (mainWindow && !mainWindow.isDestroyed()) {
+        mainWindow.close()
+      } else {
+        app.quit()
+      }
+    } catch (error) {
+      console.warn('[comfyLauncher] close handler error:', error?.message || error)
+    }
+  })
+
   mainWindow.on('closed', () => {
     mainWindow = null
   })
@@ -1199,6 +2009,367 @@ ipcMain.handle('settings:delete', async (event, key) => {
 })
 
 // ============================================
+// ComfyUI Launcher IPC
+// ============================================
+
+ipcMain.handle('comfyLauncher:getState', async () => {
+  return comfyLauncher.getState()
+})
+
+ipcMain.handle('comfyLauncher:getConfig', async () => {
+  await refreshLauncherConfigCache()
+  return cachedLauncherConfig
+})
+
+ipcMain.handle('comfyLauncher:setConfig', async (_event, partial = {}) => {
+  try {
+    const next = await comfyLauncher._setConfig(partial || {})
+    return { success: true, config: next }
+  } catch (error) {
+    return { success: false, error: error?.message || String(error) }
+  }
+})
+
+ipcMain.handle('comfyLauncher:start', async () => {
+  await refreshLauncherConfigCache()
+  return comfyLauncher.start()
+})
+
+ipcMain.handle('comfyLauncher:stop', async () => {
+  return comfyLauncher.stop()
+})
+
+ipcMain.handle('comfyLauncher:restart', async () => {
+  await refreshLauncherConfigCache()
+  return comfyLauncher.restart()
+})
+
+ipcMain.handle('comfyLauncher:detach', async () => {
+  return comfyLauncher.detach()
+})
+
+ipcMain.handle('comfyLauncher:refresh', async () => {
+  await refreshLauncherConfigCache()
+  await comfyLauncher.refreshExternal()
+  return comfyLauncher.getState()
+})
+
+ipcMain.handle('comfyLauncher:getLogs', async (_event, options = {}) => {
+  return comfyLauncher.getLogs(options || {})
+})
+
+ipcMain.handle('shell:openExternal', async (_event, url) => {
+  const target = String(url || '').trim()
+  if (!target) {
+    return { success: false, error: 'No URL provided.' }
+  }
+  // Allow http(s) and mailto: only to avoid arbitrary protocol handlers.
+  if (!/^(https?:|mailto:)/i.test(target)) {
+    return { success: false, error: 'Unsupported URL scheme.' }
+  }
+  try {
+    const { shell } = require('electron')
+    await shell.openExternal(target)
+    return { success: true }
+  } catch (error) {
+    return { success: false, error: error?.message || 'Failed to open URL.' }
+  }
+})
+
+ipcMain.handle('comfyLauncher:openLogFile', async () => {
+  const state = comfyLauncher.getState()
+  const filePath = state?.logFilePath
+  if (!filePath) return { success: false, error: 'No log file has been written yet.' }
+  try {
+    const { shell } = require('electron')
+    await shell.openPath(filePath)
+    return { success: true, path: filePath }
+  } catch (error) {
+    return { success: false, error: error?.message || 'Failed to open log file.' }
+  }
+})
+
+ipcMain.handle('comfyLauncher:detectLaunchers', async (_event, payload = {}) => {
+  const explicitRoot = String(payload?.comfyRootPath || '').trim()
+  const rootPath = explicitRoot || (await readSettingsRaw())?.[COMFY_ROOT_SETTING_KEY] || ''
+  try {
+    const candidates = await detectLaunchersForComfyRoot(rootPath)
+    return { success: true, comfyRootPath: rootPath, candidates }
+  } catch (error) {
+    return { success: false, error: error?.message || String(error), candidates: [] }
+  }
+})
+
+ipcMain.handle('comfyLauncher:pickLauncherScript', async () => {
+  if (!mainWindow || mainWindow.isDestroyed()) {
+    return { success: false, error: 'No active window.' }
+  }
+  const filters = process.platform === 'win32'
+    ? [
+        { name: 'Launcher scripts', extensions: ['bat', 'cmd'] },
+        { name: 'All files', extensions: ['*'] },
+      ]
+    : [
+        { name: 'Launcher scripts', extensions: ['sh', 'command'] },
+        { name: 'All files', extensions: ['*'] },
+      ]
+  const result = await dialog.showOpenDialog(mainWindow, {
+    title: 'Select ComfyUI launcher script',
+    properties: ['openFile'],
+    filters,
+  })
+  if (result.canceled || !result.filePaths?.length) {
+    return { success: false, canceled: true }
+  }
+  return { success: true, filePath: result.filePaths[0] }
+})
+
+// ============================================
+// Workflow Setup Manager
+// ============================================
+
+ipcMain.handle('comfyui:loadWorkflowGraph', async (event, payload = {}) => {
+  try {
+    if (!payload?.workflowGraph || typeof payload.workflowGraph !== 'object') {
+      return { success: false, error: 'Missing ComfyUI workflow graph payload.' }
+    }
+
+    await loadWorkflowGraphInEmbeddedComfy({
+      workflowGraph: payload.workflowGraph,
+      comfyBaseUrl: payload.comfyBaseUrl || 'http://127.0.0.1:8188',
+      waitForMs: payload.waitForMs,
+    })
+
+    return { success: true }
+  } catch (error) {
+    return {
+      success: false,
+      error: error?.message || 'Could not load the workflow into the embedded ComfyUI tab.',
+    }
+  }
+})
+
+ipcMain.handle('workflowSetup:validateRoot', async (event, rootPath) => {
+  try {
+    return await validateWorkflowSetupRootInternal(rootPath)
+  } catch (error) {
+    return {
+      success: false,
+      isValid: false,
+      error: error?.message || 'Could not validate the selected ComfyUI folder.',
+      warnings: [],
+      normalizedPath: '',
+      customNodesPath: '',
+      modelsPath: '',
+      pythonCommand: '',
+      python: null,
+    }
+  }
+})
+
+ipcMain.handle('workflowSetup:checkFiles', async (_event, payload = {}) => {
+  const results = []
+  try {
+    const validation = await validateWorkflowSetupRootInternal(payload?.comfyRootPath)
+    if (!validation.isValid || !validation.modelsPath) {
+      return {
+        success: false,
+        error: validation.error || 'ComfyUI root is not configured.',
+        results,
+      }
+    }
+
+    const modelsPath = validation.modelsPath
+    const files = Array.isArray(payload?.files) ? payload.files : []
+
+    // Cache per-subdir directory listings so we can do case-insensitive matching
+    // on filesystems where casing differs from the declared filename.
+    const dirListingCache = new Map()
+    const getDirListing = async (absoluteDir) => {
+      if (dirListingCache.has(absoluteDir)) return dirListingCache.get(absoluteDir)
+      let entries = []
+      try {
+        entries = await fs.readdir(absoluteDir)
+      } catch {
+        entries = []
+      }
+      const lowerSet = new Set(entries.map((name) => String(name || '').toLowerCase()))
+      dirListingCache.set(absoluteDir, lowerSet)
+      return lowerSet
+    }
+
+    for (const file of files) {
+      const filename = String(file?.filename || '').trim()
+      const targetSubdir = String(file?.targetSubdir || '').trim()
+      if (!filename) {
+        results.push({ filename: '', targetSubdir, exists: false })
+        continue
+      }
+
+      const candidateSubdirs = new Set()
+      if (targetSubdir) candidateSubdirs.add(targetSubdir)
+      // Some loaders (e.g. LTX AV text encoder) accept either a text_encoders or
+      // checkpoints path. Also try a couple of common siblings so existing but
+      // relocated files still resolve without forcing a redundant download.
+      candidateSubdirs.add('checkpoints')
+      candidateSubdirs.add('text_encoders')
+      candidateSubdirs.add('loras')
+      candidateSubdirs.add('upscale_models')
+      candidateSubdirs.add('vae')
+      candidateSubdirs.add('diffusion_models')
+      candidateSubdirs.add('clip')
+
+      let exists = false
+      let resolvedPath = ''
+      const lowerTarget = filename.toLowerCase()
+
+      for (const subdir of candidateSubdirs) {
+        const absoluteDir = subdir ? path.join(modelsPath, subdir) : modelsPath
+        const listing = await getDirListing(absoluteDir)
+        if (listing.has(lowerTarget)) {
+          exists = true
+          resolvedPath = path.join(absoluteDir, filename)
+          break
+        }
+      }
+
+      results.push({
+        filename,
+        targetSubdir,
+        exists,
+        resolvedPath: exists ? resolvedPath : '',
+      })
+    }
+
+    return { success: true, results, modelsPath }
+  } catch (error) {
+    return {
+      success: false,
+      error: error?.message || 'Failed to check model files on disk.',
+      results,
+    }
+  }
+})
+
+ipcMain.handle('workflowSetup:install', async (event, payload = {}) => {
+  const validation = await validateWorkflowSetupRootInternal(payload?.comfyRootPath)
+  if (!validation.isValid) {
+    return {
+      success: false,
+      error: validation.error || 'Choose a valid ComfyUI folder first.',
+      validation,
+      nodePacks: [],
+      models: [],
+      errors: [],
+      restartRecommended: false,
+    }
+  }
+
+  const plan = payload?.plan && typeof payload.plan === 'object' ? payload.plan : {}
+  const nodePacks = Array.isArray(plan.nodePacks) ? plan.nodePacks : []
+  const models = Array.isArray(plan.models) ? plan.models : []
+
+  const nodePackResults = []
+  const modelResults = []
+  const errors = []
+  const totalTasks = nodePacks.length + models.length
+  let completedTasks = 0
+
+  emitWorkflowSetupProgress({
+    stage: 'install',
+    status: 'active',
+    totalTasks,
+    completedTasks,
+    overallPercent: totalTasks > 0 ? 0 : 100,
+    message: 'Starting workflow setup install...',
+  })
+
+  for (const task of nodePacks) {
+    const currentTaskIndex = completedTasks + 1
+    try {
+      const result = await installNodePackTask(task, validation, {
+        currentTaskIndex,
+        totalTasks,
+        completedTasks,
+      })
+      nodePackResults.push(result)
+    } catch (error) {
+      const message = error?.message || `Failed to install ${task?.displayName || task?.id || 'node pack'}.`
+      errors.push(message)
+      emitWorkflowSetupProgress({
+        stage: 'node-pack',
+        status: 'complete',
+        level: 'error',
+        taskType: 'node-pack',
+        currentLabel: task?.displayName || task?.id || 'Custom node pack',
+        currentTaskIndex,
+        totalTasks,
+        completedTasks: completedTasks + 1,
+        taskPercent: null,
+        overallPercent: getWorkflowSetupOverallPercent({ completedTasks: completedTasks + 1, totalTasks }),
+        message,
+      })
+    }
+    completedTasks += 1
+  }
+
+  for (const task of models) {
+    const currentTaskIndex = completedTasks + 1
+    const targetFolder = task?.targetSubdir
+      ? path.join(validation.modelsPath, task.targetSubdir)
+      : validation.modelsPath
+    const targetPath = path.join(targetFolder, task.filename)
+
+    try {
+      const result = await downloadFileWithProgress(task, targetPath, {
+        currentTaskIndex,
+        totalTasks,
+        completedTasks,
+      })
+      modelResults.push(result)
+    } catch (error) {
+      const message = error?.message || `Failed to download ${task?.filename || 'model'}.`
+      errors.push(message)
+      emitWorkflowSetupProgress({
+        stage: 'download',
+        status: 'complete',
+        level: 'error',
+        taskType: 'model',
+        currentLabel: task?.displayName || task?.filename || 'Model',
+        currentTaskIndex,
+        totalTasks,
+        completedTasks: completedTasks + 1,
+        taskPercent: null,
+        overallPercent: getWorkflowSetupOverallPercent({ completedTasks: completedTasks + 1, totalTasks }),
+        message,
+      })
+    }
+    completedTasks += 1
+  }
+
+  emitWorkflowSetupProgress({
+    stage: 'install',
+    status: 'finished',
+    level: errors.length === 0 ? 'success' : 'warning',
+    totalTasks,
+    completedTasks: totalTasks,
+    overallPercent: 100,
+    message: errors.length === 0
+      ? 'Workflow setup install finished.'
+      : 'Workflow setup install finished with errors.',
+  })
+
+  return {
+    success: errors.length === 0,
+    validation,
+    nodePacks: nodePackResults,
+    models: modelResults,
+    errors,
+    restartRecommended: nodePackResults.some((entry) => !entry?.skipped),
+  }
+})
+
+// ============================================
 // Export Operations
 // ============================================
 
@@ -1802,6 +2973,11 @@ ipcMain.handle('export:checkNvenc', async () => {
 
 app.whenReady().then(() => {
   registerFileProtocol()
+  initComfyLauncher()
+    .then(() => maybeAutoStartComfyLauncher())
+    .catch((error) => {
+      console.warn('[comfyLauncher] init failed:', error?.message || error)
+    })
   const splash = createSplashWindow()
   splash.webContents.once('did-finish-load', () => {
     runStartupChecks()
@@ -1827,6 +3003,38 @@ app.whenReady().then(() => {
       createWindow()
     }
   })
+})
+
+app.on('before-quit', async (event) => {
+  if (launcherQuitConfirmed) return
+  const state = comfyLauncher.getState()
+  const ownsRunning = state.ownership === 'ours' && (state.state === 'running' || state.state === 'starting')
+  if (!ownsRunning) return
+
+  event.preventDefault()
+  try {
+    const choice = await dialog.showMessageBox(mainWindow && !mainWindow.isDestroyed() ? mainWindow : null, {
+      type: 'question',
+      buttons: ['Stop ComfyUI & quit', 'Leave ComfyUI running', 'Cancel'],
+      defaultId: 0,
+      cancelId: 2,
+      title: 'Quit ComfyStudio?',
+      message: 'ComfyUI is still running.',
+      detail: 'ComfyStudio started ComfyUI. Choose what happens to it when you quit.\n\n• Stop ComfyUI & quit — shuts down ComfyUI and cancels any in-flight generation jobs.\n• Leave ComfyUI running — ComfyStudio will quit but ComfyUI stays up. Handy when you\'re just relaunching ComfyStudio and don\'t want to wait for ComfyUI to boot again.',
+    })
+    if (choice.response === 2) {
+      return
+    }
+    if (choice.response === 1) {
+      await comfyLauncher.detach()
+    } else {
+      await comfyLauncher.shutdown({ confirmStop: true })
+    }
+  } catch (error) {
+    console.warn('[comfyLauncher] before-quit shutdown error:', error?.message || error)
+  }
+  launcherQuitConfirmed = true
+  app.quit()
 })
 
 app.on('window-all-closed', () => {

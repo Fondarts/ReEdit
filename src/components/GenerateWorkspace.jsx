@@ -2,11 +2,13 @@ import { useState, useEffect, useRef, useCallback, useMemo } from 'react'
 import {
   Sparkles, Video, Image as ImageIcon, Music, RefreshCw, Loader2,
   ChevronLeft, ChevronRight, Play, Pause, Upload, X, Film, Search,
-  FolderOpen, Wand2, Volume2, Mic, Clock, Settings, Terminal, ChevronDown, ChevronUp, PenLine
+  FolderOpen, Wand2, Volume2, Mic, Clock, Settings, Terminal, ChevronDown, ChevronUp, PenLine, KeyRound,
 } from 'lucide-react'
 import { jsPDF } from 'jspdf'
 import ImageAnnotationModal from './ImageAnnotationModal'
 import ConfirmDialog from './ConfirmDialog'
+import ApiKeyDialog from './ApiKeyDialog'
+import { COMFY_PARTNER_KEY_CHANGED_EVENT } from '../services/comfyPartnerAuth'
 import useComfyUI from '../hooks/useComfyUI'
 import useAssetsStore from '../stores/assetsStore'
 import useProjectStore from '../stores/projectStore'
@@ -17,6 +19,13 @@ import { getProjectFileUrl, importAsset, isElectron } from '../services/fileSyst
 import { enqueuePlaybackTranscode } from '../services/playbackCache'
 import { buildYoloPlanFromScript, flattenYoloPlanVariants } from '../utils/yoloPlanning'
 import { checkWorkflowDependencies, buildMissingDependencyClipboardText } from '../services/workflowDependencies'
+import { openBundledWorkflowInComfyUi } from '../services/workflowSetupManager'
+import {
+  getComfyLauncherSnapshot,
+  isComfyLauncherAvailable,
+  startComfyLauncher,
+  subscribeComfyLauncherState,
+} from '../services/comfyLauncher'
 import {
   ACTIVE_JOB_STATUSES,
   CATEGORY_ORDER,
@@ -24,7 +33,6 @@ import {
   GENERATED_ASSET_FOLDERS,
   HARDWARE_TIERS,
   NON_TERMINAL_JOB_STATUSES,
-  OPEN_COMFY_TAB_EVENT,
   SHOT_CATEGORIES,
   VIDEO_DURATION_PRESETS,
   WORKFLOWS,
@@ -747,7 +755,7 @@ async function extractFrameAsFile(videoUrl, time, filename = 'frame.png') {
 // ============================================
 // Main GenerateWorkspace Component
 // ============================================
-function GenerateWorkspace() {
+function GenerateWorkspace({ onOpenWorkflowSetup = null }) {
   // Load persisted state from localStorage
   const loadPersistedState = () => {
     try {
@@ -925,6 +933,7 @@ function GenerateWorkspace() {
     workflowId: '',
   })
   const dependencyCheckVersionRef = useRef(0)
+  const [apiKeyDialogOpen, setApiKeyDialogOpen] = useState(false)
   const [comfyLogExpanded, setComfyLogExpanded] = useState(false)
   const [comfyLogLines, setComfyLogLines] = useState([])
   const [rightSidebarCollapsed, setRightSidebarCollapsed] = useState(false)
@@ -942,11 +951,37 @@ function GenerateWorkspace() {
   }, [])
 
   // Hooks
-  const { isConnected, wsConnected, queueCount } = useComfyUI()
+  const { isConnected, wsConnected, queueCount, recheckConnection } = useComfyUI()
   const { addAsset, generateName, assets } = useAssetsStore()
   const { currentProjectHandle, currentProject } = useProjectStore()
   const frameForAI = useFrameForAIStore((s) => s.frame)
   const clearFrameForAI = useFrameForAIStore((s) => s.clearFrame)
+
+  // ComfyUI launcher state (drives gating banner and auto-dispatch behavior)
+  const [launcherState, setLauncherState] = useState(() => (
+    isComfyLauncherAvailable() ? getComfyLauncherSnapshot() : null
+  ))
+  useEffect(() => {
+    if (!isComfyLauncherAvailable()) return undefined
+    return subscribeComfyLauncherState((next) => setLauncherState(next))
+  }, [])
+  // When the launcher reports the process is up, immediately re-check the
+  // ComfyUI HTTP/WebSocket so the queue can drain without waiting for the next
+  // 10-30s polling tick.
+  useEffect(() => {
+    if (!launcherState) return
+    if (launcherState.state === 'running' || launcherState.state === 'external') {
+      void recheckConnection?.()
+    }
+  }, [launcherState?.state, recheckConnection])
+
+  const launcherIsBooting = Boolean(launcherState && (launcherState.state === 'starting' || launcherState.state === 'stopping'))
+  const launcherCanAutoStart = Boolean(launcherState
+    && (launcherState.state === 'idle' || launcherState.state === 'stopped' || launcherState.state === 'crashed')
+    && launcherState.launcherScript)
+  const launcherWaitingForExternal = Boolean(launcherState && launcherState.state === 'external' && !isConnected)
+  const showComfyGatingBanner = !isConnected && (launcherIsBooting || launcherWaitingForExternal || launcherCanAutoStart)
+  const allowQueueWhileWaiting = !isConnected && (launcherIsBooting || launcherCanAutoStart || launcherWaitingForExternal)
 
   // When opened with timeline frame, switch to video i2v and use that frame as input
   useEffect(() => {
@@ -1244,6 +1279,12 @@ function GenerateWorkspace() {
     void runWorkflowDependencyCheck()
   }, [runWorkflowDependencyCheck])
 
+  useEffect(() => {
+    const handler = () => { void runWorkflowDependencyCheck() }
+    window.addEventListener(COMFY_PARTNER_KEY_CHANGED_EVENT, handler)
+    return () => window.removeEventListener(COMFY_PARTNER_KEY_CHANGED_EVENT, handler)
+  }, [runWorkflowDependencyCheck])
+
   const validateDependenciesForQueue = useCallback(async (workflowIds, queueLabel) => {
     const normalizedIds = Array.from(new Set(
       (Array.isArray(workflowIds) ? workflowIds : [])
@@ -1305,52 +1346,22 @@ function GenerateWorkspace() {
   const handleOpenCurrentWorkflowInComfyUi = useCallback(async () => {
     if (generationMode !== 'single') return
 
-    const workflowPath = BUILTIN_WORKFLOW_PATHS[workflowId]
-    if (!workflowPath) {
-      setFormError('This workflow file is not mapped in Generate.')
-      return
-    }
-
-    const comfyTabVisible = (() => {
-      try {
-        const stored = localStorage.getItem('comfystudio-show-comfyui-tab')
-        if (stored === null) return false
-        return stored === 'true'
-      } catch (_) {
-        return false
-      }
-    })()
-    if (!comfyTabVisible) {
-      setFormError('ComfyUI tab is hidden. Enable "Show ComfyUI tab" in Settings first.')
-      return
-    }
-
-    try {
-      const response = await fetch(workflowPath)
-      if (!response.ok) {
-        throw new Error(`Failed to fetch workflow JSON (${response.status})`)
-      }
-      const workflowText = await response.text()
-      await copyTextToClipboard(workflowText)
-
-      window.dispatchEvent(new CustomEvent(OPEN_COMFY_TAB_EVENT, {
-        detail: { workflowId, workflowPath },
-      }))
-
-      setOpenWorkflowHint('Opened ComfyUI and copied workflow JSON. In ComfyUI canvas, press Ctrl+V to import it.')
+    const result = await openBundledWorkflowInComfyUi(workflowId)
+    if (result.success) {
+      setOpenWorkflowHint(result.hint || 'Loaded workflow in the embedded ComfyUI tab.')
       setFormError(null)
-      addComfyLog('info', `Copied ${getWorkflowDisplayLabel(workflowId)} workflow JSON for ComfyUI import.`)
-    } catch (error) {
-      const message = error instanceof Error ? error.message : 'Unknown error'
-      setFormError(`Could not open workflow in ComfyUI: ${message}`)
-      setOpenWorkflowHint('')
+      addComfyLog('info', `Loaded ${getWorkflowDisplayLabel(workflowId)} into the embedded ComfyUI tab.`)
+      return
     }
+
+    setFormError(result.error || 'Could not open workflow in ComfyUI.')
+    setOpenWorkflowHint('')
   }, [addComfyLog, generationMode, workflowId])
 
   const dependencyCheckInProgress = generationMode === 'single' && dependencyCheck.status === 'checking'
   const hasBlockingDependencies = generationMode === 'single' && dependencyCheck.hasBlockingIssues
   const isGenerateDisabled = (
-    !isConnected
+    (!isConnected && !allowQueueWhileWaiting)
     || (generationMode === 'single' && (dependencyCheckInProgress || hasBlockingDependencies))
     || (generationMode === 'yolo' && yoloDependencyCheckInProgress)
   )
@@ -3218,7 +3229,10 @@ function GenerateWorkspace() {
   ])
 
   const handleGenerate = () => {
-    if (!isConnected) return
+    if (!isConnected && !allowQueueWhileWaiting) return
+    if (!isConnected && launcherCanAutoStart) {
+      void startComfyLauncher()
+    }
     if (generationMode === 'yolo') {
       void handleQueueYoloStoryboards()
       return
@@ -3949,6 +3963,7 @@ function GenerateWorkspace() {
   const processQueue = useCallback(async () => {
     if (processingRef.current) return
     if (queuePausedRef.current) return
+    if (!isConnected) return
     const nextJob = queueRef.current.find((job) => (
       job.status === 'queued' && !startedJobIdsRef.current.has(job.id)
     ))
@@ -4002,11 +4017,11 @@ function GenerateWorkspace() {
     setTimeout(() => {
       processQueue()
     }, delay)
-  }, [runJob, addComfyLog, updateJob])
+  }, [runJob, addComfyLog, updateJob, isConnected])
 
   useEffect(() => {
     processQueue()
-  }, [generationQueue, processQueue])
+  }, [generationQueue, processQueue, isConnected])
 
   const randomizeSeed = () => setSeed(Math.floor(Math.random() * 1000000000))
 
@@ -4016,8 +4031,48 @@ function GenerateWorkspace() {
   // ============================================
   // Render
   // ============================================
+  const queuedJobCount = generationQueue.filter((job) => job.status === 'queued').length
+  const showLauncherBanner = showComfyGatingBanner
+
   return (
     <div className="flex-1 flex flex-col min-w-0 min-h-0 bg-sf-dark-950">
+      {showLauncherBanner && (
+        <div className="px-4 py-2.5 border-b border-sky-500/30 bg-sky-500/10 flex items-center gap-3">
+          <Loader2 className={`w-4 h-4 text-sky-300 ${launcherIsBooting || launcherWaitingForExternal ? 'animate-spin' : ''}`} />
+          <div className="flex-1 min-w-0 text-[12px] text-sky-100">
+            {launcherIsBooting && (
+              <>
+                <span className="font-semibold">ComfyUI is starting…</span>{' '}
+                <span className="text-sky-200/85">Your generations will dispatch automatically the moment it's ready.</span>
+                {queuedJobCount > 0 && (
+                  <span className="ml-2 text-sky-200/85">{queuedJobCount} job{queuedJobCount === 1 ? '' : 's'} queued.</span>
+                )}
+              </>
+            )}
+            {launcherWaitingForExternal && (
+              <>
+                <span className="font-semibold">Waiting on ComfyUI…</span>{' '}
+                <span className="text-sky-200/85">Detected at {launcherState?.httpBase || 'localhost'}, but it isn't responding yet.</span>
+              </>
+            )}
+            {!launcherIsBooting && !launcherWaitingForExternal && launcherCanAutoStart && (
+              <>
+                <span className="font-semibold">ComfyUI is offline.</span>{' '}
+                <span className="text-sky-200/85">Hit Start (or just queue a job) and ComfyStudio will boot it for you.</span>
+              </>
+            )}
+          </div>
+          {launcherCanAutoStart && !launcherIsBooting && (
+            <button
+              type="button"
+              onClick={() => { void startComfyLauncher() }}
+              className="text-[11px] font-semibold px-2.5 py-1 rounded bg-sky-500 hover:bg-sky-400 text-white transition-colors"
+            >
+              Start ComfyUI
+            </button>
+          )}
+        </div>
+      )}
       {/* Header */}
       <div className="h-12 flex items-center justify-between px-4 border-b border-sf-dark-700">
         <div className="flex items-center gap-3">
@@ -4989,7 +5044,19 @@ function GenerateWorkspace() {
                                   )}
 
                                   {result.missingAuth && (
-                                    <div className="text-sf-error">Missing Comfy Partner API key in Settings.</div>
+                                    <div className="flex items-center justify-between gap-2 rounded border border-yellow-400/30 bg-yellow-400/5 px-2 py-1.5">
+                                      <div className="flex items-center gap-1.5 text-yellow-300">
+                                        <KeyRound className="h-3 w-3" />
+                                        <span>Cloud API key needed</span>
+                                      </div>
+                                      <button
+                                        type="button"
+                                        onClick={(event) => { event.stopPropagation(); setApiKeyDialogOpen(true) }}
+                                        className="rounded bg-sf-accent px-2 py-0.5 text-[10px] font-medium text-white transition-colors hover:bg-sf-accent/90"
+                                      >
+                                        Set up key
+                                      </button>
+                                    </div>
                                   )}
 
                                   {result.hasPriceMetadata && (
@@ -5580,8 +5647,18 @@ function GenerateWorkspace() {
                     )}
 
                     {dependencyCheck.missingAuth && (
-                      <div className="text-[10px] text-sf-error">
-                        Missing Comfy Partner API key in Settings.
+                      <div className="mt-1 flex items-center justify-between gap-2 rounded border border-yellow-400/30 bg-yellow-400/5 px-2 py-1.5">
+                        <div className="flex items-center gap-1.5 text-[10px] text-yellow-300">
+                          <KeyRound className="h-3 w-3" />
+                          <span>This workflow runs on Comfy.org's API. Add your key to unlock it.</span>
+                        </div>
+                        <button
+                          type="button"
+                          onClick={() => setApiKeyDialogOpen(true)}
+                          className="rounded bg-sf-accent px-2 py-0.5 text-[10px] font-medium text-white transition-colors hover:bg-sf-accent/90"
+                        >
+                          Set up key
+                        </button>
                       </div>
                     )}
                   </div>
@@ -5594,7 +5671,7 @@ function GenerateWorkspace() {
                 )}
 
                 {(dependencyCheck.status === 'missing' || dependencyCheck.status === 'partial') && (
-                  <div className="mt-2 flex items-center justify-between gap-2">
+                  <div className="mt-2 flex flex-wrap items-center gap-2">
                     <button
                       type="button"
                       onClick={() => { void handleCopyDependencyReport() }}
@@ -5602,6 +5679,22 @@ function GenerateWorkspace() {
                     >
                       Copy report
                     </button>
+                    <button
+                      type="button"
+                      onClick={() => { void handleOpenCurrentWorkflowInComfyUi() }}
+                      className="px-2 py-1 rounded border border-sf-dark-500 text-[10px] text-sf-text-secondary hover:text-sf-text-primary hover:border-sf-dark-400 transition-colors"
+                    >
+                      Load in ComfyUI
+                    </button>
+                    {typeof onOpenWorkflowSetup === 'function' && (
+                      <button
+                        type="button"
+                        onClick={() => onOpenWorkflowSetup()}
+                        className="px-2 py-1 rounded border border-sf-dark-500 text-[10px] text-sf-text-secondary hover:text-sf-text-primary hover:border-sf-dark-400 transition-colors"
+                      >
+                        Workflow Setup
+                      </button>
+                    )}
                     {dependencyCheck.pack?.docsUrl && (
                       <a
                         href={dependencyCheck.pack.docsUrl}
@@ -5880,6 +5973,10 @@ function GenerateWorkspace() {
         tone={confirmDialog?.tone || 'danger'}
         onConfirm={() => resolveConfirmDialog(true)}
         onCancel={() => resolveConfirmDialog(false)}
+      />
+      <ApiKeyDialog
+        open={apiKeyDialogOpen}
+        onClose={() => setApiKeyDialogOpen(false)}
       />
     </div>
   )

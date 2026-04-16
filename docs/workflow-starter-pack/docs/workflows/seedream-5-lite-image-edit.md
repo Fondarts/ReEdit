@@ -16,9 +16,15 @@ Cloud image edit with ByteDance Seedream 5.0 Lite
 - This is still a cloud workflow: local model weights are usually not required, but the partner node and API key still are.
 
 ## Required Custom Nodes
-- `BatchImagesNode`
-- `ByteDanceSeedreamNode`
-- `SaveImage`
+- `BatchImagesNode` - Built into newer ComfyUI builds
+  - This ships with modern ComfyUI builds. If it is missing, update ComfyUI first.
+  - Docs: https://registry.comfy.org
+- `ByteDanceSeedreamNode` - Manual setup
+  - This cloud partner node is not mapped to a stable unattended install recipe yet. Use the registry or ComfyUI Manager.
+  - Docs: https://registry.comfy.org
+- `SaveImage` - Built into newer ComfyUI builds
+  - Core image output node. Missing this usually means the ComfyUI install is incomplete or very outdated.
+  - Docs: https://registry.comfy.org
 
 ## Required Models
 - None declared

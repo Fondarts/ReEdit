@@ -131,6 +131,7 @@ const WORKFLOW_DISPLAY_LABELS = Object.freeze({
   'grok-text-to-image': 'Grok Imagine',
   'seedream-5-lite-image-edit': 'Seedream 5.0 Lite',
   'image-edit-model-product': 'Qwen Image Edit 2509 (Model + Product)',
+  'mask-gen': 'Mask Generation',
 })
 
 export const OPEN_COMFY_TAB_EVENT = 'comfystudio-open-comfyui-tab'

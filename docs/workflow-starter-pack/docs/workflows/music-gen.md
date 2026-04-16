@@ -16,15 +16,21 @@ Generate music from tags and lyrics
 - This is a local workflow: expect to install the listed custom nodes and local model files before it runs successfully.
 
 ## Required Custom Nodes
-- `SaveAudioMP3`
-- `TextEncodeAceStepAudio1.5`
-- `VAEDecodeAudio`
+- `SaveAudioMP3` - Built into newer ComfyUI builds
+  - Ace-Step audio save nodes are included in newer ComfyUI builds.
+  - Docs: https://docs.comfy.org/tutorials/audio/ace-step/ace-step-v1
+- `TextEncodeAceStepAudio1.5` - Built into newer ComfyUI builds
+  - Update ComfyUI to a build with Ace-Step 1.5 support if this node is missing.
+  - Docs: https://docs.comfy.org/tutorials/audio/ace-step/ace-step-v1
+- `VAEDecodeAudio` - Built into newer ComfyUI builds
+  - Ace-Step audio decode support ships with newer ComfyUI builds.
+  - Docs: https://docs.comfy.org/tutorials/audio/ace-step/ace-step-v1
 
 ## Required Models
-| Filename | ComfyUI Folder | Loader | Input Key |
-|---|---|---|---|
-| `ace_1.5_vae.safetensors` | `models/vae` | `VAELoader` | `vae_name` |
-| `acestep_v1.5_turbo.safetensors` | `models/diffusion_models` | `UNETLoader` | `unet_name` |
+| Filename | ComfyUI Folder | Loader | Input Key | Download |
+|---|---|---|---|---|
+| `ace_1.5_vae.safetensors` | `models/vae` | `VAELoader` | `vae_name` | [Download](https://huggingface.co/Comfy-Org/ace_step_1.5_ComfyUI_files/resolve/main/split_files/vae/ace_1.5_vae.safetensors) |
+| `acestep_v1.5_turbo.safetensors` | `models/diffusion_models` | `UNETLoader` | `unet_name` | [Download](https://huggingface.co/Comfy-Org/ace_step_1.5_ComfyUI_files/resolve/main/split_files/diffusion_models/acestep_v1.5_turbo.safetensors) |
 
 ## API Key
 - Not required for this workflow.

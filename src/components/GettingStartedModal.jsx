@@ -22,9 +22,13 @@ import {
   hydrateLocalComfyConnection,
 } from '../services/localComfyConnection'
 import { getPexelsApiKey } from '../services/pexelsSettings'
-
-const COMFY_ORG_API_KEY_SETTING_KEY = 'comfyApiKeyComfyOrg'
-const COMFY_ORG_API_KEY_LOCAL_KEY = 'comfystudio-comfy-api-key'
+import { WORKFLOW_SETUP_SECTION_ID } from '../services/workflowSetupManager'
+import ApiKeyDialog from './ApiKeyDialog'
+import {
+  COMFY_PARTNER_KEY_CHANGED_EVENT,
+  COMFY_PARTNER_WORKFLOWS,
+  getComfyPartnerApiKey,
+} from '../services/comfyPartnerAuth'
 
 function StatusPill({ tone = 'neutral', children }) {
   const toneClassName = {
@@ -156,6 +160,7 @@ export default function GettingStartedModal({
   const [testingConnection, setTestingConnection] = useState(false)
   const [pexelsConfigured, setPexelsConfigured] = useState(false)
   const [partnerKeyConfigured, setPartnerKeyConfigured] = useState(false)
+  const [apiKeyDialogOpen, setApiKeyDialogOpen] = useState(false)
 
   useEffect(() => {
     if (!isOpen) return
@@ -202,15 +207,9 @@ export default function GettingStartedModal({
       }
 
       try {
-        let partnerKey = ''
-        if (window?.electronAPI?.getSetting) {
-          partnerKey = String(await window.electronAPI.getSetting(COMFY_ORG_API_KEY_SETTING_KEY) || '')
-        }
-        if (!partnerKey && typeof localStorage !== 'undefined') {
-          partnerKey = String(localStorage.getItem(COMFY_ORG_API_KEY_LOCAL_KEY) || '')
-        }
+        const partnerKey = await getComfyPartnerApiKey()
         if (!cancelled) {
-          setPartnerKeyConfigured(Boolean(partnerKey.trim()))
+          setPartnerKeyConfigured(Boolean(String(partnerKey || '').trim()))
         }
       } catch {
         if (!cancelled) {
@@ -233,9 +232,15 @@ export default function GettingStartedModal({
 
     window.addEventListener(COMFY_CONNECTION_CHANGED_EVENT, handleConnectionChanged)
 
+    const handlePartnerKeyChanged = (event) => {
+      setPartnerKeyConfigured(Boolean(event?.detail?.hasKey))
+    }
+    window.addEventListener(COMFY_PARTNER_KEY_CHANGED_EVENT, handlePartnerKeyChanged)
+
     return () => {
       cancelled = true
       window.removeEventListener(COMFY_CONNECTION_CHANGED_EVENT, handleConnectionChanged)
+      window.removeEventListener(COMFY_PARTNER_KEY_CHANGED_EVENT, handlePartnerKeyChanged)
     }
   }, [isOpen])
 
@@ -394,29 +399,31 @@ export default function GettingStartedModal({
                   title="Workflow requirements"
                   description="Each workflow can require custom nodes, models, or a partner API key even though the workflow file is already bundled in the app."
                   statusTone="neutral"
-                  statusLabel="Review in Generate"
+                  statusLabel="Use Workflow Setup"
                   helperLines={[
-                    'Open Generate, pick the workflow you want, then use Re-check.',
-                    'If anything is missing, use Copy report and Open node registry to see what to install.',
+                    'Open Settings > Workflow Setup to scan every built-in workflow at once.',
+                    'Use Generate when you want workflow-specific fallback tools like Load in ComfyUI and per-workflow Re-check.',
                     'This is the fastest way to answer: why does this workflow work on one machine but not another?',
                   ]}
                   actions={[
-                    { label: 'Open Generate', onClick: () => handleNavigate('generate'), primary: true },
+                    { label: 'Workflow Setup', onClick: () => handleOpenSettings(WORKFLOW_SETUP_SECTION_ID), primary: true },
+                    { label: 'Open Generate', onClick: () => handleNavigate('generate') },
                   ]}
                 />
 
                 <ChecklistCard
                   icon={KeyRound}
-                  title="Partner API key"
-                  description="Cloud partner nodes need your Comfy account API key so they can authenticate when ComfyStudio queues prompts."
+                  title="Cloud Workflows API key"
+                  description={`One Comfy.org key unlocks the ${COMFY_PARTNER_WORKFLOWS.length} cloud-rendered starter workflows: Grok, Kling, Vidu, Nano Banana, and Seedream.`}
                   statusTone={partnerKeyConfigured ? 'success' : 'warning'}
-                  statusLabel={partnerKeyConfigured ? 'Added' : 'Optional but recommended'}
-                  detail={partnerKeyConfigured ? 'Comfy account API key detected.' : 'No Comfy account API key detected yet.'}
+                  statusLabel={partnerKeyConfigured ? 'Key saved' : 'Optional but recommended'}
+                  detail={partnerKeyConfigured ? 'Cloud-powered workflows are ready to go.' : 'Paste your key once and you can skip local GPU setup for these workflows.'}
                   helperLines={[
-                    'Needed for paid partner-node workflows and cloud generation inside Generate.',
+                    'Great for low-VRAM machines — cloud workflows run on Comfy.org and cost a few cents per generation.',
+                    'You can skip this and come back any time.',
                   ]}
                   actions={[
-                    { label: 'Open Settings', onClick: () => handleOpenSettings('connection') },
+                    { label: partnerKeyConfigured ? 'Change key' : 'Add API key', onClick: () => setApiKeyDialogOpen(true), primary: true },
                   ]}
                 />
 
@@ -553,6 +560,11 @@ export default function GettingStartedModal({
           </div>
         </div>
       </div>
+      <ApiKeyDialog
+        open={apiKeyDialogOpen}
+        onClose={() => setApiKeyDialogOpen(false)}
+        onSaved={(value) => setPartnerKeyConfigured(Boolean(String(value || '').trim()))}
+      />
     </div>
   )
 }

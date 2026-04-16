@@ -357,7 +357,50 @@ function uniqueBy(items, keyBuilder) {
   return out
 }
 
-export async function checkWorkflowDependencies(workflowId) {
+async function getObjectInfoForDependencyCheck(providedObjectInfo) {
+  if (providedObjectInfo !== undefined) {
+    return providedObjectInfo
+  }
+  return await comfyui.getObjectInfo()
+}
+
+async function resolveComfyRootPath(options = {}) {
+  if (typeof options?.comfyRootPath === 'string' && options.comfyRootPath.trim()) {
+    return options.comfyRootPath.trim()
+  }
+  const api = typeof window !== 'undefined' ? window.electronAPI : null
+  if (!api?.getSetting) return ''
+  try {
+    const value = await api.getSetting('comfyRootPath')
+    return String(value || '').trim()
+  } catch {
+    return ''
+  }
+}
+
+async function verifyUnresolvedModelsOnDisk(unresolvedModels, options = {}) {
+  const empty = { success: false, results: [] }
+  const api = typeof window !== 'undefined' ? window.electronAPI : null
+  if (!api?.checkWorkflowSetupFiles) return empty
+
+  const comfyRootPath = await resolveComfyRootPath(options)
+  if (!comfyRootPath) return empty
+
+  const files = unresolvedModels.map((entry) => ({
+    filename: entry.filename,
+    targetSubdir: entry.targetSubdir || '',
+  }))
+
+  try {
+    const response = await api.checkWorkflowSetupFiles({ comfyRootPath, files })
+    if (!response?.success) return empty
+    return { success: true, results: Array.isArray(response.results) ? response.results : [] }
+  } catch {
+    return empty
+  }
+}
+
+export async function checkWorkflowDependencies(workflowId, options = {}) {
   const pack = getWorkflowDependencyPack(workflowId)
   const checkedAt = Date.now()
 
@@ -382,7 +425,7 @@ export async function checkWorkflowDependencies(workflowId) {
 
   let objectInfo = null
   try {
-    objectInfo = await comfyui.getObjectInfo()
+    objectInfo = await getObjectInfoForDependencyCheck(options?.objectInfo)
   } catch (error) {
     return {
       workflowId,
@@ -468,6 +511,53 @@ export async function checkWorkflowDependencies(workflowId) {
     missingAuth = !String(apiKey || '').trim()
   }
 
+  // Filesystem fallback: ComfyUI's object_info sometimes can't enumerate the
+  // list of available filenames for a loader input (for example, nodes that
+  // declare the input as a free-form STRING instead of a combo). When that
+  // happens the model ends up in `unresolvedModels` and the workflow is marked
+  // "Partial" even though the user might already have everything installed.
+  //
+  // To give a more accurate answer we peek at the ComfyUI models folder on
+  // disk. Files that are confirmed present get removed from unresolvedModels
+  // (so the workflow can report "All set"). Files we can verify are missing
+  // are promoted to missingModels so the Install flow can pick them up.
+  let resolvedViaFilesystem = false
+  if (unresolvedModels.length > 0) {
+    const fsCheck = await verifyUnresolvedModelsOnDisk(unresolvedModels, options)
+    if (fsCheck.success) {
+      const stillUnresolved = []
+      for (let i = 0; i < unresolvedModels.length; i += 1) {
+        const entry = unresolvedModels[i]
+        const fsResult = fsCheck.results[i]
+        if (!fsResult) {
+          stillUnresolved.push(entry)
+          continue
+        }
+        if (fsResult.exists) {
+          resolvedViaFilesystem = true
+          continue
+        }
+        // Only demote to "missing" when the node schema itself was present
+        // (so we know the file is genuinely needed). If the node schema was
+        // missing we already surface that through missingNodes and don't want
+        // to double-report.
+        if (entry.reason === 'choices-unavailable') {
+          missingModels.push({
+            classType: entry.classType,
+            inputKey: entry.inputKey,
+            filename: entry.filename,
+            targetSubdir: entry.targetSubdir || '',
+            verifiedMissingOnDisk: true,
+          })
+        } else {
+          stillUnresolved.push(entry)
+        }
+      }
+      unresolvedModels.length = 0
+      for (const entry of stillUnresolved) unresolvedModels.push(entry)
+    }
+  }
+
   const pricing = await buildWorkflowPricingSnapshot(pack, objectInfo, workflowDefinition)
 
   const hasBlockingIssues = missingNodes.length > 0 || missingModels.length > 0 || missingAuth
@@ -491,6 +581,52 @@ export async function checkWorkflowDependencies(workflowId) {
     estimatedCredits: pricing.estimatedCredits,
     pack,
   }
+}
+
+export async function checkWorkflowDependenciesBatch(workflowIds = []) {
+  const normalizedIds = uniqueBy(
+    (Array.isArray(workflowIds) ? workflowIds : [])
+      .map((workflowId) => String(workflowId || '').trim())
+      .filter(Boolean),
+    (workflowId) => workflowId
+  )
+
+  if (normalizedIds.length === 0) return []
+
+  let objectInfo = null
+  try {
+    objectInfo = await comfyui.getObjectInfo()
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error || 'Failed to fetch object info')
+    return normalizedIds.map((workflowId) => {
+      const pack = getWorkflowDependencyPack(workflowId)
+      return {
+        workflowId,
+        checkedAt: Date.now(),
+        hasPack: Boolean(pack),
+        status: pack ? 'error' : 'no-pack',
+        error: pack ? message : '',
+        missingNodes: [],
+        missingModels: [],
+        unresolvedModels: [],
+        missingAuth: false,
+        hasBlockingIssues: false,
+        hasPriceMetadata: false,
+        badgeSummaries: [],
+        creditValues: [],
+        estimatedCredits: null,
+        pack: pack || null,
+      }
+    })
+  }
+
+  // Pre-resolve the comfy root path once so each individual check doesn't
+  // round-trip to the main process settings for the same value.
+  const comfyRootPath = await resolveComfyRootPath({})
+
+  return await Promise.all(
+    normalizedIds.map((workflowId) => checkWorkflowDependencies(workflowId, { objectInfo, comfyRootPath }))
+  )
 }
 
 export function buildMissingDependencyClipboardText(checkResult) {

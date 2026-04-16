@@ -56,6 +56,7 @@ export const BUILTIN_WORKFLOW_PATHS = {
   'nano-banana-pro': getBundledWorkflowPath('api_google_nano_banana2_image_edit.json'), // legacy id alias
   'music-gen': getBundledWorkflowPath('music_generation.json'),
   'caption-qwen-asr': getBundledWorkflowPath('caption_qwen_asr_transcription.json'),
+  'mask-gen': getBundledWorkflowPath('mask_generation_text_prompt.json'),
 }
 
 // Optional workflows - user can download to enable (not in Generate until installed)

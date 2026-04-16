@@ -16,8 +16,12 @@ Premium image-to-video with Kling 3.0 Omni
 - This is still a cloud workflow: local model weights are usually not required, but the partner node and API key still are.
 
 ## Required Custom Nodes
-- `KlingOmniProImageToVideoNode`
-- `SaveVideo`
+- `KlingOmniProImageToVideoNode` - Manual setup
+  - This cloud partner node is not mapped to a stable unattended install recipe yet. Use the registry or ComfyUI Manager.
+  - Docs: https://registry.comfy.org
+- `SaveVideo` - Built into newer ComfyUI builds
+  - Core video output support ships with newer ComfyUI builds.
+  - Docs: https://docs.comfy.org/built-in-nodes/CreateVideo
 
 ## Required Models
 - None declared

@@ -353,6 +353,25 @@ export const WORKFLOW_DEPENDENCY_PACKS = Object.freeze({
     ]),
     docsUrl: COMFY_REGISTRY_URL,
   }),
+
+  'mask-gen': Object.freeze({
+    id: 'mask-gen',
+    displayName: 'Mask Generation',
+    requiredNodes: Object.freeze([
+      { classType: 'MatAnyoneVideoMatting' },
+      { classType: 'MaskToImage' },
+      { classType: 'SaveImage' },
+      { classType: 'VHS_LoadVideo' },
+      { classType: 'SAM3Propagate' },
+      { classType: 'LoadSAM3Model' },
+      { classType: 'SAM3VideoSegmentation' },
+      { classType: 'SAM3VideoOutput' },
+      { classType: 'GetImagesFromBatchIndexed' },
+      { classType: 'ImageToMask' },
+    ]),
+    requiredModels: Object.freeze([]),
+    docsUrl: COMFY_REGISTRY_URL,
+  }),
 })
 
 export function getWorkflowDependencyPack(workflowId) {

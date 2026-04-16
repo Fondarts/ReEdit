@@ -1,5 +1,6 @@
 import { Fragment, useEffect, useState } from 'react'
 import { Copy, Minus, Square, X } from 'lucide-react'
+import ComfyLauncherChip from './ComfyLauncherChip'
 
 const TOP_TABS = [
   { id: 'editor', label: 'Editor' },
@@ -116,8 +117,9 @@ function TitleBar({
         </div>
       </div>
       
-      {/* Right - Window Controls (Windows style) */}
+      {/* Right - Launcher chip + Window Controls (Windows style) */}
       <div className="flex items-center">
+        <ComfyLauncherChip />
         <button
           onClick={handleMinimize}
           className="no-drag w-10 h-10 flex items-center justify-center hover:bg-sf-dark-700 transition-colors"

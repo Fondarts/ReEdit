@@ -27,6 +27,14 @@ export function useComfyUI() {
   const wsAttemptCount = useRef(0);
   
   // Check connection on mount
+  const checkConnectionRef = useRef(null);
+  const recheckConnection = useCallback(async () => {
+    const fn = checkConnectionRef.current;
+    if (typeof fn === 'function') {
+      await fn();
+    }
+  }, []);
+
   useEffect(() => {
     const checkConnection = async () => {
       const connected = await comfyui.checkConnection();
@@ -52,6 +60,7 @@ export function useComfyUI() {
       }
     };
 
+    checkConnectionRef.current = checkConnection;
     checkConnection();
     
     // Check HTTP connection periodically, but don't spam WebSocket attempts
@@ -655,6 +664,7 @@ export function useComfyUI() {
     clearResult,
     wsConnected,  // Expose WebSocket connection status
     currentNode,  // Expose which node is executing
+    recheckConnection,  // Force an immediate HTTP/WebSocket re-check (e.g. after launcher state change)
     // Mask generation
     generateMask,
     maskResult,

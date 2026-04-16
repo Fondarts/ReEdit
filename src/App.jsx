@@ -19,6 +19,7 @@ import GettingStartedModal from './components/GettingStartedModal'
 import WelcomeScreen from './components/WelcomeScreen'
 import BottomBar from './components/BottomBar'
 import useProjectStore from './stores/projectStore'
+import { WORKFLOW_SETUP_SECTION_ID } from './services/workflowSetupManager'
 import {
   COMFY_CONNECTION_CHANGED_EVENT,
   getLocalComfyHttpBaseSync,
@@ -305,7 +306,7 @@ function App() {
           className="flex-1 flex flex-col min-h-0 overflow-hidden bg-sf-dark-950"
           style={{ display: mainTab === 'generate' ? 'flex' : 'none' }}
         >
-          <GenerateWorkspace />
+          <GenerateWorkspace onOpenWorkflowSetup={() => openSettingsModal(WORKFLOW_SETUP_SECTION_ID)} />
         </div>
         {mainTab === 'mog' && (
           <div className="flex-1 flex flex-col min-h-0 overflow-hidden bg-sf-dark-950">

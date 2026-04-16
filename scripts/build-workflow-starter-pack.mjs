@@ -79,11 +79,13 @@ async function loadConfigModules() {
   const registryPath = pathToFileURL(path.join(repoRoot, 'src', 'config', 'workflowRegistry.js')).href
   const dependencyPath = pathToFileURL(path.join(repoRoot, 'src', 'config', 'workflowDependencyPacks.js')).href
   const workspaceConfigPath = pathToFileURL(path.join(repoRoot, 'src', 'config', 'generateWorkspaceConfig.js')).href
+  const installCatalogPath = pathToFileURL(path.join(repoRoot, 'src', 'config', 'workflowInstallCatalog.js')).href
 
   const registry = await import(registryPath)
   const dependency = await import(dependencyPath)
   const workspaceConfig = await import(workspaceConfigPath)
-  return { registry, dependency, workspaceConfig }
+  const installCatalog = await import(installCatalogPath)
+  return { registry, dependency, workspaceConfig, installCatalog }
 }
 
 function buildWorkflowCatalog(BUILTIN_WORKFLOWS, BUILTIN_WORKFLOW_PATHS) {
@@ -111,7 +113,14 @@ function buildWorkflowCatalog(BUILTIN_WORKFLOWS, BUILTIN_WORKFLOW_PATHS) {
   })
 }
 
-function buildManifestEntry(workflow, workflowPaths, getWorkflowDependencyPack, getWorkflowHardwareInfo) {
+function buildManifestEntry(
+  workflow,
+  workflowPaths,
+  getWorkflowDependencyPack,
+  getWorkflowHardwareInfo,
+  getNodeInstallInfo,
+  getModelInstallInfo
+) {
   const workflowId = normalizeWorkflowId(workflow.id)
   const dependencyPack = getWorkflowDependencyPack(workflowId)
   const hardwareInfo = getWorkflowHardwareInfo(workflowId)
@@ -121,13 +130,22 @@ function buildManifestEntry(workflow, workflowPaths, getWorkflowDependencyPack, 
   const tier = hardwareInfo?.tierId || 'unknown'
   const setupWorkflowFile = sourceWorkflowFilename ? `workflows/${runtime}/${workflowId}.comfyui.json` : null
   const workflowGuideFile = `docs/workflows/${workflowId}.md`
-  const requiredNodes = uniqueSorted((dependencyPack?.requiredNodes || []).map((node) => String(node?.classType || '').trim()))
+  const requiredNodesDetailed = uniqueSorted((dependencyPack?.requiredNodes || []).map((node) => String(node?.classType || '').trim()))
+    .map((classType) => ({
+      classType,
+      install: getNodeInstallInfo(classType),
+    }))
+  const requiredNodes = requiredNodesDetailed.map((entry) => entry.classType)
   const requiredModels = (dependencyPack?.requiredModels || [])
     .map((model) => ({
       filename: String(model?.filename || '').trim(),
       targetSubdir: String(model?.targetSubdir || '').trim(),
       classType: String(model?.classType || '').trim(),
       inputKey: String(model?.inputKey || '').trim(),
+      install: getModelInstallInfo({
+        filename: String(model?.filename || '').trim(),
+        targetSubdir: String(model?.targetSubdir || '').trim(),
+      }),
     }))
     .filter((model) => model.filename)
     .sort((left, right) => left.filename.localeCompare(right.filename))
@@ -148,6 +166,7 @@ function buildManifestEntry(workflow, workflowPaths, getWorkflowDependencyPack, 
     requiresComfyOrgApiKey: Boolean(dependencyPack?.requiresComfyOrgApiKey),
     docsUrl: dependencyPack?.docsUrl || null,
     requiredNodes,
+    requiredNodesDetailed,
     requiredModels,
   }
 }
@@ -178,11 +197,24 @@ function renderWorkflowMarkdown(entry) {
   lines.push('')
 
   lines.push('## Required Custom Nodes')
-  if (entry.requiredNodes.length === 0) {
+  if (entry.requiredNodesDetailed.length === 0) {
     lines.push('- None declared')
   } else {
-    for (const classType of entry.requiredNodes) {
-      lines.push(`- \`${classType}\``)
+    for (const node of entry.requiredNodesDetailed) {
+      const installMode = node.install?.kind === 'auto'
+        ? 'Auto-install supported'
+        : node.install?.kind === 'core'
+          ? 'Built into newer ComfyUI builds'
+          : 'Manual setup'
+      lines.push(`- \`${node.classType}\` - ${installMode}`)
+      if (node.install?.notes) {
+        lines.push(`  - ${node.install.notes}`)
+      }
+      if (node.install?.repoUrl) {
+        lines.push(`  - Repo: ${node.install.repoUrl}`)
+      } else if (node.install?.docsUrl) {
+        lines.push(`  - Docs: ${node.install.docsUrl}`)
+      }
     }
   }
   lines.push('')
@@ -191,11 +223,12 @@ function renderWorkflowMarkdown(entry) {
   if (entry.requiredModels.length === 0) {
     lines.push('- None declared')
   } else {
-    lines.push('| Filename | ComfyUI Folder | Loader | Input Key |')
-    lines.push('|---|---|---|---|')
+    lines.push('| Filename | ComfyUI Folder | Loader | Input Key | Download |')
+    lines.push('|---|---|---|---|---|')
     for (const model of entry.requiredModels) {
       const folder = model.targetSubdir ? `models/${model.targetSubdir}` : 'unknown'
-      lines.push(`| \`${model.filename}\` | \`${folder}\` | \`${model.classType || '-'}\` | \`${model.inputKey || '-'}\` |`)
+      const downloadText = model.install?.downloadUrl ? `[Download](${model.install.downloadUrl})` : 'Manual'
+      lines.push(`| \`${model.filename}\` | \`${folder}\` | \`${model.classType || '-'}\` | \`${model.inputKey || '-'}\` | ${downloadText} |`)
     }
   }
   lines.push('')
@@ -283,7 +316,7 @@ function renderReleaseNotes(releaseMetadata) {
   return `${lines.join('\n')}\n`
 }
 
-function buildCustomNodeManifest(entries) {
+function buildCustomNodeManifest(entries, getNodeInstallInfo) {
   const nodes = new Map()
   for (const entry of entries) {
     for (const classType of entry.requiredNodes) {
@@ -304,17 +337,27 @@ function buildCustomNodeManifest(entries) {
     generatedAt: new Date().toISOString(),
     totalNodes: nodes.size,
     nodes: Array.from(nodes.values())
-      .map((entry) => ({
-        classType: entry.classType,
-        workflows: uniqueSorted(entry.workflows),
-        runtimes: uniqueSorted(entry.runtimes),
-        installDocs: uniqueSorted(entry.docsUrls)[0] || null,
-      }))
+      .map((entry) => {
+        const install = getNodeInstallInfo(entry.classType)
+        return {
+          classType: entry.classType,
+          workflows: uniqueSorted(entry.workflows),
+          runtimes: uniqueSorted(entry.runtimes),
+          installDocs: install?.docsUrl || uniqueSorted(entry.docsUrls)[0] || null,
+          installKind: install?.kind || 'manual',
+          repoUrl: install?.repoUrl || null,
+          installDirName: install?.installDirName || null,
+          requirementsStrategy: install?.requirementsStrategy || null,
+          fallbackRepoUrl: install?.fallbackRepoUrl || null,
+          notes: install?.notes || '',
+          searchTerm: install?.searchTerm || entry.classType,
+        }
+      })
       .sort((left, right) => left.classType.localeCompare(right.classType)),
   }
 }
 
-function buildModelManifest(entries) {
+function buildModelManifest(entries, getModelInstallInfo) {
   const models = new Map()
   for (const entry of entries) {
     for (const model of entry.requiredModels) {
@@ -338,15 +381,27 @@ function buildModelManifest(entries) {
     generatedAt: new Date().toISOString(),
     totalModels: models.size,
     models: Array.from(models.values())
-      .map((entry) => ({
-        filename: entry.filename,
-        targetSubdir: entry.targetSubdir,
-        folder: entry.folder,
-        loaders: uniqueSorted(entry.loaders),
-        inputKeys: uniqueSorted(entry.inputKeys),
-        workflows: uniqueSorted(entry.workflows),
-        downloadUrl: null,
-      }))
+      .map((entry) => {
+        const install = getModelInstallInfo({
+          filename: entry.filename,
+          targetSubdir: entry.targetSubdir,
+        })
+        return {
+          filename: entry.filename,
+          targetSubdir: entry.targetSubdir,
+          folder: entry.folder,
+          loaders: uniqueSorted(entry.loaders),
+          inputKeys: uniqueSorted(entry.inputKeys),
+          workflows: uniqueSorted(entry.workflows),
+          downloadUrl: install?.downloadUrl || null,
+          sourceUrl: install?.sourceUrl || null,
+          licenseUrl: install?.licenseUrl || null,
+          sizeBytes: Number.isFinite(install?.sizeBytes) ? install.sizeBytes : null,
+          sha256: install?.sha256 || null,
+          autoInstallSupported: Boolean(install?.downloadUrl),
+          notes: install?.notes || '',
+        }
+      })
       .sort((left, right) => left.filename.localeCompare(right.filename)),
   }
 }
@@ -392,14 +447,22 @@ async function writeChecksums() {
 }
 
 async function main() {
-  const { registry, dependency, workspaceConfig } = await loadConfigModules()
+  const { registry, dependency, workspaceConfig, installCatalog } = await loadConfigModules()
   const { BUILTIN_WORKFLOWS = [], BUILTIN_WORKFLOW_PATHS = {} } = registry
   const { getWorkflowDependencyPack } = dependency
   const { getWorkflowHardwareInfo } = workspaceConfig
+  const { getNodeInstallInfo, getModelInstallInfo } = installCatalog
 
   const workflowCatalog = buildWorkflowCatalog(BUILTIN_WORKFLOWS, BUILTIN_WORKFLOW_PATHS)
   const entries = workflowCatalog.map((workflow) => (
-    buildManifestEntry(workflow, BUILTIN_WORKFLOW_PATHS, getWorkflowDependencyPack, getWorkflowHardwareInfo)
+    buildManifestEntry(
+      workflow,
+      BUILTIN_WORKFLOW_PATHS,
+      getWorkflowDependencyPack,
+      getWorkflowHardwareInfo,
+      getNodeInstallInfo,
+      getModelInstallInfo
+    )
   ))
 
   await fs.mkdir(outputDir, { recursive: true })
@@ -462,12 +525,12 @@ async function main() {
   )
   await fs.writeFile(
     path.join(nodesDir, 'custom-node-manifest.json'),
-    `${JSON.stringify(buildCustomNodeManifest(entries), null, 2)}\n`,
+    `${JSON.stringify(buildCustomNodeManifest(entries, getNodeInstallInfo), null, 2)}\n`,
     'utf8'
   )
   await fs.writeFile(
     path.join(modelsDir, 'model-manifest.json'),
-    `${JSON.stringify(buildModelManifest(entries), null, 2)}\n`,
+    `${JSON.stringify(buildModelManifest(entries, getModelInstallInfo), null, 2)}\n`,
     'utf8'
   )
   await writeChecksums()

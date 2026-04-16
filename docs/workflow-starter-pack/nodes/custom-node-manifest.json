@@ -1,5 +1,5 @@
 {
-  "generatedAt": "2026-04-14T05:25:14.046Z",
+  "generatedAt": "2026-04-14T18:11:21.080Z",
   "totalNodes": 40,
   "nodes": [
     {
@@ -10,7 +10,14 @@
       "runtimes": [
         "cloud"
       ],
-      "installDocs": "https://registry.comfy.org"
+      "installDocs": "https://registry.comfy.org",
+      "installKind": "core",
+      "repoUrl": null,
+      "installDirName": null,
+      "requirementsStrategy": null,
+      "fallbackRepoUrl": null,
+      "notes": "This ships with modern ComfyUI builds. If it is missing, update ComfyUI first.",
+      "searchTerm": "BatchImagesNode"
     },
     {
       "classType": "ByteDanceSeedreamNode",
@@ -20,7 +27,14 @@
       "runtimes": [
         "cloud"
       ],
-      "installDocs": "https://registry.comfy.org"
+      "installDocs": "https://registry.comfy.org",
+      "installKind": "manual",
+      "repoUrl": null,
+      "installDirName": null,
+      "requirementsStrategy": null,
+      "fallbackRepoUrl": null,
+      "notes": "This cloud partner node is not mapped to a stable unattended install recipe yet. Use the registry or ComfyUI Manager.",
+      "searchTerm": "ByteDanceSeedreamNode"
     },
     {
       "classType": "CheckpointLoaderSimple",
@@ -30,7 +44,14 @@
       "runtimes": [
         "local"
       ],
-      "installDocs": "https://registry.comfy.org"
+      "installDocs": "https://registry.comfy.org",
+      "installKind": "core",
+      "repoUrl": null,
+      "installDirName": null,
+      "requirementsStrategy": null,
+      "fallbackRepoUrl": null,
+      "notes": "Core checkpoint loader. Missing this usually means the ComfyUI install is incomplete or very outdated.",
+      "searchTerm": "CheckpointLoaderSimple"
     },
     {
       "classType": "CLIPLoader",
@@ -41,7 +62,14 @@
       "runtimes": [
         "local"
       ],
-      "installDocs": "https://registry.comfy.org"
+      "installDocs": "https://registry.comfy.org",
+      "installKind": "core",
+      "repoUrl": null,
+      "installDirName": null,
+      "requirementsStrategy": null,
+      "fallbackRepoUrl": null,
+      "notes": "Core text-encoder loader. Missing this usually means the ComfyUI install is incomplete or very outdated.",
+      "searchTerm": "CLIPLoader"
     },
     {
       "classType": "CreateVideo",
@@ -51,7 +79,14 @@
       "runtimes": [
         "local"
       ],
-      "installDocs": "https://registry.comfy.org"
+      "installDocs": "https://docs.comfy.org/built-in-nodes/CreateVideo",
+      "installKind": "core",
+      "repoUrl": null,
+      "installDirName": null,
+      "requirementsStrategy": null,
+      "fallbackRepoUrl": null,
+      "notes": "CreateVideo is part of newer ComfyUI builds.",
+      "searchTerm": "CreateVideo"
     },
     {
       "classType": "EmptyLTXVLatentVideo",
@@ -61,7 +96,14 @@
       "runtimes": [
         "local"
       ],
-      "installDocs": "https://registry.comfy.org"
+      "installDocs": "https://docs.comfy.org/built-in-nodes/EmptyLTXVLatentVideo",
+      "installKind": "core",
+      "repoUrl": null,
+      "installDirName": null,
+      "requirementsStrategy": null,
+      "fallbackRepoUrl": null,
+      "notes": "LTX 2.3 workflow support is built into newer ComfyUI builds.",
+      "searchTerm": "EmptyLTXVLatentVideo"
     },
     {
       "classType": "FluxKontextImageScale",
@@ -72,7 +114,14 @@
       "runtimes": [
         "local"
       ],
-      "installDocs": "https://registry.comfy.org"
+      "installDocs": "https://registry.comfy.org",
+      "installKind": "core",
+      "repoUrl": null,
+      "installDirName": null,
+      "requirementsStrategy": null,
+      "fallbackRepoUrl": null,
+      "notes": "Qwen/Flux edit support ships with current ComfyUI releases.",
+      "searchTerm": "FluxKontextImageScale"
     },
     {
       "classType": "GeminiNanoBanana2",
@@ -82,7 +131,14 @@
       "runtimes": [
         "cloud"
       ],
-      "installDocs": "https://registry.comfy.org"
+      "installDocs": "https://registry.comfy.org",
+      "installKind": "manual",
+      "repoUrl": null,
+      "installDirName": null,
+      "requirementsStrategy": null,
+      "fallbackRepoUrl": null,
+      "notes": "This cloud partner node is not mapped to a stable unattended install recipe yet. Use the registry or ComfyUI Manager.",
+      "searchTerm": "GeminiNanoBanana2"
     },
     {
       "classType": "GrokImageNode",
@@ -92,7 +148,14 @@
       "runtimes": [
         "cloud"
       ],
-      "installDocs": "https://registry.comfy.org"
+      "installDocs": "https://registry.comfy.org",
+      "installKind": "manual",
+      "repoUrl": null,
+      "installDirName": null,
+      "requirementsStrategy": null,
+      "fallbackRepoUrl": null,
+      "notes": "This cloud partner node is not mapped to a stable unattended install recipe yet. Use the registry or ComfyUI Manager.",
+      "searchTerm": "GrokImageNode"
     },
     {
       "classType": "GrokVideoNode",
@@ -102,7 +165,14 @@
       "runtimes": [
         "cloud"
       ],
-      "installDocs": "https://registry.comfy.org"
+      "installDocs": "https://registry.comfy.org",
+      "installKind": "manual",
+      "repoUrl": null,
+      "installDirName": null,
+      "requirementsStrategy": null,
+      "fallbackRepoUrl": null,
+      "notes": "This cloud partner node is not mapped to a stable unattended install recipe yet. Use the registry or ComfyUI Manager.",
+      "searchTerm": "GrokVideoNode"
     },
     {
       "classType": "ImageResizeKJv2",
@@ -112,7 +182,14 @@
       "runtimes": [
         "local"
       ],
-      "installDocs": "https://registry.comfy.org"
+      "installDocs": "https://github.com/kijai/ComfyUI-KJNodes",
+      "installKind": "auto",
+      "repoUrl": "https://github.com/kijai/ComfyUI-KJNodes",
+      "installDirName": "ComfyUI-KJNodes",
+      "requirementsStrategy": "requirements-txt",
+      "fallbackRepoUrl": null,
+      "notes": "Provides ImageResizeKJv2 for the model + product keyframe helper workflow.",
+      "searchTerm": "ImageResizeKJv2"
     },
     {
       "classType": "KlingOmniProImageToVideoNode",
@@ -122,7 +199,14 @@
       "runtimes": [
         "cloud"
       ],
-      "installDocs": "https://registry.comfy.org"
+      "installDocs": "https://registry.comfy.org",
+      "installKind": "manual",
+      "repoUrl": null,
+      "installDirName": null,
+      "requirementsStrategy": null,
+      "fallbackRepoUrl": null,
+      "notes": "This cloud partner node is not mapped to a stable unattended install recipe yet. Use the registry or ComfyUI Manager.",
+      "searchTerm": "KlingOmniProImageToVideoNode"
     },
     {
       "classType": "KSampler",
@@ -134,7 +218,14 @@
       "runtimes": [
         "local"
       ],
-      "installDocs": "https://registry.comfy.org"
+      "installDocs": "https://registry.comfy.org",
+      "installKind": "core",
+      "repoUrl": null,
+      "installDirName": null,
+      "requirementsStrategy": null,
+      "fallbackRepoUrl": null,
+      "notes": "Core sampler node. Missing this usually means the ComfyUI install is incomplete or very outdated.",
+      "searchTerm": "KSampler"
     },
     {
       "classType": "LatentUpscaleModelLoader",
@@ -144,7 +235,14 @@
       "runtimes": [
         "local"
       ],
-      "installDocs": "https://registry.comfy.org"
+      "installDocs": "https://docs.comfy.org/built-in-nodes/LatentUpscaleModelLoader",
+      "installKind": "core",
+      "repoUrl": null,
+      "installDirName": null,
+      "requirementsStrategy": null,
+      "fallbackRepoUrl": null,
+      "notes": "This loader is built into ComfyUI. Missing it usually means the install is outdated.",
+      "searchTerm": "LatentUpscaleModelLoader"
     },
     {
       "classType": "LoraLoaderModelOnly",
@@ -155,7 +253,14 @@
       "runtimes": [
         "local"
       ],
-      "installDocs": "https://registry.comfy.org"
+      "installDocs": "https://registry.comfy.org",
+      "installKind": "core",
+      "repoUrl": null,
+      "installDirName": null,
+      "requirementsStrategy": null,
+      "fallbackRepoUrl": null,
+      "notes": "Core LoRA loader. Missing this usually means the ComfyUI install is incomplete or very outdated.",
+      "searchTerm": "LoraLoaderModelOnly"
     },
     {
       "classType": "LTXAVTextEncoderLoader",
@@ -165,7 +270,14 @@
       "runtimes": [
         "local"
       ],
-      "installDocs": "https://registry.comfy.org"
+      "installDocs": "https://docs.comfy.org/tutorials/video/ltx/ltx-2-3",
+      "installKind": "core",
+      "repoUrl": null,
+      "installDirName": null,
+      "requirementsStrategy": null,
+      "fallbackRepoUrl": "https://github.com/Lightricks/ComfyUI-LTXVideo",
+      "notes": "Update ComfyUI to a build with LTX 2.3 support. If that still does not expose the node, install or update ComfyUI-LTXVideo manually.",
+      "searchTerm": "LTXAVTextEncoderLoader"
     },
     {
       "classType": "LTXVAudioVAEDecode",
@@ -175,7 +287,14 @@
       "runtimes": [
         "local"
       ],
-      "installDocs": "https://registry.comfy.org"
+      "installDocs": "https://docs.comfy.org/tutorials/video/ltx/ltx-2-3",
+      "installKind": "core",
+      "repoUrl": null,
+      "installDirName": null,
+      "requirementsStrategy": null,
+      "fallbackRepoUrl": "https://github.com/Lightricks/ComfyUI-LTXVideo",
+      "notes": "Update ComfyUI to a build with LTX 2.3 support. If that still does not expose the node, install or update ComfyUI-LTXVideo manually.",
+      "searchTerm": "LTXVAudioVAEDecode"
     },
     {
       "classType": "LTXVAudioVAELoader",
@@ -185,7 +304,14 @@
       "runtimes": [
         "local"
       ],
-      "installDocs": "https://registry.comfy.org"
+      "installDocs": "https://docs.comfy.org/built-in-nodes/LTXVAudioVAELoader",
+      "installKind": "core",
+      "repoUrl": null,
+      "installDirName": null,
+      "requirementsStrategy": null,
+      "fallbackRepoUrl": "https://github.com/Lightricks/ComfyUI-LTXVideo",
+      "notes": "Update ComfyUI to a build with LTX 2.3 support. If that still does not expose the node, install or update ComfyUI-LTXVideo manually.",
+      "searchTerm": "LTXVAudioVAELoader"
     },
     {
       "classType": "LTXVConcatAVLatent",
@@ -195,7 +321,14 @@
       "runtimes": [
         "local"
       ],
-      "installDocs": "https://registry.comfy.org"
+      "installDocs": "https://docs.comfy.org/tutorials/video/ltx/ltx-2-3",
+      "installKind": "core",
+      "repoUrl": null,
+      "installDirName": null,
+      "requirementsStrategy": null,
+      "fallbackRepoUrl": "https://github.com/Lightricks/ComfyUI-LTXVideo",
+      "notes": "LTX workflow nodes are bundled into newer ComfyUI builds.",
+      "searchTerm": "LTXVConcatAVLatent"
     },
     {
       "classType": "LTXVConditioning",
@@ -205,7 +338,14 @@
       "runtimes": [
         "local"
       ],
-      "installDocs": "https://registry.comfy.org"
+      "installDocs": "https://docs.comfy.org/tutorials/video/ltx/ltx-2-3",
+      "installKind": "core",
+      "repoUrl": null,
+      "installDirName": null,
+      "requirementsStrategy": null,
+      "fallbackRepoUrl": "https://github.com/Lightricks/ComfyUI-LTXVideo",
+      "notes": "LTX workflow nodes are bundled into newer ComfyUI builds.",
+      "searchTerm": "LTXVConditioning"
     },
     {
       "classType": "LTXVCropGuides",
@@ -215,7 +355,14 @@
       "runtimes": [
         "local"
       ],
-      "installDocs": "https://registry.comfy.org"
+      "installDocs": "https://docs.comfy.org/tutorials/video/ltx/ltx-2-3",
+      "installKind": "core",
+      "repoUrl": null,
+      "installDirName": null,
+      "requirementsStrategy": null,
+      "fallbackRepoUrl": "https://github.com/Lightricks/ComfyUI-LTXVideo",
+      "notes": "LTX workflow nodes are bundled into newer ComfyUI builds.",
+      "searchTerm": "LTXVCropGuides"
     },
     {
       "classType": "LTXVEmptyLatentAudio",
@@ -225,7 +372,14 @@
       "runtimes": [
         "local"
       ],
-      "installDocs": "https://registry.comfy.org"
+      "installDocs": "https://docs.comfy.org/tutorials/video/ltx/ltx-2-3",
+      "installKind": "core",
+      "repoUrl": null,
+      "installDirName": null,
+      "requirementsStrategy": null,
+      "fallbackRepoUrl": "https://github.com/Lightricks/ComfyUI-LTXVideo",
+      "notes": "LTX workflow nodes are bundled into newer ComfyUI builds.",
+      "searchTerm": "LTXVEmptyLatentAudio"
     },
     {
       "classType": "LTXVImgToVideoInplace",
@@ -235,7 +389,14 @@
       "runtimes": [
         "local"
       ],
-      "installDocs": "https://registry.comfy.org"
+      "installDocs": "https://docs.comfy.org/tutorials/video/ltx/ltx-2-3",
+      "installKind": "core",
+      "repoUrl": null,
+      "installDirName": null,
+      "requirementsStrategy": null,
+      "fallbackRepoUrl": "https://github.com/Lightricks/ComfyUI-LTXVideo",
+      "notes": "LTX workflow nodes are bundled into newer ComfyUI builds.",
+      "searchTerm": "LTXVImgToVideoInplace"
     },
     {
       "classType": "LTXVLatentUpsampler",
@@ -245,7 +406,14 @@
       "runtimes": [
         "local"
       ],
-      "installDocs": "https://registry.comfy.org"
+      "installDocs": "https://docs.comfy.org/tutorials/video/ltx/ltx-2-3",
+      "installKind": "core",
+      "repoUrl": null,
+      "installDirName": null,
+      "requirementsStrategy": null,
+      "fallbackRepoUrl": "https://github.com/Lightricks/ComfyUI-LTXVideo",
+      "notes": "LTX workflow nodes are bundled into newer ComfyUI builds.",
+      "searchTerm": "LTXVLatentUpsampler"
     },
     {
       "classType": "LTXVPreprocess",
@@ -255,7 +423,14 @@
       "runtimes": [
         "local"
       ],
-      "installDocs": "https://registry.comfy.org"
+      "installDocs": "https://docs.comfy.org/tutorials/video/ltx/ltx-2-3",
+      "installKind": "core",
+      "repoUrl": null,
+      "installDirName": null,
+      "requirementsStrategy": null,
+      "fallbackRepoUrl": "https://github.com/Lightricks/ComfyUI-LTXVideo",
+      "notes": "LTX workflow nodes are bundled into newer ComfyUI builds.",
+      "searchTerm": "LTXVPreprocess"
     },
     {
       "classType": "LTXVSeparateAVLatent",
@@ -265,7 +440,14 @@
       "runtimes": [
         "local"
       ],
-      "installDocs": "https://registry.comfy.org"
+      "installDocs": "https://docs.comfy.org/tutorials/video/ltx/ltx-2-3",
+      "installKind": "core",
+      "repoUrl": null,
+      "installDirName": null,
+      "requirementsStrategy": null,
+      "fallbackRepoUrl": "https://github.com/Lightricks/ComfyUI-LTXVideo",
+      "notes": "LTX workflow nodes are bundled into newer ComfyUI builds.",
+      "searchTerm": "LTXVSeparateAVLatent"
     },
     {
       "classType": "ModelSamplingAuraFlow",
@@ -275,7 +457,14 @@
       "runtimes": [
         "local"
       ],
-      "installDocs": "https://registry.comfy.org"
+      "installDocs": "https://docs.comfy.org/built-in-nodes/ModelSamplingAuraFlow",
+      "installKind": "core",
+      "repoUrl": null,
+      "installDirName": null,
+      "requirementsStrategy": null,
+      "fallbackRepoUrl": null,
+      "notes": "This sampler ships with newer ComfyUI builds.",
+      "searchTerm": "ModelSamplingAuraFlow"
     },
     {
       "classType": "ResizeImageMaskNode",
@@ -285,7 +474,14 @@
       "runtimes": [
         "local"
       ],
-      "installDocs": "https://registry.comfy.org"
+      "installDocs": "https://registry.comfy.org",
+      "installKind": "core",
+      "repoUrl": null,
+      "installDirName": null,
+      "requirementsStrategy": null,
+      "fallbackRepoUrl": null,
+      "notes": "Part of current ComfyUI core image utilities.",
+      "searchTerm": "ResizeImageMaskNode"
     },
     {
       "classType": "ResizeImagesByLongerEdge",
@@ -295,7 +491,14 @@
       "runtimes": [
         "local"
       ],
-      "installDocs": "https://registry.comfy.org"
+      "installDocs": "https://docs.comfy.org/built-in-nodes/ResizeImagesByLongerEdge",
+      "installKind": "core",
+      "repoUrl": null,
+      "installDirName": null,
+      "requirementsStrategy": null,
+      "fallbackRepoUrl": null,
+      "notes": "Part of current ComfyUI core image utilities.",
+      "searchTerm": "ResizeImagesByLongerEdge"
     },
     {
       "classType": "SaveAudioMP3",
@@ -305,7 +508,14 @@
       "runtimes": [
         "local"
       ],
-      "installDocs": "https://registry.comfy.org"
+      "installDocs": "https://docs.comfy.org/tutorials/audio/ace-step/ace-step-v1",
+      "installKind": "core",
+      "repoUrl": null,
+      "installDirName": null,
+      "requirementsStrategy": null,
+      "fallbackRepoUrl": null,
+      "notes": "Ace-Step audio save nodes are included in newer ComfyUI builds.",
+      "searchTerm": "SaveAudioMP3"
     },
     {
       "classType": "SaveImage",
@@ -323,7 +533,14 @@
         "cloud",
         "local"
       ],
-      "installDocs": "https://registry.comfy.org"
+      "installDocs": "https://registry.comfy.org",
+      "installKind": "core",
+      "repoUrl": null,
+      "installDirName": null,
+      "requirementsStrategy": null,
+      "fallbackRepoUrl": null,
+      "notes": "Core image output node. Missing this usually means the ComfyUI install is incomplete or very outdated.",
+      "searchTerm": "SaveImage"
     },
     {
       "classType": "SaveVideo",
@@ -338,7 +555,14 @@
         "cloud",
         "local"
       ],
-      "installDocs": "https://registry.comfy.org"
+      "installDocs": "https://docs.comfy.org/built-in-nodes/CreateVideo",
+      "installKind": "core",
+      "repoUrl": null,
+      "installDirName": null,
+      "requirementsStrategy": null,
+      "fallbackRepoUrl": null,
+      "notes": "Core video output support ships with newer ComfyUI builds.",
+      "searchTerm": "SaveVideo"
     },
     {
       "classType": "TextEncodeAceStepAudio1.5",
@@ -348,7 +572,14 @@
       "runtimes": [
         "local"
       ],
-      "installDocs": "https://registry.comfy.org"
+      "installDocs": "https://docs.comfy.org/tutorials/audio/ace-step/ace-step-v1",
+      "installKind": "core",
+      "repoUrl": null,
+      "installDirName": null,
+      "requirementsStrategy": null,
+      "fallbackRepoUrl": null,
+      "notes": "Update ComfyUI to a build with Ace-Step 1.5 support if this node is missing.",
+      "searchTerm": "TextEncodeAceStepAudio1.5"
     },
     {
       "classType": "TextEncodeQwenImageEditPlus",
@@ -361,7 +592,14 @@
       "runtimes": [
         "local"
       ],
-      "installDocs": "https://registry.comfy.org"
+      "installDocs": "https://docs.comfy.org/built-in-nodes/TextEncodeQwenImageEditPlus",
+      "installKind": "core",
+      "repoUrl": null,
+      "installDirName": null,
+      "requirementsStrategy": null,
+      "fallbackRepoUrl": null,
+      "notes": "Native Qwen image edit support ships with newer ComfyUI builds.",
+      "searchTerm": "TextEncodeQwenImageEditPlus"
     },
     {
       "classType": "UNETLoader",
@@ -372,7 +610,14 @@
       "runtimes": [
         "local"
       ],
-      "installDocs": "https://registry.comfy.org"
+      "installDocs": "https://registry.comfy.org",
+      "installKind": "core",
+      "repoUrl": null,
+      "installDirName": null,
+      "requirementsStrategy": null,
+      "fallbackRepoUrl": null,
+      "notes": "Core diffusion model loader. Missing this usually means the ComfyUI install is incomplete or very outdated.",
+      "searchTerm": "UNETLoader"
     },
     {
       "classType": "VAEDecodeAudio",
@@ -382,7 +627,14 @@
       "runtimes": [
         "local"
       ],
-      "installDocs": "https://registry.comfy.org"
+      "installDocs": "https://docs.comfy.org/tutorials/audio/ace-step/ace-step-v1",
+      "installKind": "core",
+      "repoUrl": null,
+      "installDirName": null,
+      "requirementsStrategy": null,
+      "fallbackRepoUrl": null,
+      "notes": "Ace-Step audio decode support ships with newer ComfyUI builds.",
+      "searchTerm": "VAEDecodeAudio"
     },
     {
       "classType": "VAEDecodeTiled",
@@ -392,7 +644,14 @@
       "runtimes": [
         "local"
       ],
-      "installDocs": "https://registry.comfy.org"
+      "installDocs": "https://docs.comfy.org/built-in-nodes/VAEDecodeTiled",
+      "installKind": "core",
+      "repoUrl": null,
+      "installDirName": null,
+      "requirementsStrategy": null,
+      "fallbackRepoUrl": null,
+      "notes": "Tiled VAE decode is part of current ComfyUI core.",
+      "searchTerm": "VAEDecodeTiled"
     },
     {
       "classType": "VAELoader",
@@ -403,7 +662,14 @@
       "runtimes": [
         "local"
       ],
-      "installDocs": "https://registry.comfy.org"
+      "installDocs": "https://registry.comfy.org",
+      "installKind": "core",
+      "repoUrl": null,
+      "installDirName": null,
+      "requirementsStrategy": null,
+      "fallbackRepoUrl": null,
+      "notes": "Core VAE loader. Missing this usually means the ComfyUI install is incomplete or very outdated.",
+      "searchTerm": "VAELoader"
     },
     {
       "classType": "Vidu2ImageToVideoNode",
@@ -413,7 +679,14 @@
       "runtimes": [
         "cloud"
       ],
-      "installDocs": "https://registry.comfy.org"
+      "installDocs": "https://registry.comfy.org",
+      "installKind": "manual",
+      "repoUrl": null,
+      "installDirName": null,
+      "requirementsStrategy": null,
+      "fallbackRepoUrl": null,
+      "notes": "This cloud partner node is not mapped to a stable unattended install recipe yet. Use the registry or ComfyUI Manager.",
+      "searchTerm": "Vidu2ImageToVideoNode"
     },
     {
       "classType": "WanImageToVideo",
@@ -423,7 +696,14 @@
       "runtimes": [
         "local"
       ],
-      "installDocs": "https://registry.comfy.org"
+      "installDocs": "https://docs.comfy.org/tutorials/video/wan/wan2_2",
+      "installKind": "core",
+      "repoUrl": null,
+      "installDirName": null,
+      "requirementsStrategy": null,
+      "fallbackRepoUrl": "https://github.com/kijai/ComfyUI-WanVideoWrapper",
+      "notes": "Update ComfyUI first. If WanImageToVideo is still missing afterwards, install a maintained Wan wrapper such as ComfyUI-WanVideoWrapper manually.",
+      "searchTerm": "WanImageToVideo"
     }
   ]
 }
