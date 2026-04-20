@@ -13,6 +13,18 @@ import {
 } from '../services/comfyPartnerAuth'
 import { resolveThumbnailUrl } from '../utils/projectThumbnail'
 
+const WELCOME_ASSET_BASE_URL = (() => {
+  const rawBase = typeof import.meta !== 'undefined' && import.meta.env?.BASE_URL
+    ? String(import.meta.env.BASE_URL)
+    : '/'
+  return rawBase.endsWith('/') ? rawBase : `${rawBase}/`
+})()
+
+function getWelcomeAssetPath(filename) {
+  const safeFilename = String(filename || '').replace(/^\/+/, '')
+  return `${WELCOME_ASSET_BASE_URL}${safeFilename}`
+}
+
 /**
  * Hero loop with soft dissolve between iterations.
  *
@@ -178,6 +190,8 @@ function WelcomeScreen() {
   const canOpenLatestAutosave = Boolean(
     lastFailedProjectHandle && error?.includes('Project file is empty or invalid')
   )
+  const welcomeHeroVideoSrc = getWelcomeAssetPath('welcome-hero.mp4')
+  const welcomeHeroPosterSrc = getWelcomeAssetPath('hero-v1.webp')
   
   // Keep partner-key status fresh so the chip in the header reflects
   // changes made from the ApiKeyDialog without remounting.
@@ -527,8 +541,8 @@ function WelcomeScreen() {
                 `muted` so Chromium's autoplay policy lets us start
                 unattended. */}
             <HeroVideoLoop
-              src="/welcome-hero.mp4"
-              poster="/hero-v1.webp"
+              src={welcomeHeroVideoSrc}
+              poster={welcomeHeroPosterSrc}
               fadeSeconds={5}
               className="absolute inset-0 w-full h-full object-cover"
               style={{ objectPosition: 'center 10%' }}
@@ -537,7 +551,7 @@ function WelcomeScreen() {
                 `prefers-reduced-motion` media query hides the video above
                 and shows this instead. */}
             <img
-              src="/hero-v1.webp"
+              src={welcomeHeroPosterSrc}
               alt=""
               aria-hidden="true"
               draggable={false}
