@@ -12,7 +12,9 @@ import renderCacheService from '../services/renderCache'
 import { deleteRenderCache } from '../services/fileSystem'
 import { clearDiskCacheUrl } from './VideoLayerRenderer'
 import useAssetsStore from '../stores/assetsStore'
+import CaptionWorkspace from './CaptionWorkspace'
 import { useSnapping, SNAP_TYPES } from '../hooks/useSnapping'
+import useViewportClampedPosition from '../hooks/useViewportClampedPosition'
 import { getAllKeyframeTimes } from '../utils/keyframes'
 import { TRANSITION_TYPES, TRANSITION_DURATIONS, FRAME_RATE } from '../constants/transitions'
 import { getAudioClipFadeValues } from '../utils/audioClipFades'
@@ -561,6 +563,18 @@ function Timeline({ onOpenAudioGenerate }) {
   // Clip context menu state
   const [clipContextMenu, setClipContextMenu] = useState(null) // { x, y, clipId }
   const [maskSubmenuOpen, setMaskSubmenuOpen] = useState(false)
+  // Refs + viewport-clamped positions keep the menus from spilling below
+  // the taskbar or off the right edge when you right-click near a screen
+  // boundary. See useViewportClampedPosition for how it measures and flips.
+  const clipContextMenuRef = useRef(null)
+  const clipContextMenuAnchor = useMemo(
+    () => (clipContextMenu ? { x: clipContextMenu.x, y: clipContextMenu.y } : null),
+    [clipContextMenu?.x, clipContextMenu?.y]
+  )
+  const clipContextMenuPosition = useViewportClampedPosition(
+    clipContextMenuAnchor,
+    clipContextMenuRef,
+  )
   
   // Track rename state
   const [renamingTrackId, setRenamingTrackId] = useState(null)
@@ -945,7 +959,14 @@ function Timeline({ onOpenAudioGenerate }) {
   const { snapClipPosition, snapTrim, pixelsPerSecond: snapPixelsPerSecond } = useSnapping()
 
   // Assets store for drag & drop and preview mode
-  const { assets, currentPreview, setPreviewMode, getAssetUrl, getAssetById, updateAsset, isPlaying: assetIsPlaying, setIsPlaying: setAssetIsPlaying } = useAssetsStore()
+  const { assets, currentPreview, setPreviewMode, getAssetUrl, getAssetById, updateAsset, isPlaying: assetIsPlaying, setIsPlaying: setAssetIsPlaying, folders, addFolder, addAsset, removeAsset } = useAssetsStore()
+
+  // Timeline-wide caption workspace state. We mount CaptionWorkspace at the
+  // timeline level (rather than per-asset in AssetsPanel) so captions can span
+  // the whole edited program. The `virtualTimelineAsset` is a lightweight
+  // stand-in that gives CaptionWorkspace enough shape (id/name/duration) to
+  // render without tying the overlay to any single source clip.
+  const [timelineCaptionWorkspaceAsset, setTimelineCaptionWorkspaceAsset] = useState(null)
   const handlePasteAtPlayhead = useCallback(() => {
     if (!activeTrackId || copiedClips.length === 0) return false
     pasteClipsAtPlayhead(activeTrackId, playheadPosition, assets)
@@ -982,6 +1003,92 @@ function Timeline({ onOpenAudioGenerate }) {
     const targetTrack = activeVideoTrack || fallbackVideoTrack
     if (!targetTrack) return
     addAdjustmentClip(targetTrack.id, playheadPosition, { duration: 5 })
+  }
+
+  // Compute program duration (end of latest clip on any enabled track).
+  const computeProgramDuration = useCallback(() => {
+    let end = 0
+    for (const clip of clips) {
+      if (clip.enabled === false) continue
+      const s = Number(clip.startTime) || 0
+      const d = Math.max(0, Number(clip.duration) || 0)
+      if (s + d > end) end = s + d
+    }
+    return end
+  }, [clips])
+
+  const handleOpenTimelineCaptions = () => {
+    const programDuration = computeProgramDuration()
+    if (programDuration <= 0) {
+      alert('Add some clips to the timeline before captioning.')
+      return
+    }
+
+    // If a timeline caption overlay already exists (tagged via captionScope),
+    // let the user decide whether to replace it. The actual replacement
+    // happens inside handlePlaceTimelineCaptionOnTimeline once the new
+    // overlay asset has been generated.
+    const existingTimelineCaptionClip = clips.find((clip) => {
+      if (!clip || !clip.assetId) return false
+      const asset = getAssetById(clip.assetId)
+      return asset?.settings?.captionScope === 'timeline'
+    })
+
+    if (existingTimelineCaptionClip) {
+      const confirmed = window.confirm(
+        'This project already has timeline captions. Replace them with a fresh transcription?\n\n'
+        + 'Your existing caption track will be deleted before the new one is added.'
+      )
+      if (!confirmed) return
+    }
+
+    setTimelineCaptionWorkspaceAsset({
+      id: `timeline-mix-${Date.now()}`,
+      name: 'Timeline',
+      type: 'timeline',
+      duration: programDuration,
+      hasAudio: true,
+    })
+  }
+
+  // After the user has generated a caption overlay for the timeline, insert a
+  // brand-new video track above everything else and drop the overlay at t=0
+  // for the full program duration. Also removes any prior timeline-caption
+  // overlay (clip + asset) so we don't stack overlapping transcriptions.
+  const handlePlaceTimelineCaptionOnTimeline = async (captionAsset) => {
+    if (!captionAsset) return
+
+    // Remove prior timeline-caption overlays (the user already confirmed the
+    // replacement before transcription started).
+    const state = useTimelineStore.getState()
+    const assetsState = useAssetsStore.getState()
+    const priorCaptionClips = state.clips.filter((clip) => {
+      if (!clip?.assetId) return false
+      const a = assetsState.getAssetById(clip.assetId)
+      return a?.settings?.captionScope === 'timeline' && a.id !== captionAsset.id
+    })
+    const priorAssetIds = new Set(priorCaptionClips.map((c) => c.assetId))
+    priorCaptionClips.forEach((clip) => state.removeClip(clip.id))
+    priorAssetIds.forEach((id) => {
+      try { assetsState.removeAsset(id) } catch (_) { /* best-effort cleanup */ }
+    })
+
+    // Fresh top-of-stack video track. addTrack('video') already prepends to
+    // the video track list, so new tracks appear visually above existing ones.
+    const newTrack = state.addTrack('video')
+    if (!newTrack) return
+
+    const programDuration = Math.max(
+      Number(captionAsset.duration) || 0,
+      Number(captionAsset.settings?.duration) || 0,
+      1
+    )
+
+    state.addClip(newTrack.id, captionAsset, 0, state.timelineFps, {
+      duration: programDuration,
+      trimStart: 0,
+      trimEnd: programDuration,
+    })
   }
 
   // Resolve-like transition pane preview (left/right clip contributions).
@@ -2747,11 +2854,22 @@ function Timeline({ onOpenAudioGenerate }) {
     setMaskSubmenuOpen(false)
   }
 
-  // Close clip context menu
+  // Close clip context menu. We listen in the CAPTURE phase because
+  // some downstream handlers (notably handleClipClick on the clip that
+  // was right-clicked) call e.stopPropagation(), which would otherwise
+  // prevent the bubble-phase window click from firing. Clicking the
+  // same clip you right-clicked should still dismiss the menu, so we
+  // catch the click on the way down.
   useEffect(() => {
     if (!clipContextMenu) return
-    
-    const handleClick = () => {
+
+    const handleClick = (e) => {
+      // Ignore clicks inside the menu itself — its stopPropagation on
+      // onClick keeps this from firing for menu-internal clicks anyway,
+      // but belt-and-suspenders in case a child forgets to stop it.
+      if (clipContextMenuRef.current && clipContextMenuRef.current.contains(e.target)) {
+        return
+      }
       setClipContextMenu(null)
       setMaskSubmenuOpen(false)
     }
@@ -2761,12 +2879,12 @@ function Timeline({ onOpenAudioGenerate }) {
         setMaskSubmenuOpen(false)
       }
     }
-    
-    window.addEventListener('click', handleClick)
+
+    window.addEventListener('click', handleClick, true)
     window.addEventListener('keydown', handleEscape)
-    
+
     return () => {
-      window.removeEventListener('click', handleClick)
+      window.removeEventListener('click', handleClick, true)
       window.removeEventListener('keydown', handleEscape)
     }
   }, [clipContextMenu])
@@ -3931,6 +4049,14 @@ function Timeline({ onOpenAudioGenerate }) {
           >
             <Square className="w-3 h-3 text-purple-400" />
             Adj
+          </button>
+          <button
+            onClick={handleOpenTimelineCaptions}
+            className={toolbarButtonClass}
+            title="Transcribe the timeline's audio and add animated captions on a new top track"
+          >
+            <Type className="w-3 h-3 text-cyan-300" />
+            Captions
           </button>
           {selectedMarkerId && (
             <button
@@ -5727,13 +5853,19 @@ function Timeline({ onOpenAudioGenerate }) {
         )
       })()}
       
-      {/* Clip Context Menu (Portal) */}
+      {/* Clip Context Menu (Portal). We deliberately do NOT put
+          `overflow-auto` on this container: the mask submenu is an
+          absolutely-positioned child that opens to the side, and an
+          `overflow: auto` ancestor would clip it into a horizontal
+          scrollbar. The viewport-clamped position below already keeps
+          the whole menu on-screen for any reasonable window size. */}
       {clipContextMenu && (
         <div
+          ref={clipContextMenuRef}
           className="fixed z-50 bg-sf-dark-800 border border-sf-dark-600 rounded-lg shadow-xl py-1 min-w-[160px]"
-          style={{ 
-            left: `${clipContextMenu.x}px`, 
-            top: `${clipContextMenu.y}px`,
+          style={{
+            left: `${clipContextMenuPosition.x}px`,
+            top: `${clipContextMenuPosition.y}px`,
           }}
           onClick={(e) => e.stopPropagation()}
         >
@@ -5753,9 +5885,29 @@ function Timeline({ onOpenAudioGenerate }) {
                     <ChevronRight className="ml-auto w-3 h-3 text-sf-text-muted" />
                   </button>
                   
-                  {maskSubmenuOpen && (
+                  {maskSubmenuOpen && (() => {
+                    // Decide which side of the parent menu to open the
+                    // submenu on. We don't know the exact submenu width
+                    // before render, but `min-w-[220px]` is a safe lower
+                    // bound; the parent menu is `min-w-[160px]`. If opening
+                    // to the right would push the submenu off the viewport
+                    // edge (or close enough to it that it would feel
+                    // cramped), we flip to the left instead.
+                    const SUBMENU_MIN_WIDTH = 220
+                    const PARENT_MIN_WIDTH = 160
+                    const EDGE_MARGIN = 12
+                    const viewportWidth = typeof window !== 'undefined'
+                      ? window.innerWidth
+                      : Infinity
+                    const wouldOverflowRight =
+                      clipContextMenuPosition.x + PARENT_MIN_WIDTH
+                        + SUBMENU_MIN_WIDTH + EDGE_MARGIN > viewportWidth
+                    const sideClasses = wouldOverflowRight
+                      ? 'right-full mr-1'
+                      : 'left-full ml-1'
+                    return (
                     <div
-                      className="absolute top-0 left-full ml-1 bg-sf-dark-800 border border-sf-dark-600 rounded-lg shadow-xl py-1 min-w-[220px] z-50 max-h-60 overflow-auto"
+                      className={`absolute top-0 ${sideClasses} bg-sf-dark-800 border border-sf-dark-600 rounded-lg shadow-xl py-1 min-w-[220px] z-50 max-h-60 overflow-y-auto overflow-x-hidden`}
                       onClick={(e) => e.stopPropagation()}
                     >
                       <button
@@ -5783,7 +5935,8 @@ function Timeline({ onOpenAudioGenerate }) {
                         </div>
                       )}
                     </div>
-                  )}
+                    )
+                  })()}
                 </div>
                 <div className="h-px bg-sf-dark-600 my-1" />
               </>
@@ -6154,6 +6307,25 @@ function Timeline({ onOpenAudioGenerate }) {
           </div>
         </div>
       )}
+
+      <CaptionWorkspace
+        isOpen={Boolean(timelineCaptionWorkspaceAsset)}
+        asset={timelineCaptionWorkspaceAsset}
+        scope="timeline"
+        currentProjectHandle={currentProjectHandle}
+        timelineSize={(() => {
+          const s = useProjectStore.getState().getCurrentTimelineSettings?.()
+          return s
+            ? { width: s.width, height: s.height, fps: s.fps }
+            : { width: 1920, height: 1080, fps: 24 }
+        })()}
+        folders={folders}
+        addFolder={addFolder}
+        addAsset={addAsset}
+        updateAsset={updateAsset}
+        onPlaceOnTimeline={handlePlaceTimelineCaptionOnTimeline}
+        onClose={() => setTimelineCaptionWorkspaceAsset(null)}
+      />
     </div>
   )
 }

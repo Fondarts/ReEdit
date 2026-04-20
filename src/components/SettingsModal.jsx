@@ -38,6 +38,7 @@ import {
 } from '../services/localComfyConnection'
 
 const SHOW_COMFYUI_TAB_KEY = 'comfystudio-show-comfyui-tab'
+const AUTO_IMPORT_KEY = 'comfystudio-auto-import-comfy-outputs'
 
 const SETTINGS_SECTIONS = [
   {
@@ -166,11 +167,25 @@ function GeneralTab({ initialSection = null }) {
     }
   })
 
+  const [autoImportComfyOutputs, setAutoImportComfyOutputs] = useState(() => {
+    try {
+      const stored = localStorage.getItem(AUTO_IMPORT_KEY)
+      if (stored === null) return true // default ON
+      return stored === 'true'
+    } catch {
+      return true
+    }
+  })
+
   const {
     defaultProjectsLocation,
     selectDefaultProjectsLocation,
     autoSaveEnabled,
     setAutoSaveEnabled,
+    reopenLastProjectOnStartup,
+    setReopenLastProjectOnStartup,
+    showHeroBackground,
+    setShowHeroBackground,
     currentProject,
     closeProject,
     defaultResolution,
@@ -279,6 +294,14 @@ function GeneralTab({ initialSection = null }) {
     try {
       localStorage.setItem(SHOW_COMFYUI_TAB_KEY, String(next))
       window.dispatchEvent(new CustomEvent('comfystudio-show-comfyui-tab-changed', { detail: next }))
+    } catch (_) {}
+  }
+
+  const handleToggleAutoImportComfyOutputs = () => {
+    const next = !autoImportComfyOutputs
+    setAutoImportComfyOutputs(next)
+    try {
+      localStorage.setItem(AUTO_IMPORT_KEY, String(next))
     } catch (_) {}
   }
 
@@ -420,6 +443,32 @@ function GeneralTab({ initialSection = null }) {
               <div className={`w-4 h-4 bg-white rounded-full transition-transform ${autoSaveEnabled ? 'translate-x-5' : 'translate-x-0.5'}`} />
             </button>
           </div>
+
+          <div className="flex items-center justify-between rounded-lg border border-sf-dark-700 bg-sf-dark-900/60 px-3 py-3">
+            <div>
+              <label className="text-sm text-sf-text-primary">Reopen last project on startup</label>
+              <p className="text-[10px] text-sf-text-muted">When off, ComfyStudio opens to the project picker.</p>
+            </div>
+            <button
+              onClick={() => setReopenLastProjectOnStartup(!reopenLastProjectOnStartup)}
+              className={`w-10 h-5 rounded-full transition-colors ${reopenLastProjectOnStartup ? 'bg-sf-accent' : 'bg-sf-dark-600'}`}
+            >
+              <div className={`w-4 h-4 bg-white rounded-full transition-transform ${reopenLastProjectOnStartup ? 'translate-x-5' : 'translate-x-0.5'}`} />
+            </button>
+          </div>
+
+          <div className="flex items-center justify-between rounded-lg border border-sf-dark-700 bg-sf-dark-900/60 px-3 py-3">
+            <div>
+              <label className="text-sm text-sf-text-primary">Show hero background on project picker</label>
+              <p className="text-[10px] text-sf-text-muted">Cinematic image at the top of the project picker. Turn off for a minimal look.</p>
+            </div>
+            <button
+              onClick={() => setShowHeroBackground(!showHeroBackground)}
+              className={`w-10 h-5 rounded-full transition-colors ${showHeroBackground ? 'bg-sf-accent' : 'bg-sf-dark-600'}`}
+            >
+              <div className={`w-4 h-4 bg-white rounded-full transition-transform ${showHeroBackground ? 'translate-x-5' : 'translate-x-0.5'}`} />
+            </button>
+          </div>
         </div>
       )
       break
@@ -557,6 +606,28 @@ function GeneralTab({ initialSection = null }) {
             >
               <span
                 className={`absolute top-0.5 w-4 h-4 rounded-full bg-white shadow transition-all ${showComfyUiTab ? 'left-[calc(100%-1.25rem)]' : 'left-0.5'}`}
+                aria-hidden
+              />
+            </button>
+          </div>
+
+          <div className="flex items-center justify-between rounded-lg border border-sf-dark-700 bg-sf-dark-900/60 px-3 py-3">
+            <div className="pr-4">
+              <label className="text-sm text-sf-text-primary">Auto-import ComfyUI tab generations</label>
+              <p className="text-[10px] text-sf-text-muted">
+                When enabled, any successful prompt run on your ComfyUI instance (including custom workflows run from the ComfyUI tab) is automatically imported into the current project&apos;s <span className="text-sf-text-secondary">Imported from ComfyUI/</span> folder. Detected frame sequences are stitched into a single MP4 at the project&apos;s framerate.
+              </p>
+            </div>
+            <button
+              type="button"
+              role="switch"
+              aria-checked={autoImportComfyOutputs}
+              onClick={handleToggleAutoImportComfyOutputs}
+              className={`w-10 h-5 rounded-full transition-colors flex-shrink-0 relative ${autoImportComfyOutputs ? 'bg-sf-accent' : 'bg-sf-dark-600'}`}
+              title={autoImportComfyOutputs ? 'Disable auto-import' : 'Enable auto-import'}
+            >
+              <span
+                className={`absolute top-0.5 w-4 h-4 rounded-full bg-white shadow transition-all ${autoImportComfyOutputs ? 'left-[calc(100%-1.25rem)]' : 'left-0.5'}`}
                 aria-hidden
               />
             </button>

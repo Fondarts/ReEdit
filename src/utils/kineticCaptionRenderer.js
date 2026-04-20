@@ -13,76 +13,44 @@ function easeInCubic(t) { return t * t * t }
 // Kinetic caption style
 // ---------------------------------------------------------------------------
 
+// The default accent (color applied to the word currently being spoken).
+// Users can override this per caption via the color picker in the UI,
+// so it's exposed as a shared constant rather than baked into five
+// near-identical presets.
+export const DEFAULT_KINETIC_ACCENT_COLOR = '#A3E635' // lime
+
+function accentGlowColor(accentHex) {
+  // Produce a semi-transparent glow in the same hue as the accent so the
+  // active word lights up without needing a separate glow color setting.
+  const hex = String(accentHex || DEFAULT_KINETIC_ACCENT_COLOR).replace('#', '')
+  const normalized = hex.length === 3
+    ? hex.split('').map((c) => c + c).join('')
+    : hex.padEnd(6, '0').slice(0, 6)
+  const r = parseInt(normalized.slice(0, 2), 16) || 0
+  const g = parseInt(normalized.slice(2, 4), 16) || 0
+  const b = parseInt(normalized.slice(4, 6), 16) || 0
+  return `rgba(${r}, ${g}, ${b}, 0.42)`
+}
+
 export const KINETIC_CAPTION_STYLES = [
   {
-    id: 'kinetic-classic',
-    name: 'Classic',
-    description: 'White text with lime green keyword highlights.',
-    sampleText: 'watch on mute?',
+    id: 'kinetic-pop',
+    name: 'Kinetic',
+    description: 'Big bold words that pop in and light up as they are spoken.',
+    sampleText: 'watch this happen',
     renderer: 'kinetic',
     textColor: '#F8FAFC',
-    keyWordColor: '#A3E635',
+    keyWordColor: DEFAULT_KINETIC_ACCENT_COLOR,
     baseGlowColor: 'rgba(255, 255, 255, 0.18)',
-    glowColor: 'rgba(163, 230, 53, 0.42)',
+    glowColor: accentGlowColor(DEFAULT_KINETIC_ACCENT_COLOR),
     fontFamily: 'Inter',
     fontWeight: '800',
-  },
-  {
-    id: 'kinetic-sunset',
-    name: 'Sunset',
-    description: 'White text with warm coral-orange emphasis.',
-    sampleText: 'the actual hook.',
-    renderer: 'kinetic',
-    textColor: '#FFF1EB',
-    keyWordColor: '#FB923C',
-    baseGlowColor: 'rgba(251, 191, 36, 0.18)',
-    glowColor: 'rgba(251, 146, 60, 0.4)',
-    fontFamily: 'Inter',
-    fontWeight: '800',
-  },
-  {
-    id: 'kinetic-electric',
-    name: 'Electric',
-    description: 'White text with bright cyan keyword glow.',
-    sampleText: 'captions instantly.',
-    renderer: 'kinetic',
-    textColor: '#E0F7FF',
-    keyWordColor: '#22D3EE',
-    baseGlowColor: 'rgba(56, 189, 248, 0.18)',
-    glowColor: 'rgba(34, 211, 238, 0.4)',
-    fontFamily: 'Inter',
-    fontWeight: '800',
-  },
-  {
-    id: 'kinetic-violet',
-    name: 'Violet',
-    description: 'White text with vivid purple keyword pops.',
-    sampleText: 'try this now!',
-    renderer: 'kinetic',
-    textColor: '#F3E8FF',
-    keyWordColor: '#A78BFA',
-    baseGlowColor: 'rgba(192, 132, 252, 0.18)',
-    glowColor: 'rgba(167, 139, 250, 0.42)',
-    fontFamily: 'Inter',
-    fontWeight: '800',
-  },
-  {
-    id: 'kinetic-mono',
-    name: 'Monochrome',
-    description: 'Pure white with brighter intensity on keywords.',
-    sampleText: 'just the words.',
-    renderer: 'kinetic',
-    textColor: '#D1D5DB',
-    keyWordColor: '#FFFFFF',
-    baseGlowColor: 'rgba(209, 213, 219, 0.16)',
-    glowColor: 'rgba(255, 255, 255, 0.45)',
-    fontFamily: 'Inter',
-    fontWeight: '800',
+    accentCustomizable: true,
   },
   {
     id: 'kinetic-traditional',
-    name: 'Traditional Subtitles',
-    description: 'Clean bottom-center subtitles with no animation effects.',
+    name: 'Subtitles',
+    description: 'Clean bottom-center subtitles with a dark pill. No animation.',
     sampleText: 'Simple readable subtitles.',
     renderer: 'kinetic',
     traditional: true,
@@ -100,8 +68,30 @@ export const KINETIC_CAPTION_STYLES = [
 
 export const DEFAULT_KINETIC_STYLE_ID = KINETIC_CAPTION_STYLES[0].id
 
+// Legacy IDs (kinetic-classic/sunset/electric/violet/mono) were consolidated
+// into the single `kinetic-pop` preset with a customisable accent color.
+// Map them through so projects saved before the cleanup keep opening.
+const LEGACY_KINETIC_ID_MAP = {
+  'kinetic-classic': 'kinetic-pop',
+  'kinetic-sunset': 'kinetic-pop',
+  'kinetic-electric': 'kinetic-pop',
+  'kinetic-violet': 'kinetic-pop',
+  'kinetic-mono': 'kinetic-pop',
+}
+
 export function getKineticStyleById(id) {
-  return KINETIC_CAPTION_STYLES.find((s) => s.id === id) || KINETIC_CAPTION_STYLES[0]
+  const resolved = LEGACY_KINETIC_ID_MAP[id] || id
+  return KINETIC_CAPTION_STYLES.find((s) => s.id === resolved) || KINETIC_CAPTION_STYLES[0]
+}
+
+export function buildKineticStyleWithAccent(styleOrId, accentColor) {
+  const base = typeof styleOrId === 'string' ? getKineticStyleById(styleOrId) : (styleOrId || KINETIC_CAPTION_STYLES[0])
+  if (!accentColor || base.traditional) return base
+  return {
+    ...base,
+    keyWordColor: accentColor,
+    glowColor: accentGlowColor(accentColor),
+  }
 }
 
 const KINETIC_MOTION_PROFILES = {
@@ -422,8 +412,14 @@ function drawWord(ctx, word, anim, color, glowColor, style) {
   const cx = word.x + word.measuredWidth / 2
   const cy = word.y - word.fontSize * 0.35
 
+  // Active-word bump: the word currently being spoken gets a subtle +6% scale
+  // on top of the entrance animation's current scale, which keeps the viewer's
+  // eye locked to the moving target without stealing attention from the text.
+  const activeBoost = anim.isActive ? 1.06 : 1
+  const effectiveScale = anim.scale * activeBoost
+
   ctx.translate(cx, cy)
-  ctx.scale(anim.scale, anim.scale)
+  ctx.scale(effectiveScale, effectiveScale)
   ctx.translate(-cx, -cy)
 
   setFont(ctx, word.fontSize, style.fontFamily, style.fontWeight)
@@ -678,11 +674,15 @@ export function renderKineticCaptionFrame({ ctx, width, height, style, cues, tim
   const behavior = resolveKineticBehavior(resolvedStyle, active)
   const motionProfile = behavior.motionProfile
 
-  const isHighlighted = isMicroCueHighlighted(active)
-  const textColor = isHighlighted ? resolvedStyle.keyWordColor : resolvedStyle.textColor
-  const glowColor = isHighlighted
-    ? resolvedStyle.glowColor
-    : (resolvedStyle.baseGlowColor || 'rgba(255,255,255,0.2)')
+  // Resolve base colors. Per-word active highlighting (below) swaps the
+  // active word to the accent color; everything else stays in the base text
+  // color. We no longer use the old cue-wide "hero word" heuristic because
+  // it highlighted a random word that had nothing to do with what was
+  // actually being spoken at that moment.
+  const baseTextColor = resolvedStyle.textColor
+  const accentTextColor = resolvedStyle.keyWordColor
+  const baseGlowColor = resolvedStyle.baseGlowColor || 'rgba(255,255,255,0.2)'
+  const accentGlow = resolvedStyle.glowColor || baseGlowColor
 
   const baseFontSize = computeFontSize(active.wordCount, width, height)
   const fontSize = Math.round(baseFontSize * (behavior.sizeMultiplier || 1))
@@ -700,10 +700,30 @@ export function renderKineticCaptionFrame({ ctx, width, height, style, cues, tim
   const wordCount = positioned.length
   const entranceSpread = Math.min(0.6, wordCount * 0.06) * mcDuration * (motionProfile.entranceSpreadMultiplier ?? 1)
 
+  // Synthesize per-word speak windows by evenly subdividing the micro-cue's
+  // time range across its words. This is an approximation (the ASR returns
+  // per-word timings upstream but the SRT pipeline loses them), but because
+  // micro-cues are only 1-3 words long, the approximation is tight enough
+  // to feel like accurate karaoke-style highlighting.
+  const safeWordCount = Math.max(1, wordCount)
+  const perWord = mcDuration / safeWordCount
+
   for (let i = 0; i < positioned.length; i++) {
     const wordEnter = active.start + (entranceSpread * (i / Math.max(1, wordCount)))
     const anim = getWordAnimState(time, wordEnter, active.end, motionProfile)
-    drawWord(ctx, positioned[i], anim, textColor, glowColor, resolvedStyle)
+
+    const speakStart = active.start + (i * perWord)
+    const speakEnd = active.start + ((i + 1) * perWord)
+    const isActiveWord = time >= speakStart && time < speakEnd
+
+    drawWord(
+      ctx,
+      positioned[i],
+      { ...anim, isActive: isActiveWord },
+      isActiveWord ? accentTextColor : baseTextColor,
+      isActiveWord ? accentGlow : baseGlowColor,
+      resolvedStyle,
+    )
   }
 }
 

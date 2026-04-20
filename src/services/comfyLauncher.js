@@ -190,6 +190,31 @@ export async function detectComfyLauncherCandidates(payload = {}) {
   return bridge.detectLaunchers(payload)
 }
 
+export async function describeComfyLauncherPortOwner() {
+  const bridge = getBridge()
+  if (!bridge?.describePortOwner) return { pid: null, name: '', port: null }
+  try {
+    return await bridge.describePortOwner()
+  } catch (error) {
+    return { pid: null, name: '', port: null, error: error?.message || String(error) }
+  }
+}
+
+export async function connectComfyLauncherExternal() {
+  const bridge = getBridge()
+  if (!bridge?.connectExternal) return { success: false, error: 'Electron bridge unavailable.' }
+  try {
+    const result = await bridge.connectExternal()
+    if (result?.state) {
+      currentState = { ...INITIAL_STATE, ...result.state }
+      notifyState()
+    }
+    return result
+  } catch (error) {
+    return { success: false, error: error?.message || String(error) }
+  }
+}
+
 export async function updateComfyLauncherConfig(partial) {
   const bridge = getBridge()
   if (!bridge?.setConfig) return { success: false, error: 'Electron bridge unavailable.' }

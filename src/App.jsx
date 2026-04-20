@@ -1,4 +1,5 @@
-import { useState, useCallback, useEffect } from 'react'
+import { useState, useCallback, useEffect, useRef } from 'react'
+import { RefreshCw, ExternalLink } from 'lucide-react'
 import TitleBar from './components/TitleBar'
 import ExportPanel from './components/ExportPanel'
 import GenerateWorkspace from './components/GenerateWorkspace'
@@ -25,6 +26,8 @@ import {
   getLocalComfyHttpBaseSync,
   hydrateLocalComfyConnection,
 } from './services/localComfyConnection'
+import { startComfyLauncherEventBridge } from './services/comfyLauncherEventBridge'
+import { startComfyAutoImport } from './services/comfyAutoImport'
 
 function App() {
   const [audioModalOpen, setAudioModalOpen] = useState(false)
@@ -71,6 +74,25 @@ function App() {
     }
   })
   const [comfyIframeUrl, setComfyIframeUrl] = useState(() => getLocalComfyHttpBaseSync())
+  // Bumped to force-remount the ComfyUI iframe (e.g. when the user clicks the
+  // reload button in the tab header). Necessary because the iframe is kept
+  // mounted across tab switches to preserve queue/progress state, but that
+  // means a failed initial load (WS handshake timed out, extension JS crashed,
+  // ComfyUI was briefly down during our own restart) leaves it stuck on a
+  // black canvas with no in-app way to recover.
+  const [comfyIframeNonce, setComfyIframeNonce] = useState(0)
+  const reloadComfyIframe = useCallback(() => {
+    setComfyIframeNonce((n) => n + 1)
+  }, [])
+  const openComfyExternal = useCallback(() => {
+    const url = comfyIframeUrl || getLocalComfyHttpBaseSync()
+    if (!url) return
+    if (window?.electronAPI?.openExternal) {
+      window.electronAPI.openExternal(url).catch(() => {})
+    } else {
+      window.open(url, '_blank', 'noopener,noreferrer')
+    }
+  }, [comfyIframeUrl])
 
   useEffect(() => {
     const handler = (e) => setShowComfyUiTab(e.detail === true)
@@ -95,6 +117,23 @@ function App() {
     }
     window.addEventListener(COMFY_CONNECTION_CHANGED_EVENT, handler)
     return () => window.removeEventListener(COMFY_CONNECTION_CHANGED_EVENT, handler)
+  }, [])
+
+  // Bridge ComfyUI websocket events (generation start/progress/complete/
+  // error) into the launcher log viewer. This makes the "Running" chip's
+  // log tail actually useful during a generation: the user sees the same
+  // kind of information they'd see in the native ComfyUI terminal window.
+  useEffect(() => {
+    const stop = startComfyLauncherEventBridge()
+    return () => { try { stop?.() } catch (_) { /* ignore */ } }
+  }, [])
+
+  // Auto-import outputs from any prompt run against the connected
+  // ComfyUI instance (including custom workflows run from the embedded
+  // ComfyUI tab) into the current project's asset panel.
+  useEffect(() => {
+    const stop = startComfyAutoImport()
+    return () => { try { stop?.() } catch (_) { /* ignore */ } }
   }, [])
   useEffect(() => {
     if (!showComfyUiTab && mainTab === 'comfyui') setMainTab('editor')
@@ -293,7 +332,36 @@ function App() {
             className="flex-1 flex flex-col min-h-0 bg-sf-dark-950"
             style={{ display: mainTab === 'comfyui' ? 'flex' : 'none' }}
           >
+            {/* Thin toolbar: the embedded ComfyUI iframe has no browser chrome,
+                so when it gets into a stuck state (blank/black canvas from a
+                failed WS handshake, a crashed extension, or ComfyUI restarting
+                under it) the user has no way to recover from inside the app.
+                Reload remounts the iframe; Open-external pops it in the system
+                browser as a fallback diagnostic. */}
+            <div className="flex items-center gap-2 px-3 py-1.5 border-b border-sf-dark-700 bg-sf-dark-900 text-xs text-sf-text-muted flex-shrink-0">
+              <span className="font-mono truncate">{comfyIframeUrl || '—'}</span>
+              <div className="flex-1" />
+              <button
+                type="button"
+                onClick={reloadComfyIframe}
+                className="inline-flex items-center gap-1 px-2 py-1 rounded hover:bg-sf-dark-700 hover:text-sf-text-primary transition-colors"
+                title="Reload the ComfyUI iframe (useful if it's stuck on a black screen)"
+              >
+                <RefreshCw className="w-3.5 h-3.5" />
+                Reload
+              </button>
+              <button
+                type="button"
+                onClick={openComfyExternal}
+                className="inline-flex items-center gap-1 px-2 py-1 rounded hover:bg-sf-dark-700 hover:text-sf-text-primary transition-colors"
+                title="Open ComfyUI in your default browser"
+              >
+                <ExternalLink className="w-3.5 h-3.5" />
+                Open in browser
+              </button>
+            </div>
             <iframe
+              key={`comfy-iframe-${comfyIframeUrl}-${comfyIframeNonce}`}
               src={comfyIframeUrl}
               title="ComfyUI"
               className="flex-1 w-full min-h-0 border-0"

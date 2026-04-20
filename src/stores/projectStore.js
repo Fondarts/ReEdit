@@ -16,6 +16,7 @@ import {
 } from '../services/fileSystem'
 import { useTimelineStore } from './timelineStore'
 import { useAssetsStore } from './assetsStore'
+import { captureAndSaveProjectThumbnail } from '../utils/projectThumbnail'
 
 /**
  * Resolution presets for new projects
@@ -228,6 +229,23 @@ export const useProjectStore = create(
       autoSaveEnabled: true,
       autoSaveInterval: 30000, // 30 seconds
       lastAutoSave: null,
+
+      // Startup behavior (persisted)
+      // When false (default), ComfyStudio lands on the project picker so
+      // users can explicitly choose what to work on (Resolve-style hub).
+      // Power users can flip this on to jump straight back into their
+      // last project.
+      reopenLastProjectOnStartup: false,
+
+      // Welcome-screen cosmetics (persisted). Defaults to the cinematic
+      // hero on; users on low-power machines or minimal aesthetic
+      // preferences can flip this off from Settings → General.
+      showHeroBackground: true,
+
+      // Recent projects view mode on the welcome screen: 'grid' (thumbnail
+      // cards) or 'list' (compact rows). Persisted so users stay in their
+      // preferred view across launches.
+      projectListViewMode: 'grid',
       
       /**
        * Check if File System API is supported
@@ -264,8 +282,13 @@ export const useProjectStore = create(
             }
           }
           
-          // Try to restore current project
-          const storedProject = await getStoredDirectoryHandle('currentProject')
+          // Try to restore current project (only when the user has opted
+          // in via Settings → General → "Reopen last project on startup").
+          // By default ComfyStudio lands on the project picker instead.
+          const shouldReopenLast = get().reopenLastProjectOnStartup === true
+          const storedProject = shouldReopenLast
+            ? await getStoredDirectoryHandle('currentProject')
+            : null
           if (storedProject) {
             const isValid = await verifyPermission(storedProject)
             if (isValid) {
@@ -551,6 +574,19 @@ export const useProjectStore = create(
           )
           
           const assetsState = useAssetsStore.getState()
+
+          // Capture a thumbnail from the current playhead before writing
+          // the project JSON so the pointer lands in the same save. If
+          // capture fails (empty timeline, playhead over a gap, etc.) we
+          // keep whatever pointer we already had.
+          let thumbnailPointer = state.currentProject?.thumbnail || null
+          try {
+            const nextThumb = await captureAndSaveProjectThumbnail(state.currentProjectHandle)
+            if (nextThumb) thumbnailPointer = nextThumb
+          } catch (_) {
+            // Non-fatal; keep existing thumbnail pointer.
+          }
+
           const updatedProject = {
             ...state.currentProject,
             ...updates,
@@ -559,6 +595,7 @@ export const useProjectStore = create(
             assets: assetsData,
             folders: assetsState.folders || [],
             folderCounter: assetsState.folderCounter ?? 1,
+            thumbnail: thumbnailPointer,
             modified: new Date().toISOString(),
           }
           
@@ -573,7 +610,7 @@ export const useProjectStore = create(
           set((state) => ({
             recentProjects: state.recentProjects.map(p => 
               p.name === updatedProject.name 
-                ? { ...p, modified: updatedProject.modified }
+                ? { ...p, modified: updatedProject.modified, thumbnail: thumbnailPointer }
                 : p
             ),
           }))
@@ -1095,6 +1132,30 @@ export const useProjectStore = create(
       },
 
       /**
+       * Toggle whether ComfyStudio should reopen the last project on
+       * startup (true) or show the project picker (false, default).
+       */
+      setReopenLastProjectOnStartup: (enabled) => {
+        set({ reopenLastProjectOnStartup: Boolean(enabled) })
+      },
+
+      /**
+       * Toggle the cinematic hero background on the project picker.
+       */
+      setShowHeroBackground: (enabled) => {
+        set({ showHeroBackground: Boolean(enabled) })
+      },
+
+      /**
+       * Switch the recent-projects view between grid and list. Any value
+       * other than 'list' normalizes to 'grid' so a stale persisted value
+       * can't break rendering.
+       */
+      setProjectListViewMode: (mode) => {
+        set({ projectListViewMode: mode === 'list' ? 'list' : 'grid' })
+      },
+
+      /**
        * Set default project settings (for new projects)
        */
       setDefaultProjectSettings: (resolution, fps) => {
@@ -1119,6 +1180,9 @@ export const useProjectStore = create(
         defaultFps: state.defaultFps,
         autoSaveEnabled: state.autoSaveEnabled,
         autoSaveInterval: state.autoSaveInterval,
+        reopenLastProjectOnStartup: state.reopenLastProjectOnStartup,
+        showHeroBackground: state.showHeroBackground,
+        projectListViewMode: state.projectListViewMode,
         // Note: Handles/paths are stored separately (IndexedDB for web, settings for Electron)
       }),
     }

@@ -20,6 +20,11 @@ const LOCAL_KEY = 'comfystudio-comfy-api-key'
 // keys in one click. Keeping this centralised makes future updates trivial.
 export const COMFY_PARTNER_DASHBOARD_URL = 'https://platform.comfy.org/'
 
+// Deep link to the credits / profile page. Users can view their live balance
+// and top up from here. Kept centralised so we only update one place if
+// Comfy.org reorganises their dashboard.
+export const COMFY_PARTNER_CREDITS_URL = 'https://platform.comfy.org/profile'
+
 // Workflows that depend on the partner API key. Kept in sync with the
 // starter pack workflows. We use this list to compose the human-readable
 // "unlocks" message shown in the dialog.
@@ -37,6 +42,18 @@ export const COMFY_PARTNER_WORKFLOWS = Object.freeze([
  *   window.addEventListener(COMFY_PARTNER_KEY_CHANGED_EVENT, handler)
  */
 export const COMFY_PARTNER_KEY_CHANGED_EVENT = 'comfystudio-partner-key-changed'
+
+/**
+ * Event dispatched whenever a queue submission fails because the account is
+ * out of (or very low on) partner credits. UI chips listen for this and flip
+ * into an "out of credits" state so the failure is always recoverable.
+ *
+ *   window.addEventListener(COMFY_PARTNER_CREDITS_LOW_EVENT, (e) => { ... })
+ *
+ * The detail payload looks like:
+ *   { reason: 'insufficient-credits', status: 402, message: '...' }
+ */
+export const COMFY_PARTNER_CREDITS_LOW_EVENT = 'comfystudio-partner-credits-low'
 
 export async function getComfyPartnerApiKey() {
   try {
@@ -166,15 +183,28 @@ export async function validateComfyPartnerApiKey(rawKey, { signal } = {}) {
 }
 
 export async function openComfyPartnerDashboard() {
-  const url = COMFY_PARTNER_DASHBOARD_URL
+  return openExternalSafe(COMFY_PARTNER_DASHBOARD_URL)
+}
+
+/**
+ * Open the Comfy.org credits / profile page in the user's default browser.
+ * Used by the Credits chip — click anywhere on it and the user lands on the
+ * page that actually shows their live balance, since the number isn't (yet)
+ * exposed to third-party apps.
+ */
+export async function openComfyPartnerCreditsPage() {
+  return openExternalSafe(COMFY_PARTNER_CREDITS_URL)
+}
+
+// Shared launcher that prefers the Electron main-process bridge (so the OS
+// default browser is used) and falls back to window.open for web/dev.
+async function openExternalSafe(url) {
   try {
     if (typeof window !== 'undefined' && window?.electronAPI?.openExternalUrl) {
       const result = await window.electronAPI.openExternalUrl(url)
       if (result?.success) return { success: true }
     }
-  } catch (_) {
-    // fall through to window.open
-  }
+  } catch (_) { /* fall through */ }
   try {
     if (typeof window !== 'undefined' && typeof window.open === 'function') {
       window.open(url, '_blank', 'noopener,noreferrer')
@@ -182,4 +212,59 @@ export async function openComfyPartnerDashboard() {
     }
   } catch (_) { /* ignore */ }
   return { success: false }
+}
+
+/**
+ * Heuristic check: does this error indicate the user's Comfy partner credits
+ * are exhausted? We inspect both the HTTP status (if present on the error)
+ * and the message text, since different code paths surface this differently.
+ *
+ * Accepts anything error-like — an Error, a fetch Response, a string, or an
+ * object with a `.status` / `.message` / `.error` field.
+ */
+export function isInsufficientCreditsError(errorLike) {
+  if (!errorLike) return false
+  // Numeric HTTP status directly.
+  const status = Number(errorLike?.status ?? errorLike?.statusCode ?? NaN)
+  if (status === 402) return true
+
+  // Pull every string-ish field we might find and check it case-insensitively.
+  const candidates = [
+    errorLike?.message,
+    errorLike?.error?.message,
+    errorLike?.error,
+    errorLike?.details,
+    typeof errorLike === 'string' ? errorLike : '',
+  ]
+    .filter((v) => typeof v === 'string' && v.length > 0)
+    .map((s) => s.toLowerCase())
+
+  if (candidates.length === 0) return false
+  return candidates.some((text) =>
+    text.includes('insufficientfundserror') ||
+    text.includes('insufficient funds') ||
+    text.includes('insufficient credits') ||
+    text.includes('out of credits') ||
+    text.includes('payment required') ||
+    (text.includes('credit') && text.includes('balance') && text.includes('low'))
+  )
+}
+
+/**
+ * Dispatch the "credits low" event so any mounted chip can react in one
+ * place. Safe to call from any surface (queue submission, workflow runner,
+ * background watcher).
+ */
+export function notifyComfyPartnerCreditsLow(detail = {}) {
+  try {
+    if (typeof window !== 'undefined' && typeof window.dispatchEvent === 'function') {
+      window.dispatchEvent(new CustomEvent(COMFY_PARTNER_CREDITS_LOW_EVENT, {
+        detail: {
+          reason: 'insufficient-credits',
+          at: Date.now(),
+          ...detail,
+        },
+      }))
+    }
+  } catch (_) { /* non-browser contexts */ }
 }

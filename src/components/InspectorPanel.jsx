@@ -1532,6 +1532,20 @@ function InspectorPanel({ isExpanded, onToggleExpanded }) {
       return
     }
 
+    // Stale-lock recovery: if our local `isRendering` is false (we think
+    // nothing's running for this clip from this component) but the render
+    // service still believes the clip is mid-render, that entry is orphaned
+    // — almost certainly from a prior hang, an HMR reset, or a panel unmount
+    // while a render was in flight. Clear it so the call below doesn't bail
+    // with "Clip is already being rendered" and leave the user stuck with no
+    // way to retry from the UI.
+    if (renderCacheService.isRendering(selectedClip.id)) {
+      const cleared = renderCacheService.forceClearRender(selectedClip.id)
+      if (cleared) {
+        console.warn('Cleared stale render lock for clip', selectedClip.id)
+      }
+    }
+
     setIsRendering(true)
     setCacheStatus(selectedClip.id, 'rendering', 0)
     setRenderProgress({ status: 'starting', progress: 0 })

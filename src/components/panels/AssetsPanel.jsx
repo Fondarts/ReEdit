@@ -5,12 +5,11 @@ import useProjectStore from '../../stores/projectStore'
 import useTimelineStore from '../../stores/timelineStore'
 import { importAsset, isElectron, writeGeneratedOverlayToProject } from '../../services/fileSystem'
 import { enqueuePlaybackTranscode } from '../../services/playbackCache'
+import { unstitchSequenceAsset } from '../../services/comfyAutoImport'
 import MaskGenerationDialog from '../MaskGenerationDialog'
 import OverlayGeneratorModal from '../OverlayGeneratorModal'
 import ConfirmDialog from '../ConfirmDialog'
 import NewTimelineDialog from '../NewTimelineDialog'
-import CaptionWorkspace from '../CaptionWorkspace'
-
 // Thumbnail size presets (xs = extra small for denser grid)
 const THUMBNAIL_SIZES = {
   xs: { cols: 5, iconSize: 'w-3 h-3', playSize: 'w-3 h-3', badgeSize: 'text-[5px]', nameSize: 'text-[8px]', infoSize: 'text-[7px]' },
@@ -65,7 +64,6 @@ function AssetsPanel() {
   const [overlayModalOpen, setOverlayModalOpen] = useState(false)
   const [overlayModalInitialType, setOverlayModalInitialType] = useState('letterbox')
   const [overlayModalFolderId, setOverlayModalFolderId] = useState(null) // when opened from folder context menu
-  const [captionWorkspaceAsset, setCaptionWorkspaceAsset] = useState(null)
   const [confirmDialog, setConfirmDialog] = useState(null) // { title, message, confirmLabel, cancelLabel, tone }
   const [showNewTimelineDialog, setShowNewTimelineDialog] = useState(false)
   const confirmResolverRef = useRef(null)
@@ -487,56 +485,6 @@ function AssetsPanel() {
     return asset.type === 'video' && asset.duration > 0.5
   }
 
-  const canGenerateCaptions = useCallback((asset) => {
-    return asset?.type === 'video' && asset?.hasAudio !== false
-  }, [])
-
-  const handleOpenCaptionWorkspace = useCallback((assetId) => {
-    const asset = assets.find((entry) => entry.id === assetId)
-    if (!asset || !canGenerateCaptions(asset)) return
-    setCaptionWorkspaceAsset(asset)
-    setContextMenu(null)
-  }, [assets, canGenerateCaptions])
-
-  const handlePlaceCaptionAssetOnTimeline = useCallback(async (captionAsset, sourceAsset) => {
-    if (!captionAsset) return
-
-    const timelineState = useTimelineStore.getState()
-    const {
-      tracks,
-      clips,
-      timelineFps,
-      playheadPosition,
-      addClip,
-      addTrack,
-    } = timelineState
-
-    const videoTracks = tracks.filter((track) => track.type === 'video')
-    const sourceClip = clips
-      .filter((clip) => clip.assetId === sourceAsset?.id && videoTracks.some((track) => track.id === clip.trackId))
-      .sort((a, b) => a.startTime - b.startTime)[0] || null
-
-    let targetTrack = null
-    if (sourceClip) {
-      const sourceTrackIndex = tracks.findIndex((track) => track.id === sourceClip.trackId)
-      targetTrack = tracks
-        .slice(0, sourceTrackIndex)
-        .find((track) => track.type === 'video') || addTrack('video')
-    } else {
-      targetTrack = videoTracks[0] || addTrack('video')
-    }
-
-    const startTime = sourceClip ? sourceClip.startTime : playheadPosition
-    const duration = sourceClip
-      ? sourceClip.duration
-      : (captionAsset.duration || captionAsset.settings?.duration || sourceAsset?.duration || sourceAsset?.settings?.duration || 3)
-
-    addClip(targetTrack.id, captionAsset, startTime, timelineFps, {
-      duration,
-      trimStart: 0,
-      trimEnd: duration,
-    })
-  }, [])
   
   // Handle generating thumbnail sprite
   const handleGenerateThumbnails = async (assetId) => {
@@ -859,6 +807,20 @@ function AssetsPanel() {
       removeAudioClipsForAsset(assetId)
     }
     setContextMenu(null)
+  }
+
+  const handleUnstitchSequence = async (assetId) => {
+    const asset = assets.find(a => a.id === assetId)
+    setContextMenu(null)
+    if (!asset?.sequenceSource) return
+    try {
+      const result = await unstitchSequenceAsset(asset)
+      if (!result?.success) {
+        console.warn('[AssetsPanel] unstitch failed:', result?.error)
+      }
+    } catch (err) {
+      console.error('[AssetsPanel] unstitch threw:', err)
+    }
   }
   
   // Create new folder
@@ -1648,7 +1610,17 @@ function AssetsPanel() {
                     }`}>
                       {asset.type === 'mask' ? 'MASK' : asset.isImported ? 'IMP' : 'AI'}
                     </div>
-                    
+
+                    {/* Stitched-sequence badge - only for ComfyUI auto-imported frame sequences */}
+                    {asset.sequenceSource?.kind === 'comfy-stitched' && (
+                      <div
+                        className={`absolute top-0.5 right-0.5 px-1 py-0.5 rounded ${sizeConfig.badgeSize} text-white font-medium bg-sf-accent/80`}
+                        title={`Stitched from ${asset.sequenceSource.frameCount} frames at ${asset.sequenceSource.fps} fps (right-click to unstitch)`}
+                      >
+                        SEQ · {asset.sequenceSource.frameCount}
+                      </div>
+                    )}
+
                     {/* Sprite badge - shows if thumbnails are ready */}
                     {asset.type === 'video' && asset.sprite?.url && (
                       <div className={`absolute bottom-0.5 left-0.5 px-1 py-0.5 rounded ${sizeConfig.badgeSize} text-white font-medium bg-sf-blue/90`} title="Thumbnails ready for fast scrubbing">
@@ -2038,13 +2010,13 @@ function AssetsPanel() {
             const asset = assets.find(a => a.id === contextMenu.assetId)
             const showMask = asset && canGenerateMask(asset)
             const showThumbnails = asset && canGenerateThumbnails(asset)
-            const showCaptions = asset && canGenerateCaptions(asset)
             const hasSprite = asset?.sprite?.url
             const isGenerating = asset?.spriteGenerating
             const showAudioToggle = asset?.type === 'video' && asset?.hasAudio !== false
             const isAudioDisabled = asset?.audioEnabled === false
-            
-            if (!showMask && !showThumbnails && !showAudioToggle && !showCaptions) return null
+            const isStitchedSequence = asset?.sequenceSource?.kind === 'comfy-stitched'
+
+            if (!showMask && !showThumbnails && !showAudioToggle && !isStitchedSequence) return null
             
             return (
               <>
@@ -2079,16 +2051,10 @@ function AssetsPanel() {
                   </button>
                 )}
 
-                {showCaptions && (
-                  <button
-                    onClick={() => handleOpenCaptionWorkspace(contextMenu.assetId)}
-                    className="w-full px-3 py-1.5 text-left text-xs text-sf-text-primary hover:bg-sf-dark-700 flex items-center gap-2"
-                  >
-                    <Type className="w-3 h-3 text-sf-accent" />
-                    Add Captions...
-                  </button>
-                )}
-                
+                {/* Per-asset captions have moved to the timeline toolbar —
+                    transcription runs on the edited program audio so cues
+                    always line up with what the viewer will hear. */}
+
                 {/* Create Mask option */}
                 {showMask && (
                   <button
@@ -2099,7 +2065,19 @@ function AssetsPanel() {
                     Create Mask...
                   </button>
                 )}
-                
+
+                {/* Unstitch a ComfyUI-stitched frame sequence back into individual images */}
+                {isStitchedSequence && (
+                  <button
+                    onClick={() => handleUnstitchSequence(contextMenu.assetId)}
+                    className="w-full px-3 py-1.5 text-left text-xs text-sf-text-primary hover:bg-sf-dark-700 flex items-center gap-2"
+                    title={`Stitched from ${asset?.sequenceSource?.frameCount || '?'} frames at ${asset?.sequenceSource?.fps || '?'}fps`}
+                  >
+                    <Film className="w-3 h-3 text-sf-accent" />
+                    Unstitch to individual frames
+                  </button>
+                )}
+
                 <div className="border-t border-sf-dark-600 my-1" />
               </>
             )
@@ -2219,23 +2197,6 @@ function AssetsPanel() {
         availableTypes={['letterbox', 'color']}
       />
 
-      <CaptionWorkspace
-        isOpen={Boolean(captionWorkspaceAsset)}
-        asset={captionWorkspaceAsset}
-        currentProjectHandle={currentProjectHandle}
-        timelineSize={getCurrentTimelineSettings() ? {
-          width: getCurrentTimelineSettings().width,
-          height: getCurrentTimelineSettings().height,
-          fps: getCurrentTimelineSettings().fps,
-        } : { width: 1920, height: 1080, fps: 24 }}
-        folders={folders}
-        addFolder={addFolder}
-        addAsset={addAsset}
-        updateAsset={updateAsset}
-        onPlaceOnTimeline={handlePlaceCaptionAssetOnTimeline}
-        onClose={() => setCaptionWorkspaceAsset(null)}
-      />
-      
       {/* Footer with asset count */}
       <div className="px-2 py-1.5 border-t border-sf-dark-700 flex items-center justify-between">
         <span className="text-[10px] text-sf-text-muted">

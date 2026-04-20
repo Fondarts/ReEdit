@@ -227,3 +227,55 @@ input[type="number"] {
 .no-drag {
   -webkit-app-region: no-drag;
 }
+
+/* =============================================
+   Welcome screen hero — subtle Ken Burns drift.
+   Very small scale + translation over 40s so the
+   image always feels alive without distracting
+   from the project grid below. Disabled for users
+   who prefer reduced motion.
+   ============================================= */
+@keyframes hero-ken-burns {
+  0% {
+    transform: scale(1.01) translate3d(-0.3%, -0.2%, 0);
+  }
+  50% {
+    transform: scale(1.03) translate3d(0.3%, 0.15%, 0);
+  }
+  100% {
+    transform: scale(1.01) translate3d(-0.3%, -0.2%, 0);
+  }
+}
+
+.animate-hero-ken-burns {
+  animation: hero-ken-burns 40s ease-in-out infinite;
+  will-change: transform;
+  transform-origin: center center;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .animate-hero-ken-burns {
+    animation: none;
+  }
+}
+
+/* =============================================
+   Animated hero video: hide the static fallback image
+   by default. When the user prefers reduced motion we
+   hide the <video> and reveal the static image instead,
+   so the hero still renders — just without the loop.
+   ============================================= */
+.hero-reduced-motion-fallback {
+  display: none;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .hero-reduced-motion-fallback {
+    display: block;
+  }
+  /* `video:not(.hero-reduced-motion-fallback)` targets the looping hero
+     video so it hides without affecting other videos elsewhere in the app. */
+  .welcome-hero video {
+    display: none;
+  }
+}

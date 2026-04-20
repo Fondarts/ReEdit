@@ -293,7 +293,7 @@ const getFadeOverlayOpacity = (transitionInfo) => {
   return null
 }
 
-const getBaseDrawRect = (assetWidth, assetHeight, canvasWidth, canvasHeight) => {
+export const getBaseDrawRect = (assetWidth, assetHeight, canvasWidth, canvasHeight) => {
   if (!assetWidth || !assetHeight) {
     return {
       width: canvasWidth,
@@ -310,7 +310,7 @@ const getBaseDrawRect = (assetWidth, assetHeight, canvasWidth, canvasHeight) => 
   return { width, height, x, y }
 }
 
-const applyClipTransform = (ctx, rect, transform, transitionStyle) => {
+export const applyClipTransform = (ctx, rect, transform, transitionStyle) => {
   const {
     positionX = 0,
     positionY = 0,
@@ -338,7 +338,7 @@ const applyClipTransform = (ctx, rect, transform, transitionStyle) => {
   ctx.translate(-anchorPxX, -anchorPxY)
 }
 
-const applyClipCrop = (ctx, rect, transform) => {
+export const applyClipCrop = (ctx, rect, transform) => {
   const cropTop = transform?.cropTop || 0
   const cropBottom = transform?.cropBottom || 0
   const cropLeft = transform?.cropLeft || 0
@@ -367,7 +367,7 @@ const applyTransitionClip = (ctx, rect, transitionStyle) => {
   ctx.clip()
 }
 
-const drawText = (ctx, rect, clip) => {
+export const drawText = (ctx, rect, clip) => {
   const textProps = clip.textProperties || {}
   const lines = String(textProps.text || '').split('\n')
   const fontSize = textProps.fontSize || 48
@@ -458,7 +458,7 @@ const getMaskFrameInfo = (clip, maskAsset, time) => {
   return maskAsset.url
 }
 
-const audioBufferToWav = (buffer) => {
+export const audioBufferToWav = (buffer) => {
   const numChannels = buffer.numberOfChannels
   const sampleRate = buffer.sampleRate
   const numFrames = buffer.length

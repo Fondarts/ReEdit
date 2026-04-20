@@ -31,6 +31,8 @@ import {
   pickComfyLauncherScript,
   detectComfyLauncherCandidates,
   updateComfyLauncherConfig,
+  describeComfyLauncherPortOwner,
+  connectComfyLauncherExternal,
 } from '../services/comfyLauncher'
 
 const STATE_STYLES = {
@@ -77,7 +79,15 @@ function ComfyLauncherChip() {
   const [candidates, setCandidates] = useState([])
   const [error, setError] = useState('')
   const [logViewerOpen, setLogViewerOpen] = useState(false)
+  const [portOwner, setPortOwner] = useState(null) // { pid, name, port } | null
+  // Which edge of the trigger button the popover anchors to. 'right' means the
+  // popover extends leftward (good when the chip lives on the right side of a
+  // header); 'left' means it extends rightward (needed when the chip lives
+  // near the left edge of the viewport so the popover doesn't clip off-screen).
+  // We recompute this at open time based on the trigger's bounding rect.
+  const [popoverAnchor, setPopoverAnchor] = useState('right')
   const popoverRef = useRef(null)
+  const triggerRef = useRef(null)
   const logTailRef = useRef(null)
 
   useEffect(() => {
@@ -112,6 +122,23 @@ function ComfyLauncherChip() {
     }
   }, [open])
 
+  // If the launcher has latched a port-in-use error, look up who's holding
+  // the port so the user knows what to do about it. We only run this when
+  // the popover is open to avoid surprising the user with shelling out to
+  // netstat / lsof in the background.
+  useEffect(() => {
+    if (!open) return
+    if (state.error !== 'port-in-use') {
+      setPortOwner(null)
+      return
+    }
+    let cancelled = false
+    describeComfyLauncherPortOwner()
+      .then((info) => { if (!cancelled) setPortOwner(info) })
+      .catch(() => {})
+    return () => { cancelled = true }
+  }, [open, state.error, state.httpBase])
+
   // Auto-scroll log tail when new lines arrive.
   useEffect(() => {
     if (!open) return
@@ -121,6 +148,23 @@ function ComfyLauncherChip() {
   }, [logs, open])
 
   usePopoverClickAway(popoverRef, () => setOpen(false), open)
+
+  // Recompute which edge to anchor to every time the popover opens. If the
+  // trigger sits close to the left edge of the window (common on the project
+  // picker where the chip is clustered with the app title), the default
+  // right-anchored popover would extend off-screen — so we flip to left.
+  // The popover is ~380px wide; we leave 16px of breathing room.
+  useEffect(() => {
+    if (!open) return
+    const POPOVER_WIDTH = 396
+    const trigger = triggerRef.current
+    if (!trigger || typeof window === 'undefined') return
+    const rect = trigger.getBoundingClientRect()
+    // Right-anchored popover extends from `rect.right - POPOVER_WIDTH` leftward.
+    // If that goes past the viewport edge, flip to left-anchored.
+    const wouldClipOnLeft = rect.right - POPOVER_WIDTH < 8
+    setPopoverAnchor(wouldClipOnLeft ? 'left' : 'right')
+  }, [open])
 
   const stateStyle = STATE_STYLES[state.state] || STATE_STYLES.unknown
 
@@ -187,6 +231,7 @@ function ComfyLauncherChip() {
   return (
     <div className="relative no-drag" ref={popoverRef}>
       <button
+        ref={triggerRef}
         type="button"
         onClick={() => setOpen((v) => !v)}
         title={summary}
@@ -198,7 +243,7 @@ function ComfyLauncherChip() {
       </button>
 
       {open && (
-        <div className="absolute right-0 top-[110%] z-50 w-[380px] bg-sf-dark-900 border border-sf-dark-700 rounded-lg shadow-2xl overflow-hidden">
+        <div className={`absolute ${popoverAnchor === 'left' ? 'left-0' : 'right-0'} top-[110%] z-50 w-[380px] bg-sf-dark-900 border border-sf-dark-700 rounded-lg shadow-2xl overflow-hidden`}>
           <div className="px-3.5 py-3 border-b border-sf-dark-700 flex items-start gap-2">
             <div className="flex-1 min-w-0">
               <div className="flex items-center gap-2">
@@ -252,8 +297,20 @@ function ComfyLauncherChip() {
             {state.state === 'external' && (
               <div className="flex items-start gap-2 rounded-md bg-sky-500/10 border border-sky-500/30 px-2.5 py-2 text-[11px] text-sky-200">
                 <ExternalLink className="w-3.5 h-3.5 flex-shrink-0 mt-0.5" />
-                <div>
-                  ComfyUI is already running — but ComfyStudio didn't start it. Use the window you started it from to stop or restart it, or close that process and hit Start to let ComfyStudio manage it.
+                <div className="flex-1">
+                  <div>
+                    ComfyUI is already running but ComfyStudio can't identify its process, so Stop and Restart are disabled. This usually means netstat/lsof isn't available. Try "Take control" to retry, or stop it from the window you started it from.
+                  </div>
+                  <div className="mt-1.5">
+                    <button
+                      type="button"
+                      onClick={() => wrap(connectComfyLauncherExternal)}
+                      disabled={busy}
+                      className="px-2 py-1 rounded bg-sky-500/20 hover:bg-sky-500/30 border border-sky-500/40 text-sky-50 text-[10.5px] font-semibold disabled:opacity-50"
+                    >
+                      Take control
+                    </button>
+                  </div>
                 </div>
               </div>
             )}
@@ -261,6 +318,49 @@ function ComfyLauncherChip() {
               <div className="flex items-start gap-2 rounded-md bg-red-500/10 border border-red-500/30 px-2.5 py-2 text-[11px] text-red-200">
                 <AlertTriangle className="w-3.5 h-3.5 flex-shrink-0 mt-0.5" />
                 <div className="flex-1 break-words">{error}</div>
+              </div>
+            )}
+            {state.error === 'port-in-use' && (
+              <div className="rounded-md bg-amber-500/10 border border-amber-500/30 px-2.5 py-2 text-[11px] text-amber-100">
+                <div className="flex items-start gap-2">
+                  <AlertTriangle className="w-3.5 h-3.5 flex-shrink-0 mt-0.5 text-amber-300" />
+                  <div className="flex-1">
+                    <div className="font-semibold">
+                      Port {portOwner?.port || 8188} is already in use.
+                    </div>
+                    <div className="mt-0.5 text-amber-100/90 leading-snug">
+                      {portOwner?.pid
+                        ? <>Held by <span className="font-mono">{portOwner.name || 'pid'} (pid {portOwner.pid})</span>. {portOwner.name && /python|comfy/i.test(portOwner.name) ? 'That looks like ComfyUI already running.' : 'ComfyStudio will not be able to start ComfyUI until that process releases the port.'}</>
+                        : 'Another process is bound to this port. ComfyStudio will not be able to start ComfyUI until that process releases the port.'}
+                    </div>
+                    <div className="mt-2 flex flex-wrap gap-1.5">
+                      <button
+                        type="button"
+                        onClick={() => wrap(connectComfyLauncherExternal)}
+                        disabled={busy}
+                        className="px-2 py-1 rounded bg-amber-500/20 hover:bg-amber-500/30 border border-amber-500/40 text-amber-50 text-[10.5px] font-semibold disabled:opacity-50"
+                      >
+                        Connect as external
+                      </button>
+                      <button
+                        type="button"
+                        onClick={handleStart}
+                        disabled={busy || !canStart}
+                        className="px-2 py-1 rounded bg-sf-dark-800 hover:bg-sf-dark-700 border border-sf-dark-600 text-sf-text-primary text-[10.5px] font-semibold disabled:opacity-50"
+                      >
+                        Retry start
+                      </button>
+                      <button
+                        type="button"
+                        onClick={handleRefresh}
+                        disabled={busy}
+                        className="px-2 py-1 rounded bg-sf-dark-800 hover:bg-sf-dark-700 border border-sf-dark-600 text-sf-text-primary text-[10.5px] font-semibold disabled:opacity-50"
+                      >
+                        Re-probe
+                      </button>
+                    </div>
+                  </div>
+                </div>
               </div>
             )}
           </div>

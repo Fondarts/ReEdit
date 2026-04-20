@@ -1,6 +1,7 @@
 import { comfyui } from './comfyui'
 import { getBundledWorkflowPath } from '../config/workflowRegistry'
 import { isElectron } from './fileSystem'
+import { mixTimelineAudioToWav } from './timelineAudioMix'
 
 const CAPTION_WORKFLOW_PATH = getBundledWorkflowPath('caption_qwen_asr_transcription.json')
 const VIDEO_INPUT_NODE_ID = '18'
@@ -107,11 +108,75 @@ async function loadCaptionWorkflow() {
   return await response.json()
 }
 
-function buildCaptionWorkflow(baseWorkflow, uploadedVideoFilename) {
-  const workflow = JSON.parse(JSON.stringify(baseWorkflow))
+const AUDIO_FILE_EXTS = new Set(['wav', 'mp3', 'flac', 'ogg', 'm4a', 'aac', 'opus'])
 
-  if (workflow[VIDEO_INPUT_NODE_ID]) {
-    workflow[VIDEO_INPUT_NODE_ID].inputs.video = uploadedVideoFilename
+function isAudioFilename(name) {
+  if (!name) return false
+  const lower = String(name).toLowerCase()
+  const dot = lower.lastIndexOf('.')
+  if (dot < 0) return false
+  return AUDIO_FILE_EXTS.has(lower.slice(dot + 1))
+}
+
+function buildCaptionWorkflow(baseWorkflow, uploadedFilename) {
+  const workflow = JSON.parse(JSON.stringify(baseWorkflow))
+  const loadNode = workflow[VIDEO_INPUT_NODE_ID]
+  if (!loadNode) return workflow
+  if (!loadNode.inputs || typeof loadNode.inputs !== 'object') loadNode.inputs = {}
+
+  const classType = String(loadNode.class_type || '')
+  const nodeIsAudioLoader = /audio/i.test(classType) // e.g. VHS_LoadAudioUpload
+  const fileIsAudio = isAudioFilename(uploadedFilename)
+
+  if (fileIsAudio && !nodeIsAudioLoader) {
+    // Workflow ships with VHS_LoadVideo (uses OpenCV under the hood) but we're
+    // handing it a WAV — cv2 can't decode that, which triggers the
+    // "could not be loaded with cv" error. Swap the loader to VHS_LoadAudioUpload.
+    loadNode.class_type = 'VHS_LoadAudioUpload'
+    loadNode.inputs = {
+      audio: uploadedFilename,
+      start_time: 0,
+      duration: 0,
+    }
+    if (loadNode._meta) loadNode._meta.title = 'Load Audio (Upload)'
+
+    // VHS_LoadVideo's AUDIO output lives at slot 2; VHS_LoadAudioUpload exposes
+    // a single AUDIO output at slot 0. Collapse any reference to the load node
+    // to slot 0 so downstream wiring (e.g. UnifiedASRTranscribeNode.audio)
+    // still connects after the swap.
+    for (const node of Object.values(workflow)) {
+      if (!node || !node.inputs || typeof node.inputs !== 'object') continue
+      for (const key of Object.keys(node.inputs)) {
+        const ref = node.inputs[key]
+        if (Array.isArray(ref) && ref.length === 2 && String(ref[0]) === String(VIDEO_INPUT_NODE_ID)) {
+          ref[1] = 0
+        }
+      }
+    }
+  } else if (nodeIsAudioLoader) {
+    // Workflow was already switched to an audio loader manually — just fill
+    // in the uploaded filename. Leave other loader params (start_time, etc.) alone.
+    loadNode.inputs.audio = uploadedFilename
+  } else {
+    // Video loader + video file: original behaviour. We also mirror the
+    // filename onto `audio` defensively in case a user swapped the loader
+    // without code changes.
+    loadNode.inputs.video = uploadedFilename
+  }
+
+  // Force the ASR node's in-process cache OFF. On Windows the cache-hit code
+  // path does `print("💾 CACHE HIT: …")` with a non-BMP emoji, which travels
+  // through wandb → colorama → comfyui-manager → ComfyUI's LogInterceptor and
+  // eventually hits WriteFile on a pipe handle, where Windows rejects it with
+  // OSError [Errno 22] Invalid argument. That crash masquerades as a
+  // transcription failure on the second-and-later runs of the same timeline.
+  // Disabling the cache avoids the emoji print entirely; the ASR pass is
+  // still plenty fast (we only run it on demand).
+  for (const node of Object.values(workflow)) {
+    if (!node || typeof node !== 'object') continue
+    if (String(node.class_type || '') !== 'UnifiedASRTranscribeNode') continue
+    if (!node.inputs || typeof node.inputs !== 'object') node.inputs = {}
+    node.inputs.enable_asr_cache = false
   }
 
   return workflow
@@ -190,6 +255,85 @@ async function uploadVideoToComfy(asset) {
   return uploadResult.name || safeName
 }
 
+// Uploads an in-memory blob (typically a pre-mixed WAV for the timeline
+// transcription path) to ComfyUI's upload endpoint.
+async function uploadBlobToComfy(blob, filename) {
+  if (!blob) throw new Error('No audio blob to upload.')
+  const safeName = String(filename || `timeline_audio_${Date.now()}.wav`)
+    .replace(/[^a-zA-Z0-9_\-.\s]/g, '_')
+  const file = new File([blob], safeName, { type: blob.type || 'audio/wav' })
+  const uploadResult = await comfyui.uploadFile(file, safeName)
+  return uploadResult.name || safeName
+}
+
+// Turn a ComfyUI history entry with status_str === 'error' into a multi-line
+// string the UI can render. Line 1 is the concise headline (always visible);
+// lines 2+ are the full Python traceback and structured context, shown only
+// when the user clicks "Show details". This is intentionally lossless —
+// previously we truncated to 6 lines and collapsed newlines, which hid the
+// actual root cause (e.g. a huggingface_hub download failure) behind an
+// opaque generic message like "[Errno 22] Invalid argument".
+function formatComfyExecutionError(promptHistory) {
+  const messages = Array.isArray(promptHistory?.status?.messages)
+    ? promptHistory.status.messages
+    : []
+
+  // Find the first proper execution_error tuple. Earlier tuples in the list
+  // are just progress events (execution_start, execution_cached, etc.) and
+  // don't contain the failure payload.
+  const errorTuple = messages.find(
+    (m) => Array.isArray(m) && typeof m[0] === 'string' && /execution_error/i.test(m[0])
+  )
+  const interruptTuple = messages.find(
+    (m) => Array.isArray(m) && typeof m[0] === 'string' && /interrupt/i.test(m[0])
+  )
+
+  const primary = errorTuple?.[1] && typeof errorTuple[1] === 'object' ? errorTuple[1] : null
+
+  // Build the one-line headline.
+  const nodeId = primary?.node_id != null ? ` (node ${primary.node_id})` : ''
+  const nodeType = primary?.node_type ? ` [${primary.node_type}]` : ''
+  const exType = primary?.exception_type ? `${primary.exception_type}: ` : ''
+  const exMsg = primary?.exception_message
+    || primary?.error
+    || primary?.message
+    || (interruptTuple ? 'execution interrupted' : 'unknown error')
+  const headline = `ComfyUI workflow failed — ${exType}${String(exMsg).split('\n')[0].trim()}${nodeId}${nodeType}`
+
+  const detailLines = []
+
+  // Full Python traceback. ComfyUI sometimes sends this as an array of
+  // strings (one "File …" frame per entry) and sometimes as a single blob;
+  // handle both without losing newlines (the UI renders details in a <pre>,
+  // and split('\n').filter(Boolean) in the view will drop blanks on its own).
+  const tb = primary?.traceback
+  if (Array.isArray(tb) && tb.length) {
+    detailLines.push('Traceback:')
+    for (const entry of tb) {
+      const text = String(entry).replace(/\r?\n+$/, '')
+      if (!text) continue
+      // Preserve multi-line entries so indentation of the offending code
+      // line (2 spaces under File ..., line N) is visible.
+      for (const sub of text.split(/\r?\n/)) detailLines.push(sub)
+    }
+  } else if (typeof tb === 'string' && tb.trim()) {
+    detailLines.push('Traceback:')
+    for (const sub of tb.split(/\r?\n/)) detailLines.push(sub)
+  }
+
+  // Auxiliary context ComfyUI sometimes attaches — useful when the traceback
+  // alone doesn't obviously point at a specific input / upstream node.
+  if (Array.isArray(primary?.executed) && primary.executed.length) {
+    detailLines.push(`Executed nodes before failure: ${primary.executed.join(', ')}`)
+  }
+  if (primary?.current_inputs && typeof primary.current_inputs === 'object') {
+    const keys = Object.keys(primary.current_inputs)
+    if (keys.length) detailLines.push(`Failing node inputs: ${keys.join(', ')}`)
+  }
+
+  return [headline, ...detailLines].filter((l) => l != null && l !== undefined).join('\n')
+}
+
 async function pollForCompletion(promptId, onProgress) {
   for (let attempt = 0; attempt < MAX_POLL_ATTEMPTS; attempt++) {
     await new Promise((resolve) => setTimeout(resolve, POLL_INTERVAL_MS))
@@ -200,10 +344,7 @@ async function pollForCompletion(promptId, onProgress) {
 
       if (promptHistory) {
         if (promptHistory.status?.status_str === 'error') {
-          const errorMsg = promptHistory.status?.messages
-            ?.map((m) => (Array.isArray(m) ? m.join(': ') : String(m)))
-            ?.join(' | ')
-          throw new Error(`ComfyUI caption workflow failed: ${errorMsg || 'unknown error'}`)
+          throw new Error(formatComfyExecutionError(promptHistory))
         }
 
         const outputs = promptHistory.outputs
@@ -292,5 +433,69 @@ export async function transcribeWithComfyUI(asset, { onProgress } = {}) {
     cues,
     audioDuration,
     source: 'comfyui',
+  }
+}
+
+/**
+ * Transcribe the current timeline's program audio.
+ *
+ * Runs the same Qwen-ASR workflow used for per-asset captions, but against a
+ * pre-mixed WAV of the live timeline so captions align with what the viewer
+ * actually hears (respecting trims, gaps, mutes). Cue timings come back in
+ * timeline time — no offset math needed at the overlay-placement step.
+ */
+export async function transcribeTimeline({ onProgress } = {}) {
+  const report = (stage, message, progress) => {
+    if (typeof onProgress === 'function') onProgress({ stage, message, progress })
+  }
+
+  const connected = await comfyui.checkConnection()
+  if (!connected) {
+    throw new Error('ComfyUI is not connected. Start ComfyUI and try again.')
+  }
+
+  report('mix', 'Mixing timeline audio…', 2)
+  const mix = await mixTimelineAudioToWav({
+    onProgress: (status, pct) => report('mix', status, pct),
+  })
+
+  report('upload', 'Uploading timeline audio to ComfyUI…', 40)
+  const uploadedFilename = await uploadBlobToComfy(mix.blob, `timeline_${Date.now()}.wav`)
+
+  report('workflow', 'Loading caption workflow…', 48)
+  const baseWorkflow = await loadCaptionWorkflow()
+  const workflow = buildCaptionWorkflow(baseWorkflow, uploadedFilename)
+
+  report('queue', 'Queuing transcription on ComfyUI…', 52)
+  const promptId = await comfyui.queuePrompt(workflow)
+  if (!promptId) {
+    throw new Error('ComfyUI did not return a prompt ID for the caption workflow.')
+  }
+
+  report('transcribe', 'Transcribing with Qwen3-ASR…', 58)
+  const history = await pollForCompletion(promptId, onProgress)
+  const subtitleText = extractSubtitleTextFromHistory(history, promptId)
+
+  if (!subtitleText) {
+    throw new Error(
+      'ComfyUI completed the caption workflow but no subtitle text was found in the output. '
+      + 'Make sure the Subtitle (QwenASR) node is installed and working in your ComfyUI.'
+    )
+  }
+
+  const cues = parseCaptionSubtitles(subtitleText)
+  if (cues.length === 0) {
+    throw new Error('The caption workflow produced output but no timed cues could be parsed from:\n' + subtitleText.slice(0, 200))
+  }
+
+  const transcriptText = cues.map((cue) => cue.text).join(' ').replace(/\s+/g, ' ').trim()
+
+  return {
+    modelId: 'Qwen/Qwen3-ASR-0.6B',
+    transcriptText,
+    words: [],
+    cues,
+    audioDuration: mix.duration,
+    source: 'comfyui-timeline',
   }
 }

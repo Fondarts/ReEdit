@@ -97,6 +97,33 @@ class RenderCacheService {
   }
 
   /**
+   * Forcibly clear the rendering-lock for a clip without calling cancel.
+   *
+   * Why we need this: the rendering Map is the only thing standing between a
+   * user and a "Clip is already being rendered" error. Every cleanup path
+   * inside `renderClipWithEffects` clears the entry (success / error / cancel),
+   * but there are still ways for it to leak:
+   *   - The renderer hangs on `video.onseeked` for a file ComfyUI saved with
+   *     a bad duration header and the catch block never fires.
+   *   - React unmounts the InspectorPanel mid-render (user switches clips);
+   *     the promise keeps running but the local `isRendering` state is gone,
+   *     so the user has no "Cancel" button to hit.
+   *   - Vite HMR re-executes the module; the old promise still holds the
+   *     lock against the new singleton observer.
+   *
+   * In any of those cases the user sees "already being rendered" forever.
+   * Giving callers an explicit escape hatch is the cheapest fix — a stale
+   * entry for a clip that isn't really rendering anymore can just be dropped.
+   */
+  forceClearRender(clipId) {
+    if (!clipId) return false
+    if (!this.rendering.has(clipId)) return false
+    this.rendering.delete(clipId)
+    this.notifyListeners(clipId, { status: 'idle' })
+    return true
+  }
+
+  /**
    * Clear cache for a clip
    */
   clearCache(clipId) {

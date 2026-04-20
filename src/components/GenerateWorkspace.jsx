@@ -8,6 +8,7 @@ import { jsPDF } from 'jspdf'
 import ImageAnnotationModal from './ImageAnnotationModal'
 import ConfirmDialog from './ConfirmDialog'
 import ApiKeyDialog from './ApiKeyDialog'
+import CreditsChip from './CreditsChip'
 import { COMFY_PARTNER_KEY_CHANGED_EVENT } from '../services/comfyPartnerAuth'
 import useComfyUI from '../hooks/useComfyUI'
 import useAssetsStore from '../stores/assetsStore'
@@ -15,6 +16,7 @@ import useProjectStore from '../stores/projectStore'
 import { useFrameForAIStore } from '../stores/frameForAIStore'
 import { BUILTIN_WORKFLOW_PATHS } from '../config/workflowRegistry'
 import { comfyui } from '../services/comfyui'
+import { markPromptHandledByApp } from '../services/comfyPromptGuard'
 import { getProjectFileUrl, importAsset, isElectron } from '../services/fileSystem'
 import { enqueuePlaybackTranscode } from '../services/playbackCache'
 import { buildYoloPlanFromScript, flattenYoloPlanVariants } from '../utils/yoloPlanning'
@@ -1617,10 +1619,13 @@ function GenerateWorkspace({ onOpenWorkflowSetup = null }) {
         return ''
     }
   }, [workflowId])
-  const yoloSelectedVideoWorkflowSupportsCustomFps = useMemo(
-    () => yoloSelectedVideoWorkflowIds.some((id) => String(id || '').trim() === 'wan22-i2v'),
-    [yoloSelectedVideoWorkflowIds]
-  )
+  const yoloSelectedVideoWorkflowSupportsCustomFps = useMemo(() => {
+    // Local workflows that honor a user-supplied FPS in their
+    // modify*Workflow() helpers. Cloud partner-node workflows ignore
+    // it (the provider returns its own FPS) so they stay excluded.
+    const customFpsWorkflowIds = new Set(['wan22-i2v', 'ltx23-i2v'])
+    return yoloSelectedVideoWorkflowIds.some((id) => customFpsWorkflowIds.has(String(id || '').trim()))
+  }, [yoloSelectedVideoWorkflowIds])
   const yoloSelectedVideoWorkflowLabel = useMemo(
     () => yoloSelectedVideoWorkflowIds.map(getWorkflowDisplayLabel).join(' + '),
     [yoloSelectedVideoWorkflowIds]
@@ -2933,7 +2938,11 @@ function GenerateWorkspace({ onOpenWorkflowSetup = null }) {
         Math.abs(candidate - variant.durationSeconds) < Math.abs(closest - variant.durationSeconds) ? candidate : closest
       ), VIDEO_DURATION_PRESETS[0])
       const variantScopedKey = buildVideoVariantKey(variant.key)
-      const requestedFps = String(workflowId || '').trim() === 'wan22-i2v'
+      // Same set as yoloSelectedVideoWorkflowSupportsCustomFps — only
+      // workflows whose modify*Workflow helper accepts an fps input
+      // get the user's YOLO FPS setting; cloud providers ignore it.
+      const customFpsWorkflowIds = new Set(['wan22-i2v', 'ltx23-i2v'])
+      const requestedFps = customFpsWorkflowIds.has(String(workflowId || '').trim())
         ? (Number(yoloVideoFps) || 24)
         : null
       jobs.push(createQueuedJob({
@@ -3266,9 +3275,59 @@ function GenerateWorkspace({ onOpenWorkflowSetup = null }) {
 
   // Poll for result
   const pollForResult = async (promptId, wfId, onProgress, expectedOutputPrefix = '') => {
-    const maxPolls = 600 // 10 minutes at 1s interval
+    // Hard absolute cap (belt-and-suspenders). Long video workflows like
+    // WAN 2.2 14B i2v routinely take 15–45 minutes on a single 24 GB GPU,
+    // so a static 10-minute ceiling was falsely flagging healthy runs as
+    // "finished but no output detected". Fall back to idle-activity
+    // detection instead of a fixed wall clock.
+    const MAX_TOTAL_MS = 4 * 60 * 60 * 1000 // 4 hours absolute ceiling
+    const IDLE_TIMEOUT_MS = 10 * 60 * 1000 // bail if no WS activity for 10 min
+    const POLL_INTERVAL_MS = 1000
     let consecutivePollErrors = 0
     const maxConsecutivePollErrors = 15
+
+    // Track websocket activity for this specific promptId so we can tell
+    // a long-running generation apart from a dead/stalled one.
+    const startedAt = Date.now()
+    let lastActivityAt = startedAt
+    let wsReportedSuccess = false
+    let wsReportedComplete = false // executing=null fires on both success and error
+    const matchesPrompt = (pid) => !pid || !promptId || String(pid) === String(promptId)
+    const bumpActivity = (evt) => {
+      if (!evt) return
+      if (matchesPrompt(evt.promptId)) lastActivityAt = Date.now()
+    }
+    const onExecutionSuccess = (evt) => {
+      if (matchesPrompt(evt?.promptId)) {
+        wsReportedSuccess = true
+        lastActivityAt = Date.now()
+      }
+    }
+    const onExecutingComplete = (evt) => {
+      if (matchesPrompt(evt?.promptId)) {
+        wsReportedComplete = true
+        lastActivityAt = Date.now()
+      }
+    }
+    const wsSubs = [
+      ['progress', bumpActivity],
+      ['executing', bumpActivity],
+      ['executed', bumpActivity],
+      ['execution_start', bumpActivity],
+      ['execution_cached', bumpActivity],
+      ['execution_success', onExecutionSuccess],
+      ['execution_error', bumpActivity],
+      ['execution_interrupted', bumpActivity],
+      ['complete', onExecutingComplete],
+    ]
+    for (const [evt, fn] of wsSubs) {
+      try { comfyui.on(evt, fn) } catch (_) { /* ignore */ }
+    }
+    const detachWsListeners = () => {
+      for (const [evt, fn] of wsSubs) {
+        try { comfyui.off(evt, fn) } catch (_) { /* ignore */ }
+      }
+    }
 
     // Helper: extract filename from various ComfyUI API formats (old dict-based and new SavedResult)
     const getFilename = (item) => item?.filename || item?.file || item?.name
@@ -3318,15 +3377,143 @@ function GenerateWorkspace({ onOpenWorkflowSetup = null }) {
       return candidates[0]
     }
 
-    for (let i = 0; i < maxPolls; i++) {
-      await new Promise(r => setTimeout(r, 1000))
-      onProgress(Math.min(90, (i / maxPolls) * 90))
+    // Prefix-agnostic scan. Used as a last-resort fallback when the strict
+    // prefix-bound scan comes up empty but ComfyUI reported the prompt as
+    // completed. The history response is already scoped to this promptId
+    // (`/history/<id>`), so any output file we see here is guaranteed to
+    // belong to *this* generation — the prefix match only existed as a
+    // belt-and-suspenders extra check. When ComfyUI sanitizes or truncates
+    // the filename (long job IDs, odd characters, custom nodes that mangle
+    // the prefix) the strict scan silently drops a valid result; this
+    // fallback recovers it.
+    const scanOutputsAnyPrefix = (outputsMap, { preferVideo = false } = {}) => {
+      if (!outputsMap || typeof outputsMap !== 'object') return null
+      const collected = [] // { kind, filename, subfolder, outputType, nodeId, key }
+      for (const nodeId of Object.keys(outputsMap)) {
+        const nodeOut = outputsMap[nodeId]
+        if (!nodeOut || typeof nodeOut !== 'object') continue
+        for (const key of Object.keys(nodeOut)) {
+          const val = nodeOut[key]
+          if (!Array.isArray(val) || val.length === 0) continue
+          for (const item of val) {
+            const info = extractFromItem(item)
+            if (!info || isInputOutputType(info)) continue
+            let kind = null
+            if (isVideoFilename(info.filename)) kind = 'video'
+            else if (isAudioFilename(info.filename)) kind = 'audio'
+            else if (isImageFilename(info.filename)) kind = 'image'
+            if (!kind) continue
+            collected.push({ kind, nodeId, key, ...info })
+          }
+        }
+      }
+      if (collected.length === 0) return null
+      collected.sort((a, b) => {
+        if (preferVideo) {
+          const av = a.kind === 'video' ? 1 : 0
+          const bv = b.kind === 'video' ? 1 : 0
+          if (av !== bv) return bv - av
+        }
+        return scoreOutput(b) - scoreOutput(a)
+      })
+      const picked = collected[0]
+      if (picked.kind === 'video') {
+        return { type: 'video', filename: picked.filename, subfolder: picked.subfolder, outputType: picked.outputType }
+      }
+      if (picked.kind === 'audio') {
+        return { type: 'audio', filename: picked.filename, subfolder: picked.subfolder, outputType: picked.outputType }
+      }
+      const imageItems = collected
+        .filter((c) => c.kind === 'image')
+        .map((c) => ({ type: 'image', filename: c.filename, subfolder: c.subfolder, outputType: c.outputType }))
+      if (imageItems.length > 0) return { type: 'images', items: imageItems }
+      return null
+    }
+
+    try {
+    let stalledBail = false
+    // Hysteresis: once ComfyUI reports success over WS we fetch a few more
+    // times if outputs haven't appeared yet (SaveVideo/ffmpeg can finish
+    // writing a split second after the success event fires).
+    let postSuccessTries = 0
+    const MAX_POST_SUCCESS_TRIES = 8
+    while (true) {
+      const now = Date.now()
+      const elapsed = now - startedAt
+      const idleFor = now - lastActivityAt
+      if (elapsed > MAX_TOTAL_MS) break
+      if (!wsReportedSuccess && idleFor > IDLE_TIMEOUT_MS) {
+        stalledBail = true
+        break
+      }
+      if (wsReportedSuccess && postSuccessTries >= MAX_POST_SUCCESS_TRIES) break
+
+      await new Promise(r => setTimeout(r, POLL_INTERVAL_MS))
+      if (wsReportedSuccess) postSuccessTries += 1
+
+      // Progress heuristic: map elapsed time onto a slow 0→90 curve until
+      // we get a real completion signal. (Real fine-grained % comes from
+      // the WS `progress` event stream that useComfyUI listens to.)
+      const progressPct = Math.min(90, (elapsed / (15 * 60 * 1000)) * 90)
+      onProgress(progressPct)
 
       try {
         const history = await comfyui.getHistory(promptId)
         consecutivePollErrors = 0
         // ComfyUI may return { [promptId]: { outputs } } or (for /history/id) { outputs } at top level
         const outputs = history?.[promptId]?.outputs ?? history?.outputs
+        const topStatus = history?.[promptId]?.status ?? history?.status
+
+        // Short-circuit on ComfyUI execution errors. If the prompt failed
+        // (e.g. OOM, bad input, crashed custom node) ComfyUI marks the
+        // history entry with status_str='error' and completed=false. The
+        // old success-only check meant we kept polling for the full 10
+        // minute window before giving up with a misleading "output could
+        // not be detected" message. Instead, surface the real cause.
+        if (topStatus && topStatus.status_str === 'error') {
+          let errNodeId = null
+          let errNodeType = null
+          let errMessage = null
+          const msgs = Array.isArray(topStatus.messages) ? topStatus.messages : []
+          for (let mi = msgs.length - 1; mi >= 0; mi -= 1) {
+            const entry = msgs[mi]
+            if (!Array.isArray(entry) || entry.length < 2) continue
+            const [evtName, evtData] = entry
+            if (evtName === 'execution_error' && evtData && typeof evtData === 'object') {
+              errNodeId = evtData.node_id != null ? String(evtData.node_id) : null
+              errNodeType = evtData.node_type ? String(evtData.node_type) : null
+              errMessage = typeof evtData.exception_message === 'string'
+                ? evtData.exception_message
+                : null
+              break
+            }
+            if (evtName === 'execution_interrupted' && evtData && typeof evtData === 'object') {
+              errNodeId = evtData.node_id != null ? String(evtData.node_id) : null
+              errNodeType = evtData.node_type ? String(evtData.node_type) : null
+              errMessage = 'Execution interrupted'
+              break
+            }
+          }
+          const nodeLabel = errNodeId
+            ? `node ${errNodeId}${errNodeType ? ` (${errNodeType})` : ''}`
+            : 'unknown node'
+          const friendly = errMessage
+            ? `ComfyUI failed at ${nodeLabel}: ${errMessage}`
+            : `ComfyUI reported an execution error at ${nodeLabel}`
+          try {
+            window.electronAPI?.comfyLauncher?.appendLog?.({
+              stream: 'event',
+              text: `✗ Prompt ${String(promptId || '').slice(0, 8)}: ${friendly}`,
+            })
+          } catch (_) { /* ignore */ }
+          console.error('[pollForResult]', friendly, { promptId, messages: msgs })
+          const err = new Error(friendly)
+          err.comfyNodeId = errNodeId
+          err.comfyNodeType = errNodeType
+          err.isComfyExecutionError = true
+          throw err
+        }
+
         if (!outputs || typeof outputs !== 'object') continue
 
         // ── VIDEO detection: scan ALL nodes, ALL keys ──
@@ -3444,14 +3631,17 @@ function GenerateWorkspace({ onOpenWorkflowSetup = null }) {
             console.warn(`[pollForResult] Node ${nodeId} keys:`, Object.keys(outputs[nodeId] || {}))
           }
           // Give it a few more tries in case outputs are still being written
-          if (i < maxPolls - 5) {
+          const preferVideoFallback = isSingleVideoWorkflowId(wfId)
+          let retryOutputs = null
+          if (Date.now() - startedAt < MAX_TOTAL_MS - 5000) {
             onProgress(92)
             await new Promise(r => setTimeout(r, 2000))
             // Re-fetch and try once more
             const retryHistory = await comfyui.getHistory(promptId)
-            const retryOutputs = retryHistory?.[promptId]?.outputs ?? retryHistory?.outputs
+            retryOutputs = retryHistory?.[promptId]?.outputs ?? retryHistory?.outputs
             if (retryOutputs && typeof retryOutputs === 'object') {
-              // One final comprehensive scan - look for ANY item with a filename in ANY array
+              // Re-run the strict scan first — outputs may have finished
+              // flushing during the 2s wait.
               for (const nodeId of Object.keys(retryOutputs)) {
                 const nodeOut = retryOutputs[nodeId]
                 if (!nodeOut || typeof nodeOut !== 'object') continue
@@ -3461,25 +3651,64 @@ function GenerateWorkspace({ onOpenWorkflowSetup = null }) {
                     const info = pickBestFromItems(val, (entry) => matchesExpectedPrefix(entry.filename) && !isInputOutputType(entry))
                     if (info) {
                       console.log(`[pollForResult] Retry found result in node ${nodeId}.${key}:`, info)
-                      // Determine type by extension
                       if (isVideoFilename(info.filename)) return { type: 'video', ...info }
                       if (isAudioFilename(info.filename)) return { type: 'audio', ...info }
                       if (isImageFilename(info.filename)) return { type: 'images', items: [{ type: 'image', ...info }] }
-                      // Unknown extension - assume video for video workflows
-                      if (isSingleVideoWorkflowId(wfId)) return { type: 'video', ...info }
+                      if (preferVideoFallback) return { type: 'video', ...info }
                       return { type: 'images', items: [{ type: 'image', ...info }] }
                     }
                   }
                 }
               }
-              console.error('[pollForResult] Retry also found nothing. Outputs:', JSON.stringify(retryOutputs, null, 2))
             }
-            break // exit loop
           }
+
+          // Last resort: drop the prefix constraint. The history is already
+          // scoped to this promptId, so any non-input output file in the
+          // response is necessarily from *this* generation. This recovers
+          // the WAN 2.2 / LTX2 "finished but could not find the video
+          // output" failure mode where ComfyUI sanitizes the filename (or
+          // a custom node mangles the prefix) just enough to break the
+          // strict scan.
+          const fallbackOutputs = retryOutputs && typeof retryOutputs === 'object' ? retryOutputs : outputs
+          const fallback = scanOutputsAnyPrefix(fallbackOutputs, { preferVideo: preferVideoFallback })
+          if (fallback) {
+            const diag = fallback.type === 'images'
+              ? `prefix-agnostic fallback matched ${fallback.items.length} image(s); first=${fallback.items[0]?.filename}`
+              : `prefix-agnostic fallback matched ${fallback.type}=${fallback.filename}`
+            console.warn(`[pollForResult] ${diag}. Expected prefix was "${normalizedExpectedPrefix}".`)
+            try {
+              window.electronAPI?.comfyLauncher?.appendLog?.({
+                stream: 'event',
+                text: `! Prompt ${String(promptId || '').slice(0, 8)}: output filename did not match expected prefix "${normalizedExpectedPrefix}". Recovered via fallback (${diag}).`,
+              })
+            } catch (_) { /* ignore */ }
+            return fallback
+          }
+
+          // Absolutely nothing found. Surface enough diagnostic info for
+          // the user to see in the launcher log what ComfyUI actually
+          // returned — otherwise the failure is silent from the user's
+          // perspective ("generation finished but output missing").
+          try {
+            const diagOutputs = fallbackOutputs || {}
+            const nodeSummaries = Object.keys(diagOutputs).map((nodeId) => {
+              const keys = Object.keys(diagOutputs[nodeId] || {})
+              return `${nodeId}=[${keys.join(',') || 'empty'}]`
+            })
+            window.electronAPI?.comfyLauncher?.appendLog?.({
+              stream: 'event',
+              text: `✗ Prompt ${String(promptId || '').slice(0, 8)}: completed but no usable output found. Expected prefix "${normalizedExpectedPrefix}". Node outputs: ${nodeSummaries.join(' ') || '(none)'}`,
+            })
+            console.error('[pollForResult] Retry also found nothing. Outputs:', JSON.stringify(diagOutputs, null, 2))
+          } catch (_) { /* ignore */ }
           break
         }
 
       } catch (err) {
+        if (err && err.isComfyExecutionError) {
+          throw err
+        }
         consecutivePollErrors += 1
         console.warn(`Poll error (${consecutivePollErrors}/${maxConsecutivePollErrors}):`, err)
         if (consecutivePollErrors >= maxConsecutivePollErrors) {
@@ -3487,7 +3716,23 @@ function GenerateWorkspace({ onOpenWorkflowSetup = null }) {
         }
       }
     }
+
+    // Loop exited without finding output.
+    if (stalledBail) {
+      const minutes = Math.round(IDLE_TIMEOUT_MS / 60000)
+      const msg = `ComfyUI stopped reporting progress for more than ${minutes} minutes. The generation may be stuck or ComfyUI may have crashed.`
+      try {
+        window.electronAPI?.comfyLauncher?.appendLog?.({
+          stream: 'event',
+          text: `✗ Prompt ${String(promptId || '').slice(0, 8)}: ${msg}`,
+        })
+      } catch (_) { /* ignore */ }
+      throw new Error(msg)
+    }
     return null
+    } finally {
+      detachWsListeners()
+    }
   }
 
   // Save generation result to project assets
@@ -3919,6 +4164,12 @@ function GenerateWorkspace({ onOpenWorkflowSetup = null }) {
       const promptId = await comfyui.queuePrompt(modifiedWorkflow)
       if (!promptId) throw new Error('Failed to queue prompt')
 
+      // Claim this prompt ID so the ComfyUI-tab auto-import bridge
+      // doesn't also try to import the same outputs into
+      // `Imported from ComfyUI/` (we're already importing them into
+      // `Generated/` via saveGenerationResult below).
+      markPromptHandledByApp(promptId)
+
       updateJob(job.id, { status: 'running', progress: 45, promptId })
 
       // Poll for completion
@@ -4119,6 +4370,10 @@ function GenerateWorkspace({ onOpenWorkflowSetup = null }) {
           {activeCount > 0 && <span className="text-[10px] text-sf-text-muted">Running: {activeCount}</span>}
           {queuedCount > 0 && <span className="text-[10px] text-sf-text-muted">Queued: {queuedCount}</span>}
           {queueCount > 0 && <span className="text-[10px] text-sf-text-muted">ComfyUI Queue: {queueCount}</span>}
+          {/* Credits chip — self-hides when no partner API key is set; keeps
+              the live balance (or dashboard deep-link) one click away from
+              where cloud workflows are actually run. */}
+          <CreditsChip size="xs" />
           <div className={`w-2 h-2 rounded-full ${isConnected ? (wsConnected ? 'bg-green-500' : 'bg-yellow-500') : 'bg-red-500'}`} title={isConnected ? (wsConnected ? 'Connected (WebSocket)' : 'Connected (HTTP)') : 'Disconnected'} />
           <span className="text-[10px] text-sf-text-muted">{isConnected ? 'ComfyUI' : 'Offline'}</span>
         </div>
@@ -4890,7 +5145,7 @@ function GenerateWorkspace({ onOpenWorkflowSetup = null }) {
                                   </select>
                                   <div className="mt-1 text-[10px] text-sf-text-muted">
                                     {yoloSelectedVideoWorkflowSupportsCustomFps
-                                      ? 'Applied to WAN 2.2 renders in Director Mode.'
+                                      ? 'Applied to local renders (LTX 2.3 / WAN 2.2) in Director Mode.'
                                       : 'Cloud video providers may use their own output FPS and ignore this setting.'}
                                   </div>
                                 </div>

@@ -35,7 +35,7 @@ export function getTopmostVideoOrImageClipAtTime(time) {
 /**
  * Extract source time (in seconds) for a clip at the given timeline time.
  */
-function getSourceTimeForClip(clip, timelineTime) {
+export function getSourceTimeForClip(clip, timelineTime) {
   const clipTime = timelineTime - clip.startTime
   const baseScale = clip.sourceTimeScale || (clip.timelineFps && clip.sourceFps
     ? clip.timelineFps / clip.sourceFps
@@ -117,5 +117,82 @@ export function captureTimelineFrameAt(time) {
   return Promise.resolve(null)
   } catch (_) {
     return Promise.resolve(null)
+  }
+}
+
+/**
+ * Load a single clip's source frame into an element that `drawImage` can
+ * consume. For images we return an `<img>`; for videos we spin up a headless
+ * `<video>` and seek it to the correct source time.
+ *
+ * Returns an object `{ element, width, height, cleanup }` or null. The
+ * caller is responsible for invoking `cleanup()` when done (it revokes
+ * object URLs and releases video elements).
+ *
+ * This is intentionally split out so the thumbnail compositor can reuse
+ * the same decoding path per-layer without reimplementing the seek dance.
+ */
+export async function loadClipSourceAtTime(clip, asset, time) {
+  if (!clip || !asset) return null
+  try {
+    if (clip.type === 'image') {
+      const src = asset.url
+      if (!src) return null
+      const img = await new Promise((resolve, reject) => {
+        const el = new Image()
+        el.crossOrigin = 'anonymous'
+        el.onload = () => resolve(el)
+        el.onerror = () => reject(new Error('image load failed'))
+        el.src = src
+      })
+      return {
+        element: img,
+        width: img.naturalWidth || img.width,
+        height: img.naturalHeight || img.height,
+        cleanup: () => {},
+      }
+    }
+
+    if (clip.type === 'video') {
+      const src = asset.url
+      if (!src) return null
+      const sourceTime = getSourceTimeForClip(clip, time)
+      const video = document.createElement('video')
+      video.crossOrigin = 'anonymous'
+      video.muted = true
+      video.preload = 'auto'
+      video.src = src
+      await new Promise((resolve, reject) => {
+        let settled = false
+        const finish = (ok, err) => {
+          if (settled) return
+          settled = true
+          ok ? resolve() : reject(err)
+        }
+        video.onloadedmetadata = () => {
+          try {
+            video.currentTime = Math.min(sourceTime, Math.max(0, (video.duration || 0) - 0.01))
+          } catch (err) {
+            finish(false, err)
+          }
+        }
+        video.onseeked = () => finish(true)
+        video.onerror = () => finish(false, new Error('video decode failed'))
+        // Hard ceiling so a hung load never stalls a save.
+        setTimeout(() => finish(false, new Error('video seek timeout')), 4000)
+      })
+      return {
+        element: video,
+        width: video.videoWidth,
+        height: video.videoHeight,
+        cleanup: () => {
+          try { video.removeAttribute('src'); video.load() } catch (_) { /* ignore */ }
+        },
+      }
+    }
+
+    return null
+  } catch (_) {
+    return null
   }
 }

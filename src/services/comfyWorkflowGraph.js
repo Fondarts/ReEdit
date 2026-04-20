@@ -288,3 +288,269 @@ export function convertApiWorkflowToComfyGraph(apiWorkflow = {}, objectInfo = {}
 export async function buildComfyGraphFromApiWorkflow(apiWorkflow = {}, objectInfo = {}) {
   return convertApiWorkflowToComfyGraph(apiWorkflow, objectInfo)
 }
+
+// ─────────────────────────────────────────────────────────────────────
+// Batch output classification
+// ─────────────────────────────────────────────────────────────────────
+
+// Node class_types that strongly indicate the SaveImage sibling/downstream
+// is producing a frame sequence for an animation rather than a batch of
+// independent variations. These are all "video-adjacent" workflows:
+// AnimateDiff, VideoHelperSuite, ControlGIF, IPAdapter-with-temporal,
+// AD/ADE custom node family, etc.
+const ANIMATION_UPSTREAM_HINTS = [
+  /^animatediff/i,
+  /^ade_/i,
+  /^ad_/i,
+  /^vhs_/i,
+  /^videohelpersuite/i,
+  /^video\s/i,
+  /^controlgif/i,
+  /^animatelcm/i,
+  /^lcm.*video/i,
+  /^hotshot/i,
+  /^cogvideo/i,
+  /^svd/i,
+  /^stable\s?video/i,
+  /^imagetovideo/i,
+  /^videolinearccfgguidance/i,
+  /^ipadapter.*video/i,
+  /^ipadapter.*anim/i,
+  /^ipadaptertemporal/i,
+  /^ltx/i,
+  /^wan2?/i,
+  /^framewise/i,
+  /^imagebatchto/i,
+  /^imagefrombatch/i,
+  /^loadvideo/i,
+  /^loadimages/i,
+  /^loadimageslist/i,
+  /^repeatimagebatch/i,
+  /^imageduplicate/i,
+  /^concatframes/i,
+]
+
+// Nodes that directly produce or save animated output themselves.
+// If ComfyUI returns an animated file from one of these nodes, it's
+// already a video/GIF — we don't need to stitch anything.
+const ALREADY_ANIMATED_NODE_CLASSES = new Set([
+  'SaveAnimatedPNG',
+  'SaveAnimatedWEBP',
+  'SaveWEBM',
+  'SaveVideo',
+  'VHS_VideoCombine',
+  'VHS_SaveVideo',
+  'VHS_SaveAnimatedWEBP',
+  'CreateVideo',
+  'SaveAudio',
+])
+
+function isAnimationHintedClass(classType) {
+  if (!classType) return false
+  const s = String(classType)
+  return ANIMATION_UPSTREAM_HINTS.some((re) => re.test(s))
+}
+
+// Walk upstream of `nodeId` in the prompt (API-format) workflow to see
+// whether any ancestor node's class_type looks animation-oriented.
+// Bounded BFS so pathological graphs can't hang us.
+function hasAnimationUpstream(apiWorkflow, nodeId, maxDepth = 8, maxVisited = 200) {
+  if (!apiWorkflow || !nodeId || !apiWorkflow[nodeId]) return false
+  const visited = new Set()
+  const queue = [{ id: String(nodeId), depth: 0 }]
+  while (queue.length > 0) {
+    const { id, depth } = queue.shift()
+    if (visited.has(id)) continue
+    visited.add(id)
+    if (visited.size > maxVisited) return false
+    if (depth > maxDepth) continue
+    const node = apiWorkflow[id]
+    if (!node || typeof node !== 'object') continue
+    if (depth > 0 && isAnimationHintedClass(node.class_type)) return true
+    const inputs = node.inputs && typeof node.inputs === 'object' ? node.inputs : {}
+    for (const key of Object.keys(inputs)) {
+      const ref = inputs[key]
+      // Input connections in API format are [srcNodeId, outputIndex]
+      if (Array.isArray(ref) && ref.length >= 1 && ref[0] != null) {
+        const srcId = String(ref[0])
+        if (!visited.has(srcId)) queue.push({ id: srcId, depth: depth + 1 })
+      }
+    }
+  }
+  return false
+}
+
+// Extract the numeric suffix of a filename, e.g.
+//   "ComfyUI_00017_.png"  → 17
+//   "my_frame_0005.png"   → 5
+//   "shot_1_frame_0012.png" → 12  (uses the *last* run of digits)
+// Returns null if the filename does not end with digits.
+function parseNumericFrameIndex(filename) {
+  if (typeof filename !== 'string') return null
+  // Strip extension first so trailing underscores/dots around the
+  // number don't trip us up.
+  const base = filename.replace(/\.[^./\\]+$/, '')
+  const match = base.match(/(\d+)(?=[^\d]*$)/)
+  if (!match) return null
+  const n = parseInt(match[1], 10)
+  return Number.isFinite(n) ? n : null
+}
+
+// Groups detected outputs by the node they came from, preserving order.
+function groupOutputsByNode(filesByNode) {
+  const groups = new Map()
+  if (!filesByNode) return groups
+  const entries = filesByNode instanceof Map
+    ? Array.from(filesByNode.entries())
+    : Object.entries(filesByNode)
+  for (const [nodeId, files] of entries) {
+    if (!Array.isArray(files) || files.length === 0) continue
+    groups.set(String(nodeId), files.slice())
+  }
+  return groups
+}
+
+/**
+ * Classify a completed prompt's output files as a single file, a batch
+ * of variations, or a frame sequence that should be stitched to video.
+ *
+ * Inputs:
+ *   - apiWorkflow : the API-format prompt dict (history[id].prompt[2] or
+ *     history[id].prompt when already unwrapped). Pass null/empty to
+ *     disable graph-based hints.
+ *   - filesByNode : { [nodeId]: [ { filename, subfolder, type, classType? }, ... ] }
+ *     Only include image-type files here (callers should pre-filter out
+ *     videos — if ComfyUI already returned a video, stitching is moot).
+ *
+ * Options:
+ *   - minFramesForSequence (default 8): require at least this many files
+ *     before we'll even consider stitching.
+ *   - requireAnimationHint (default true): require an animation-oriented
+ *     upstream node class to promote to sequence. Set false to be more
+ *     eager (risk: misclassify batch-of-variations as sequence).
+ *
+ * Returns one of:
+ *   { kind: 'single', files: [file] }
+ *   { kind: 'batch',  files: [file, ...], reason }
+ *   { kind: 'sequence', nodeId, files: [file, ...], indices, reason }
+ *
+ * The `files` array in `sequence` is sorted ascending by detected frame
+ * index so callers can feed it straight to ffmpeg.
+ */
+export function classifyBatchOutputs(apiWorkflow, filesByNode, options = {}) {
+  const {
+    minFramesForSequence = 8,
+    requireAnimationHint = true,
+  } = options
+
+  const groups = groupOutputsByNode(filesByNode)
+  const totalFiles = Array.from(groups.values()).reduce((n, arr) => n + arr.length, 0)
+
+  if (totalFiles === 0) {
+    return { kind: 'batch', files: [], reason: 'no-files' }
+  }
+  if (totalFiles === 1) {
+    const onlyFile = Array.from(groups.values())[0][0]
+    return { kind: 'single', files: [onlyFile], reason: 'single-file' }
+  }
+
+  // We only promote to "sequence" if a SINGLE node produced all (or at
+  // least a dominant run of) the files. If two different SaveImage nodes
+  // each emit 10 files, those are clearly independent batches, not one
+  // sequence.
+  let bestNodeId = null
+  let bestFiles = []
+  for (const [nodeId, files] of groups) {
+    if (files.length > bestFiles.length) {
+      bestNodeId = nodeId
+      bestFiles = files
+    }
+  }
+
+  if (!bestNodeId || bestFiles.length < minFramesForSequence) {
+    return {
+      kind: 'batch',
+      files: Array.from(groups.values()).flat(),
+      reason: `below-frame-threshold (${bestFiles.length} < ${minFramesForSequence})`,
+    }
+  }
+
+  // Already-animated class shouldn't be re-stitched.
+  const bestNode = apiWorkflow && apiWorkflow[bestNodeId]
+  const bestClassType = bestNode && bestNode.class_type
+  if (bestClassType && ALREADY_ANIMATED_NODE_CLASSES.has(bestClassType)) {
+    return {
+      kind: 'batch',
+      files: Array.from(groups.values()).flat(),
+      reason: `already-animated-node (${bestClassType})`,
+    }
+  }
+
+  // Require contiguous, zero-padded numeric suffix. Tolerate a small
+  // amount of gaps (e.g. ComfyUI skipping indices) but insist on a
+  // monotonically-increasing unique set.
+  const indexed = bestFiles
+    .map((file) => ({ file, index: parseNumericFrameIndex(file?.filename) }))
+    .filter((entry) => entry.index != null)
+
+  if (indexed.length < minFramesForSequence) {
+    return {
+      kind: 'batch',
+      files: Array.from(groups.values()).flat(),
+      reason: 'insufficient-indexed-files',
+    }
+  }
+
+  // Sort by index and verify uniqueness + reasonable tightness.
+  indexed.sort((a, b) => a.index - b.index)
+  const first = indexed[0].index
+  const last = indexed[indexed.length - 1].index
+  const span = last - first + 1
+  const uniqueIndices = new Set(indexed.map((e) => e.index))
+  // At least 80% density — filenames like 0,1,2,...,15 would be 100%;
+  // filenames like 0,2,4,...,30 would still be above 50% and that's
+  // fine; we only reject very sparse numbering.
+  const density = uniqueIndices.size / Math.max(1, span)
+
+  if (uniqueIndices.size !== indexed.length) {
+    return {
+      kind: 'batch',
+      files: Array.from(groups.values()).flat(),
+      reason: 'duplicate-indices',
+    }
+  }
+
+  if (density < 0.5) {
+    return {
+      kind: 'batch',
+      files: Array.from(groups.values()).flat(),
+      reason: `sparse-indices (density=${density.toFixed(2)})`,
+    }
+  }
+
+  // Optional graph-based gate: only promote to sequence if the workflow
+  // graph itself contains animation-oriented machinery. This is what
+  // separates a real sequence ("AnimateDiff → SaveImage emitting 16
+  // frames") from a plain batch ("KSampler with batch_size=16 →
+  // SaveImage emitting 16 variations").
+  if (requireAnimationHint) {
+    const hinted = hasAnimationUpstream(apiWorkflow, bestNodeId)
+    if (!hinted) {
+      return {
+        kind: 'batch',
+        files: Array.from(groups.values()).flat(),
+        reason: 'no-animation-hint-upstream',
+      }
+    }
+  }
+
+  return {
+    kind: 'sequence',
+    nodeId: bestNodeId,
+    nodeClassType: bestClassType || null,
+    files: indexed.map((e) => e.file),
+    indices: indexed.map((e) => e.index),
+    reason: 'contiguous-numeric-sequence',
+  }
+}
+

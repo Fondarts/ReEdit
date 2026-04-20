@@ -266,6 +266,15 @@ contextBridge.exposeInMainWorld('electronAPI', {
   extractCaptionAudio: (options = {}) => ipcRenderer.invoke('captions:extractAudio', options),
 
   /**
+   * Mix the full timeline's program audio into a single mono 16 kHz WAV file
+   * via FFmpeg in the main process. Required for timeline-scope transcription
+   * (decoding long videos in the renderer via Web Audio causes renderer OOMs).
+   * @param {{ projectPath?: string, clips: Array, tracks: Array, assets: Array, duration: number, sampleRate?: number, timeoutMs?: number }} options
+   * @returns {Promise<{success: boolean, outputPath?: string, size?: number, clipCount?: number, error?: string}>}
+   */
+  mixTimelineAudioForCaptions: (options = {}) => ipcRenderer.invoke('captions:mixTimelineAudio', options),
+
+  /**
    * Run Whisper transcription in the main process (avoids renderer OOM).
    * @param {{ wavPath: string }} options
    * @returns {Promise<{success: boolean, text?: string, chunks?: Array, error?: string}>}
@@ -345,9 +354,12 @@ contextBridge.exposeInMainWorld('electronAPI', {
     detach: () => ipcRenderer.invoke('comfyLauncher:detach'),
     refresh: () => ipcRenderer.invoke('comfyLauncher:refresh'),
     getLogs: (options) => ipcRenderer.invoke('comfyLauncher:getLogs', options),
+    appendLog: (payload) => ipcRenderer.invoke('comfyLauncher:appendLog', payload),
     openLogFile: () => ipcRenderer.invoke('comfyLauncher:openLogFile'),
     detectLaunchers: (payload) => ipcRenderer.invoke('comfyLauncher:detectLaunchers', payload),
     pickLauncherScript: () => ipcRenderer.invoke('comfyLauncher:pickLauncherScript'),
+    describePortOwner: () => ipcRenderer.invoke('comfyLauncher:describePortOwner'),
+    connectExternal: () => ipcRenderer.invoke('comfyLauncher:connectExternal'),
     onState: (cb) => {
       const handler = (_, state) => cb(state)
       ipcRenderer.on('comfyLauncher:state', handler)

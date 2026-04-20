@@ -116,6 +116,18 @@ function isKineticPreset(preset) {
   return preset?.renderer === 'kinetic'
 }
 
+// Callers sometimes pass a preset OBJECT with extra overrides on it
+// (e.g. a customised `keyWordColor` from the accent color picker). The
+// registered preset resolved by ID is the source of truth for anything
+// missing, but caller-provided fields must always win so overrides stick.
+function mergePresetWithOverrides(presetInput) {
+  const resolved = getCaptionPresetById(presetInput?.id || presetInput)
+  if (presetInput && typeof presetInput === 'object') {
+    return { ...resolved, ...presetInput }
+  }
+  return resolved
+}
+
 export function renderCaptionFrame({
   ctx,
   width,
@@ -128,7 +140,7 @@ export function renderCaptionFrame({
 }) {
   if (!ctx || !width || !height) return
 
-  const resolvedPreset = getCaptionPresetById(preset?.id || preset)
+  const resolvedPreset = mergePresetWithOverrides(preset)
 
   if (isKineticPreset(resolvedPreset)) {
     renderKineticCaptionFrame({ ctx, width, height, style: resolvedPreset, cues, time })
@@ -169,7 +181,7 @@ export function renderCaptionFrame({
 export function renderCaptionPresetPreviewDataUrl(preset, width = 240, height = 140) {
   if (typeof document === 'undefined') return null
 
-  const resolvedPreset = getCaptionPresetById(preset?.id || preset)
+  const resolvedPreset = mergePresetWithOverrides(preset)
 
   if (isKineticPreset(resolvedPreset)) {
     return renderKineticPreviewDataUrl(resolvedPreset, width, height)
@@ -214,7 +226,7 @@ export async function generateCaptionVideoBlob({
     throw new Error('Transparent caption export is not supported in this runtime.')
   }
 
-  const resolvedPreset = getCaptionPresetById(preset?.id || preset)
+  const resolvedPreset = mergePresetWithOverrides(preset)
 
   if (isKineticPreset(resolvedPreset)) {
     return generateKineticCaptionVideoBlob({

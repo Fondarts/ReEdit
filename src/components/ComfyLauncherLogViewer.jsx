@@ -21,6 +21,7 @@ import {
 } from '../services/comfyLauncher'
 
 const STREAM_CHIPS = [
+  { id: 'event', label: 'generation', dotClass: 'bg-violet-400/80' },
   { id: 'stdout', label: 'stdout', dotClass: 'bg-emerald-400/70' },
   { id: 'stderr', label: 'stderr', dotClass: 'bg-amber-300/80' },
   { id: 'system', label: 'system', dotClass: 'bg-sky-400/80' },
@@ -41,7 +42,7 @@ function ComfyLauncherLogViewer({ open, onClose }) {
   const [paused, setPaused] = useState(false)
   const [autoScroll, setAutoScroll] = useState(true)
   const [filterText, setFilterText] = useState('')
-  const [enabledStreams, setEnabledStreams] = useState({ stdout: true, stderr: true, system: true })
+  const [enabledStreams, setEnabledStreams] = useState({ event: true, stdout: true, stderr: true, system: true })
   const [copyFeedback, setCopyFeedback] = useState('')
   const scrollRef = useRef(null)
 
@@ -224,7 +225,9 @@ function ComfyLauncherLogViewer({ open, onClose }) {
                   ? 'text-amber-300/90'
                   : entry.stream === 'system'
                     ? 'text-sky-300/85'
-                    : 'text-sf-text-secondary'
+                    : entry.stream === 'event'
+                      ? 'text-violet-300/90'
+                      : 'text-sf-text-secondary'
                 }`}
               >
                 <span className="text-sf-text-muted/70 mr-2">{formatTimestamp(entry.ts)}</span>

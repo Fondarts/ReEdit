@@ -5,6 +5,7 @@ import useTimelineStore from '../stores/timelineStore'
 import useProjectStore from '../stores/projectStore'
 import { useFrameForAIStore } from '../stores/frameForAIStore'
 import { useTimelinePlayback } from '../hooks/useTimelinePlayback'
+import useViewportClampedPosition from '../hooks/useViewportClampedPosition'
 import { captureTimelineFrameAt, getTopmostVideoOrImageClipAtTime } from '../utils/captureTimelineFrame'
 import { getAnimatedTransform } from '../utils/keyframes'
 import VideoLayerRenderer from './VideoLayerRenderer'
@@ -211,6 +212,18 @@ function PreviewPanel() {
   
   // Context menu state
   const [contextMenu, setContextMenu] = useState(null) // { x, y }
+  // Keep the context menu on-screen when right-clicking near the bottom
+  // or right edge of the preview — see useViewportClampedPosition for how
+  // the menu is measured and its origin shifted.
+  const contextMenuRef = useRef(null)
+  const contextMenuAnchor = useMemo(
+    () => (contextMenu ? { x: contextMenu.x, y: contextMenu.y } : null),
+    [contextMenu?.x, contextMenu?.y]
+  )
+  const contextMenuPosition = useViewportClampedPosition(
+    contextMenuAnchor,
+    contextMenuRef,
+  )
   const [capturingFrameForAI, setCapturingFrameForAI] = useState(false)
   const [capturingStillFrame, setCapturingStillFrame] = useState(false)
   
@@ -1317,20 +1330,26 @@ function PreviewPanel() {
     setContextMenu({ x: e.clientX, y: e.clientY })
   }
   
-  // Close context menu
+  // Close context menu. Capture-phase listener so nested click handlers
+  // that call stopPropagation don't prevent the menu from dismissing.
   useEffect(() => {
     if (!contextMenu) return
-    
-    const handleClick = () => setContextMenu(null)
+
+    const handleClick = (e) => {
+      if (contextMenuRef.current && contextMenuRef.current.contains(e.target)) {
+        return
+      }
+      setContextMenu(null)
+    }
     const handleEscape = (e) => {
       if (e.key === 'Escape') setContextMenu(null)
     }
-    
-    window.addEventListener('click', handleClick)
+
+    window.addEventListener('click', handleClick, true)
     window.addEventListener('keydown', handleEscape)
-    
+
     return () => {
-      window.removeEventListener('click', handleClick)
+      window.removeEventListener('click', handleClick, true)
       window.removeEventListener('keydown', handleEscape)
     }
   }, [contextMenu])
@@ -2487,13 +2506,18 @@ function PreviewPanel() {
         </div>
       </div>
       
-      {/* Context Menu (Portal) */}
+      {/* Context Menu (Portal). No overflow-auto here on purpose -- it
+          would turn the menu into a scroll container that clips any
+          absolutely-positioned submenu children (see Timeline.jsx). The
+          viewport-clamped position keeps the menu on-screen for any
+          reasonable window size. */}
       {contextMenu && (
         <div
+          ref={contextMenuRef}
           className="fixed z-50 bg-sf-dark-800 border border-sf-dark-600 rounded-lg shadow-xl py-1 min-w-[150px]"
-          style={{ 
-            left: `${contextMenu.x}px`, 
-            top: `${contextMenu.y}px`,
+          style={{
+            left: `${contextMenuPosition.x}px`,
+            top: `${contextMenuPosition.y}px`,
           }}
           onClick={(e) => e.stopPropagation()}
         >

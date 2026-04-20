@@ -15,8 +15,8 @@ export const CATEGORY_ORDER = ['Shot', 'Movement', 'Angle', 'Lighting', 'Mood', 
 
 export const WORKFLOWS = {
   video: [
-    { id: 'wan22-i2v', label: 'Image to Video (WAN 2.2)', needsImage: true, description: 'Animate an image into video' },
     { id: 'ltx23-i2v', label: 'Image to Video (LTX 2.3)', needsImage: true, description: 'Animate an image with local LTX 2.3' },
+    { id: 'wan22-i2v', label: 'Image to Video (WAN 2.2)', needsImage: true, description: 'Animate an image into video' },
     { id: 'kling-o3-i2v', label: 'Image to Video (Kling O3 Omni)', needsImage: true, description: 'Premium image-to-video with Kling 3.0 Omni' },
     { id: 'grok-video-i2v', label: 'Image to Video (Grok Imagine Video)', needsImage: true, description: 'Cloud image-to-video with Grok Imagine Video Beta' },
     { id: 'vidu-q2-i2v', label: 'Image to Video (Vidu Q2)', needsImage: true, description: 'Cloud image-to-video with Vidu Q2 Pro Fast' },
@@ -54,11 +54,11 @@ export const YOLO_AD_PROFILES = Object.freeze({
   local: Object.freeze({
     low: Object.freeze({
       storyboardWorkflowId: 'image-edit-model-product',
-      videoWorkflowId: 'wan22-i2v',
+      videoWorkflowId: 'ltx23-i2v',
     }),
     quality: Object.freeze({
       storyboardWorkflowId: 'image-edit-model-product',
-      videoWorkflowId: 'wan22-i2v',
+      videoWorkflowId: 'ltx23-i2v',
     }),
   }),
   cloud: Object.freeze({
@@ -76,11 +76,11 @@ export const YOLO_AD_PROFILES = Object.freeze({
 export const YOLO_MUSIC_PROFILES = Object.freeze({
   draft: Object.freeze({
     storyboardWorkflowId: 'z-image-turbo',
-    videoWorkflowId: 'wan22-i2v',
+    videoWorkflowId: 'ltx23-i2v',
   }),
   balanced: Object.freeze({
     storyboardWorkflowId: 'nano-banana-2',
-    videoWorkflowId: 'wan22-i2v',
+    videoWorkflowId: 'ltx23-i2v',
   }),
   premium: Object.freeze({
     storyboardWorkflowId: 'nano-banana-2',
@@ -105,6 +105,16 @@ export const GENERATED_ASSET_FOLDERS = Object.freeze({
   audio: ['Generated', 'Audio'],
 })
 
+// Destination folders for the "auto-import anything generated in the
+// embedded ComfyUI tab" feature. Kept separate from GENERATED_ASSET_FOLDERS
+// so users can distinguish outputs from managed workflows vs. free-form
+// custom runs queued via the ComfyUI tab / CLI / external browser.
+export const IMPORTED_COMFY_ASSET_FOLDERS = Object.freeze({
+  image: ['Imported from ComfyUI', 'Images'],
+  video: ['Imported from ComfyUI', 'Videos'],
+  audio: ['Imported from ComfyUI', 'Audio'],
+})
+
 export const YOLO_CAMERA_PRESET_OPTIONS = Object.freeze([
   { id: 'auto', label: 'Auto (from script)', angles: [] },
   { id: 'wide_establishing', label: 'Wide Establishing', angles: ['Wide shot', 'Eye level'] },
@@ -116,6 +126,7 @@ export const YOLO_CAMERA_PRESET_OPTIONS = Object.freeze([
 
 export const YOLO_VIDEO_WORKFLOW_TARGET_OPTIONS = Object.freeze([
   { id: 'profile', label: 'Profile default' },
+  { id: 'ltx23-i2v', label: 'LTX 2.3' },
   { id: 'wan22-i2v', label: 'WAN 2.2' },
   { id: 'kling-o3-i2v', label: 'Kling O3 Omni' },
   { id: 'grok-video-i2v', label: 'Grok Imagine Video' },

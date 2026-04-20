@@ -903,6 +903,7 @@ async function refreshLauncherConfigCache() {
 
 const comfyLauncher = new ComfyLauncher({
   logDir: launcherLogDir,
+  stateFilePath: path.join(app.getPath('userData'), 'comfy-launcher.state.json'),
   getHttpBase: () => cachedHttpBase,
   getConfig: () => cachedLauncherConfig,
   setConfig: async (partial) => {
@@ -1108,8 +1109,15 @@ async function createWindow() {
     }
   })
 
-  // Start in fullscreen (F11-style: takes over entire screen, no taskbar)
-  mainWindow.setFullScreen(true)
+  // Start maximized rather than true fullscreen. Maximized uses the full
+  // work area (entire screen minus the OS taskbar/dock) so the user still
+  // has access to their taskbar, tray, notifications, and Alt-Tab without
+  // having to exit the app. True fullscreen (the old behavior via
+  // setFullScreen(true)) hid the taskbar entirely, which users reported as
+  // too intrusive for a window they're not actively playing back from.
+  // Users who want edge-to-edge can still toggle fullscreen via the
+  // title-bar control or the window:toggleFullScreen IPC.
+  mainWindow.maximize()
 
   // Route every external link to the user's default browser instead of
   // letting Electron spawn an in-app BrowserWindow. This covers:
@@ -1792,6 +1800,232 @@ ipcMain.handle('captions:extractAudio', async (event, options = {}) => {
   })
 })
 
+// Mix the full timeline's program audio (video-embedded audio + audio clips) into
+// a single mono 16 kHz WAV file using FFmpeg in the main process. This exists as
+// a dedicated handler (not part of export:mixAudio) because:
+//   1. export:mixAudio only accepts clips whose type === 'audio', skipping video
+//      audio — but transcription needs the dialogue on video clips.
+//   2. Doing the mix in the renderer via decodeAudioData() on multi-hundred-MB
+//      mp4 files reliably OOMs Chromium (renderer goes black). FFmpeg demuxes
+//      the audio stream without decoding video, so memory stays flat.
+ipcMain.handle('captions:mixTimelineAudio', async (event, options = {}) => {
+  if (!ffmpegPath) {
+    return { success: false, error: 'FFmpeg binary not available.' }
+  }
+
+  const {
+    projectPath = '',
+    clips = [],
+    tracks = [],
+    assets = [],
+    duration: requestedDuration = 0,
+    sampleRate = 16000,
+    timeoutMs = 180000,
+  } = options
+
+  const programDuration = Math.max(0, Number(requestedDuration) || 0)
+  if (programDuration <= 0.001) {
+    return { success: false, error: 'Timeline duration is zero — nothing to mix.' }
+  }
+
+  const trackMap = new Map((tracks || []).map((track) => [track.id, track]))
+  const assetMap = new Map((assets || []).map((asset) => [asset.id, asset]))
+  const preparedInputs = []
+
+  // Diagnostic: per-clip include/skip decision. Logged at the end so we can
+  // eyeball exactly which clips the mixer pulled in when captions show text
+  // for a clip the user thought was silenced.
+  const decisions = []
+  const skip = (clip, reason) => {
+    decisions.push({
+      clipId: clip?.id,
+      type: clip?.type,
+      trackId: clip?.trackId,
+      decision: 'skip',
+      reason,
+    })
+  }
+
+  for (const clip of clips || []) {
+    if (!clip) continue
+    if (clip.type !== 'video' && clip.type !== 'audio') { skip(clip, `type=${clip.type}`); continue }
+    if (clip.enabled === false) { skip(clip, 'clip.enabled=false'); continue }
+
+    const track = trackMap.get(clip.trackId)
+    if (!track) { skip(clip, 'no-matching-track'); continue }
+    if (track.muted) { skip(clip, 'track.muted=true'); continue }
+    if (track.visible === false) { skip(clip, 'track.visible=false'); continue }
+
+    const asset = assetMap.get(clip.assetId)
+    if (!asset) { skip(clip, 'no-matching-asset'); continue }
+    if (asset.hasAudio === false) { skip(clip, 'asset.hasAudio=false'); continue }
+    if (asset.audioEnabled === false) { skip(clip, 'asset.audioEnabled=false'); continue }
+    if (clip.audioEnabled === false) { skip(clip, 'clip.audioEnabled=false'); continue }
+    if (clip.reverse) { skip(clip, 'clip.reverse=true'); continue }
+
+    let inputPath = null
+    if (asset.path && projectPath) {
+      inputPath = path.join(projectPath, asset.path)
+    }
+    if (!inputPath && asset.absolutePath) {
+      inputPath = asset.absolutePath
+    }
+    if (!inputPath && asset.url) {
+      inputPath = resolveMediaInputPath(asset.url)
+    }
+    if (!inputPath && clip.url) {
+      inputPath = resolveMediaInputPath(clip.url)
+    }
+    if (!inputPath || !fsSync.existsSync(inputPath)) { skip(clip, 'no-resolvable-input-path'); continue }
+
+    const clipStart = Number(clip.startTime) || 0
+    const clipDuration = Math.max(0, Number(clip.duration) || 0)
+    if (clipDuration <= 0.001) { skip(clip, 'clipDuration<=0'); continue }
+    const clipEnd = clipStart + clipDuration
+
+    const visibleStart = Math.max(0, clipStart)
+    const visibleEnd = Math.min(programDuration, clipEnd)
+    if (visibleEnd <= visibleStart) { skip(clip, 'off-program'); continue }
+
+    const clipOffsetOnTimeline = visibleStart - clipStart
+    const timeScale = getExportClipTimeScale(clip)
+    if (!Number.isFinite(timeScale) || timeScale <= 0) { skip(clip, `bad-timescale=${timeScale}`); continue }
+
+    const trimStart = Math.max(0, Number(clip.trimStart) || 0)
+    const sourceOffsetSec = Math.max(0, trimStart + clipOffsetOnTimeline * timeScale)
+    const timelineVisibleSec = visibleEnd - visibleStart
+    const sourceDurationSec = Math.max(0, timelineVisibleSec * timeScale)
+    if (sourceDurationSec <= 0.001) { skip(clip, 'sourceDurationSec<=0'); continue }
+
+    const delayMs = Math.max(0, Math.round(visibleStart * 1000))
+    preparedInputs.push({
+      inputPath,
+      sourceOffsetSec,
+      sourceDurationSec,
+      delayMs,
+      timeScale,
+    })
+    decisions.push({
+      clipId: clip.id,
+      type: clip.type,
+      trackId: clip.trackId,
+      decision: 'include',
+      delayMs,
+      sourceDurationSec: Number(sourceDurationSec.toFixed(3)),
+    })
+  }
+
+  // Compact summary: prints one log line that you can paste back to me.
+  console.log('[captions:mix] filter decisions:', JSON.stringify({
+    clipCount: (clips || []).length,
+    trackCount: (tracks || []).length,
+    assetCount: (assets || []).length,
+    included: preparedInputs.length,
+    skipped: decisions.filter((d) => d.decision === 'skip').length,
+    tracks: (tracks || []).map((t) => ({ id: t.id, type: t.type, muted: !!t.muted, visible: t.visible !== false })),
+    decisions,
+  }))
+
+  if (preparedInputs.length === 0) {
+    return { success: false, error: 'No audible clips on the timeline — unmute a track or enable a clip\'s audio.' }
+  }
+
+  const tempDir = path.join(app.getPath('temp'), 'comfystudio-caption-audio')
+  try {
+    await fs.mkdir(tempDir, { recursive: true })
+  } catch (err) {
+    return { success: false, error: err.message }
+  }
+  const outputPath = path.join(tempDir, `timeline_mix_${Date.now()}.wav`)
+
+  const normalizedSampleRate = Math.max(8000, Math.min(48000, Math.round(Number(sampleRate) || 16000)))
+  const normalizedTimeout = Math.max(30000, Math.round(Number(timeoutMs) || 180000))
+
+  const args = ['-y', '-v', 'error']
+  for (const entry of preparedInputs) {
+    // -vn on each input tells FFmpeg to skip video streams up front; combined with
+    // filter_complex selecting [N:a] below, this means we never decode video frames.
+    args.push('-vn', '-i', entry.inputPath)
+  }
+
+  const inputFilters = []
+  const mixLabels = []
+  preparedInputs.forEach((entry, index) => {
+    const filters = [
+      `atrim=start=${formatFilterNumber(entry.sourceOffsetSec)}:duration=${formatFilterNumber(entry.sourceDurationSec)}`,
+      'asetpts=PTS-STARTPTS',
+      ...buildAtempoFilterChain(entry.timeScale),
+      // Force each input to mono before mixing so inputs with different channel
+      // layouts combine cleanly.
+      'aformat=channel_layouts=mono',
+    ]
+    if (entry.delayMs > 0) {
+      filters.push(`adelay=${entry.delayMs}:all=1`)
+    }
+    const label = `m${index}`
+    inputFilters.push(`[${index}:a]${filters.join(',')}[${label}]`)
+    mixLabels.push(`[${label}]`)
+  })
+
+  const durationClip = `atrim=duration=${formatFilterNumber(programDuration)},asetpts=PTS-STARTPTS`
+  const finalFilter = mixLabels.length === 1
+    ? `${mixLabels[0]}${durationClip}[outa]`
+    : `${mixLabels.join('')}amix=inputs=${mixLabels.length}:duration=longest:dropout_transition=0:normalize=0,${durationClip}[outa]`
+
+  args.push(
+    '-filter_complex', `${inputFilters.join(';')};${finalFilter}`,
+    '-map', '[outa]',
+    '-ar', String(normalizedSampleRate),
+    '-ac', '1',
+    '-c:a', 'pcm_s16le',
+    outputPath
+  )
+
+  return await new Promise((resolve) => {
+    const proc = spawn(ffmpegPath, args, { windowsHide: true })
+    let stderr = ''
+    let killedByTimeout = false
+    const timeoutHandle = setTimeout(() => {
+      killedByTimeout = true
+      proc.kill('SIGKILL')
+    }, normalizedTimeout)
+
+    proc.stderr.on('data', (data) => {
+      stderr += data.toString()
+    })
+
+    proc.on('error', (err) => {
+      clearTimeout(timeoutHandle)
+      resolve({ success: false, error: err.message })
+    })
+
+    proc.on('close', async (code) => {
+      clearTimeout(timeoutHandle)
+      if (killedByTimeout) {
+        try { await fs.unlink(outputPath) } catch (_) { /* ignore */ }
+        resolve({ success: false, error: `Audio mix timed out after ${Math.round(normalizedTimeout / 1000)}s` })
+        return
+      }
+      if (code !== 0) {
+        try { await fs.unlink(outputPath) } catch (_) { /* ignore */ }
+        resolve({ success: false, error: stderr || `FFmpeg exited with code ${code}` })
+        return
+      }
+      try {
+        const stat = await fs.stat(outputPath)
+        resolve({
+          success: true,
+          outputPath,
+          size: stat.size,
+          clipCount: preparedInputs.length,
+        })
+      } catch (err) {
+        resolve({ success: false, error: err.message })
+      }
+    })
+  })
+})
+
 // ============================================
 // IPC Handlers - Caption Transcription (runs in main process to avoid renderer OOM)
 // ============================================
@@ -2056,6 +2290,32 @@ ipcMain.handle('comfyLauncher:refresh', async () => {
 
 ipcMain.handle('comfyLauncher:getLogs', async (_event, options = {}) => {
   return comfyLauncher.getLogs(options || {})
+})
+
+ipcMain.handle('comfyLauncher:appendLog', async (_event, payload = {}) => {
+  try {
+    const ok = comfyLauncher.appendExternalLog(payload || {})
+    return { success: Boolean(ok) }
+  } catch (error) {
+    return { success: false, error: error?.message || String(error) }
+  }
+})
+
+ipcMain.handle('comfyLauncher:describePortOwner', async () => {
+  try {
+    return await comfyLauncher.describePortOwner()
+  } catch (error) {
+    return { pid: null, name: '', port: null, error: error?.message || String(error) }
+  }
+})
+
+ipcMain.handle('comfyLauncher:connectExternal', async () => {
+  try {
+    await comfyLauncher.refreshExternal()
+    return { success: true, state: comfyLauncher.getState() }
+  } catch (error) {
+    return { success: false, error: error?.message || String(error) }
+  }
 })
 
 ipcMain.handle('shell:openExternal', async (_event, url) => {

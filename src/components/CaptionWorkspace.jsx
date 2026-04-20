@@ -1,10 +1,11 @@
 import { useEffect, useMemo, useState } from 'react'
-import { Film, Loader2, RefreshCw, Sparkles, Type, Wand2, X } from 'lucide-react'
+import { Check, Copy, Film, Loader2, Palette, RefreshCw, RotateCcw, Sparkles, Type, Wand2, X } from 'lucide-react'
 import {
   CAPTION_PRESETS,
   DEFAULT_CAPTION_PRESET_ID,
   getCaptionPresetById,
 } from '../config/captionPresets'
+import { DEFAULT_KINETIC_ACCENT_COLOR } from '../utils/kineticCaptionRenderer'
 import { isElectron, writeGeneratedOverlayToProject } from '../services/fileSystem'
 import {
   buildCaptionAssetName,
@@ -12,7 +13,7 @@ import {
   loadCaptionSidecar,
   saveCaptionSidecar,
 } from '../services/captionProject'
-import { transcribeWithComfyUI } from '../services/captionComfyTranscription'
+import { transcribeWithComfyUI, transcribeTimeline } from '../services/captionComfyTranscription'
 import {
   generateCaptionVideoBlob,
   renderCaptionPresetPreviewDataUrl,
@@ -147,6 +148,9 @@ function createEmptyDraft(asset) {
 function CaptionWorkspace({
   isOpen,
   asset,
+  // 'asset' (default) — transcribe a single source clip/asset.
+  // 'timeline'       — transcribe the mixed program audio of the live timeline.
+  scope = 'asset',
   currentProjectHandle,
   timelineSize,
   folders,
@@ -156,13 +160,17 @@ function CaptionWorkspace({
   onPlaceOnTimeline,
   onClose,
 }) {
+  const isTimelineScope = scope === 'timeline'
   const [selectedPresetId, setSelectedPresetId] = useState(DEFAULT_CAPTION_PRESET_ID)
+  const [accentColor, setAccentColor] = useState(DEFAULT_KINETIC_ACCENT_COLOR)
   const [draft, setDraft] = useState(() => createEmptyDraft(asset))
   const [isTranscribing, setIsTranscribing] = useState(false)
   const [isGenerating, setIsGenerating] = useState(false)
   const [placeOnTimeline, setPlaceOnTimeline] = useState(true)
   const [statusMessage, setStatusMessage] = useState('')
   const [error, setError] = useState('')
+  const [errorExpanded, setErrorExpanded] = useState(false)
+  const [errorCopied, setErrorCopied] = useState(false)
 
   const [globalVertical, setGlobalVertical] = useState('auto')
   const [globalHorizontal, setGlobalHorizontal] = useState('auto')
@@ -220,6 +228,20 @@ function CaptionWorkspace({
     [selectedPresetId]
   )
 
+  // `renderPreset` is what actually gets passed to the renderer / exporter.
+  // It merges the selected preset with the user's customised accent color
+  // so every render path (live preview, thumbnail, final export) picks up
+  // the same color without threading a new argument through each one.
+  const renderPreset = useMemo(() => {
+    if (selectedPreset?.accentCustomizable && accentColor && accentColor !== selectedPreset.keyWordColor) {
+      return {
+        ...selectedPreset,
+        keyWordColor: accentColor,
+      }
+    }
+    return selectedPreset
+  }, [selectedPreset, accentColor])
+
   const renderSettings = useMemo(() => ({
     width: Math.max(320, Math.round(Number(timelineSize?.width) || 1920)),
     height: Math.max(180, Math.round(Number(timelineSize?.height) || 1080)),
@@ -233,7 +255,13 @@ function CaptionWorkspace({
     setError('')
     setStatusMessage('Transcribe audio locally to begin.')
     setPlaceOnTimeline(true)
-    setSelectedPresetId(asset?.settings?.lastCaptionPresetId || DEFAULT_CAPTION_PRESET_ID)
+    const nextPresetId = asset?.settings?.lastCaptionPresetId || DEFAULT_CAPTION_PRESET_ID
+    setSelectedPresetId(nextPresetId)
+    // Seed accent color from the saved preference, falling back to the
+    // preset's registered default so the picker starts on-brand.
+    const savedAccent = asset?.settings?.lastCaptionAccentColor
+    const presetDefault = getCaptionPresetById(nextPresetId)?.keyWordColor || DEFAULT_KINETIC_ACCENT_COLOR
+    setAccentColor(savedAccent || presetDefault)
     setDraft(createEmptyDraft(asset))
 
     const transcriptPath = asset?.settings?.captionTranscriptPath
@@ -269,7 +297,12 @@ function CaptionWorkspace({
 
   const busy = isTranscribing || isGenerating
   const cueDuration = getDraftDuration(draft, asset)
-  const canTranscribe = asset.type === 'video' && asset.hasAudio !== false && !busy
+  // Timeline mode can always transcribe (the audio mixer will report no-audio
+  // conditions at mix time with a clear message). Asset mode still needs a
+  // video with an audio track.
+  const canTranscribe = isTimelineScope
+    ? !busy
+    : (asset.type === 'video' && asset.hasAudio !== false && !busy)
   const canGenerate = draft.cues.length > 0 && !busy && addAsset
 
   const updateCue = (cueId, field, value) => {
@@ -328,14 +361,22 @@ function CaptionWorkspace({
 
   const handleTranscribe = async () => {
     setError('')
+    setErrorExpanded(false)
     setIsTranscribing(true)
     try {
-      setStatusMessage('Connecting to ComfyUI for Qwen3-ASR transcription...')
-      const nextDraft = await transcribeWithComfyUI(asset, {
-        onProgress: (progress) => {
-          setStatusMessage(progress?.message || 'Transcribing with Qwen3-ASR...')
-        },
-      })
+      setStatusMessage(
+        isTimelineScope
+          ? 'Mixing timeline audio for Qwen3-ASR…'
+          : 'Connecting to ComfyUI for Qwen3-ASR transcription...'
+      )
+
+      const onProgress = (progress) => {
+        setStatusMessage(progress?.message || 'Transcribing with Qwen3-ASR...')
+      }
+
+      const nextDraft = isTimelineScope
+        ? await transcribeTimeline({ onProgress })
+        : await transcribeWithComfyUI(asset, { onProgress })
 
       setDraft({
         ...nextDraft,
@@ -344,7 +385,12 @@ function CaptionWorkspace({
 
       setStatusMessage(`Transcribed ${nextDraft.cues.length} caption cues via Qwen3-ASR (ComfyUI).`)
     } catch (transcriptionError) {
-      setError(transcriptionError?.message || 'Could not transcribe this video. Make sure ComfyUI is running with the Subtitle (QwenASR) node installed.')
+      setError(
+        transcriptionError?.message
+        || (isTimelineScope
+          ? 'Could not transcribe the timeline. Make sure ComfyUI is running with the Subtitle (QwenASR) node installed.'
+          : 'Could not transcribe this video. Make sure ComfyUI is running with the Subtitle (QwenASR) node installed.')
+      )
     } finally {
       setIsTranscribing(false)
     }
@@ -363,33 +409,39 @@ function CaptionWorkspace({
     try {
       const normalizedCues = normalizeCueOrder(draft.cues, cueDuration)
       const timestamp = new Date().toISOString()
-      const sidecarPayload = {
-        version: 1,
-        sourceAssetId: asset.id,
-        sourceAssetName: asset.name,
-        sourceAssetPath: asset.path || null,
-        presetId: selectedPreset.id,
-        modelId: draft.modelId,
-        transcriptText: cuesToTranscript(normalizedCues),
-        words: draft.words,
-        cues: normalizedCues,
-        audioDuration: draft.audioDuration || cueDuration,
-        createdAt: timestamp,
-        updatedAt: timestamp,
-      }
 
-      setStatusMessage('Saving editable caption draft...')
-      const sidecar = await saveCaptionSidecar(currentProjectHandle, asset, sidecarPayload)
+      // Timeline captions aren't tied to a single source asset, so we skip the
+      // per-source sidecar & per-source `updateAsset` bookkeeping.
+      let sidecar = null
+      if (!isTimelineScope) {
+        const sidecarPayload = {
+          version: 1,
+          sourceAssetId: asset.id,
+          sourceAssetName: asset.name,
+          sourceAssetPath: asset.path || null,
+          presetId: selectedPreset.id,
+          modelId: draft.modelId,
+          transcriptText: cuesToTranscript(normalizedCues),
+          words: draft.words,
+          cues: normalizedCues,
+          audioDuration: draft.audioDuration || cueDuration,
+          createdAt: timestamp,
+          updatedAt: timestamp,
+        }
 
-      if (typeof updateAsset === 'function') {
-        updateAsset(asset.id, {
-          settings: {
-            ...(asset.settings || {}),
-            captionTranscriptPath: sidecar.path,
-            lastCaptionPresetId: selectedPreset.id,
-            lastCaptionUpdatedAt: timestamp,
-          },
-        })
+        setStatusMessage('Saving editable caption draft...')
+        sidecar = await saveCaptionSidecar(currentProjectHandle, asset, sidecarPayload)
+
+        if (typeof updateAsset === 'function') {
+          updateAsset(asset.id, {
+            settings: {
+              ...(asset.settings || {}),
+              captionTranscriptPath: sidecar.path,
+              lastCaptionPresetId: selectedPreset.id,
+              lastCaptionUpdatedAt: timestamp,
+            },
+          })
+        }
       }
 
       setStatusMessage('Rendering animated caption overlay...')
@@ -407,7 +459,7 @@ function CaptionWorkspace({
         },
       }))
       const overlayBlob = await generateCaptionVideoBlob({
-        preset: selectedPreset,
+        preset: renderPreset,
         cues: renderCues,
         width: renderSettings.width,
         height: renderSettings.height,
@@ -425,9 +477,13 @@ function CaptionWorkspace({
         hasAlpha: true,
         source: 'captions',
         overlayKind: 'captions',
-        sourceAssetId: asset.id,
+        // The 'captionScope' tag lets the timeline find (and later replace) an
+        // existing timeline-wide caption overlay. Asset-scope overlays keep
+        // their source linkage as before.
+        captionScope: isTimelineScope ? 'timeline' : 'asset',
+        ...(isTimelineScope ? {} : { sourceAssetId: asset.id }),
         captionPresetId: selectedPreset.id,
-        captionTranscriptPath: sidecar.path,
+        ...(sidecar?.path ? { captionTranscriptPath: sidecar.path } : {}),
         captionCueCount: normalizedCues.length,
         captionModelId: draft.modelId,
       }
@@ -466,12 +522,13 @@ function CaptionWorkspace({
         })
       }
 
-      if (typeof updateAsset === 'function' && createdAsset?.id) {
+      if (!isTimelineScope && typeof updateAsset === 'function' && createdAsset?.id) {
         updateAsset(asset.id, {
           settings: {
             ...(asset.settings || {}),
-            captionTranscriptPath: sidecar.path,
+            ...(sidecar?.path ? { captionTranscriptPath: sidecar.path } : {}),
             lastCaptionPresetId: selectedPreset.id,
+            lastCaptionAccentColor: accentColor,
             lastCaptionAssetId: createdAsset.id,
             lastCaptionUpdatedAt: timestamp,
           },
@@ -479,7 +536,7 @@ function CaptionWorkspace({
       }
 
       if (placeOnTimeline && typeof onPlaceOnTimeline === 'function' && createdAsset) {
-        await onPlaceOnTimeline(createdAsset, asset)
+        await onPlaceOnTimeline(createdAsset, isTimelineScope ? null : asset)
       }
 
       setStatusMessage('Caption overlay added to assets.')
@@ -501,7 +558,9 @@ function CaptionWorkspace({
               Add Captions
             </div>
             <div className="text-xs text-sf-text-muted mt-1">
-              {asset.name} · local-first transcription and animated overlay export
+              {isTimelineScope
+                ? 'Timeline program audio · places captions on a new top track'
+                : `${asset.name} · local-first transcription and animated overlay export`}
             </div>
           </div>
           <button
@@ -521,10 +580,12 @@ function CaptionWorkspace({
                 <div>
                   <div className="flex items-center gap-2 text-sm font-medium text-sf-text-primary">
                     <Film className="w-4 h-4 text-sf-blue" />
-                    Source Video
+                    {isTimelineScope ? 'Timeline Audio' : 'Source Video'}
                   </div>
                   <div className="text-xs text-sf-text-muted mt-1">
-                    Select a preset, edit the cues, then save a transparent caption overlay.
+                    {isTimelineScope
+                      ? 'Captions follow the edited program audio — trims, gaps, and mutes all honored.'
+                      : 'Select a preset, edit the cues, then save a transparent caption overlay.'}
                   </div>
                 </div>
                 <button
@@ -538,11 +599,30 @@ function CaptionWorkspace({
                   ) : (
                     <Wand2 className="w-4 h-4" />
                   )}
-                  {draft.cues.length > 0 ? 'Re-transcribe' : 'Transcribe audio'}
+                  {draft.cues.length > 0
+                    ? 'Re-transcribe'
+                    : (isTimelineScope ? 'Transcribe timeline' : 'Transcribe audio')}
                 </button>
               </div>
               <div className="aspect-video rounded-xl overflow-hidden bg-black border border-sf-dark-700">
-                {asset.url ? (
+                {isTimelineScope ? (
+                  <div className="w-full h-full flex flex-col items-center justify-center gap-2 text-center px-6">
+                    <Film className="w-7 h-7 text-sf-text-muted" />
+                    <div className="text-sm text-sf-text-primary font-medium">
+                      Captioning the edited timeline
+                    </div>
+                    <div className="text-[11px] text-sf-text-muted max-w-sm">
+                      ComfyStudio will mix the video &amp; audio clips you&apos;ve placed
+                      on the timeline, send that audio to Qwen3-ASR, and then drop
+                      the animated overlay onto a brand-new track above your edit.
+                    </div>
+                    {asset?.duration ? (
+                      <div className="text-[11px] text-sf-text-muted">
+                        Program length: <span className="text-sf-text-primary">{formatSeconds(asset.duration)}</span>
+                      </div>
+                    ) : null}
+                  </div>
+                ) : asset.url ? (
                   <video
                     src={asset.url}
                     controls
@@ -561,14 +641,17 @@ function CaptionWorkspace({
                 <Sparkles className="w-4 h-4 text-sf-accent" />
                 Style Presets
               </div>
-              <div className="grid grid-cols-1 md:grid-cols-3 gap-3 max-h-[320px] overflow-y-auto pr-1">
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-3 max-h-[320px] overflow-y-auto pr-1">
                 {CAPTION_PRESETS.map((preset) => {
                   const selected = preset.id === selectedPresetId
                   return (
                     <button
                       key={preset.id}
                       type="button"
-                      onClick={() => setSelectedPresetId(preset.id)}
+                      onClick={() => {
+                        setSelectedPresetId(preset.id)
+                        setAccentColor(preset.keyWordColor || DEFAULT_KINETIC_ACCENT_COLOR)
+                      }}
                       className={`rounded-2xl border overflow-hidden text-left transition-colors ${
                         selected
                           ? 'border-sf-accent bg-sf-dark-800'
@@ -596,6 +679,49 @@ function CaptionWorkspace({
                   )
                 })}
               </div>
+
+              {selectedPreset?.accentCustomizable && (
+                <div className="mt-4 rounded-xl border border-sf-dark-700 bg-sf-dark-950/50 px-3 py-3">
+                  <div className="flex items-center justify-between gap-3">
+                    <div className="flex items-center gap-2 min-w-0">
+                      <Palette className="w-4 h-4 text-sf-text-muted flex-shrink-0" />
+                      <div className="min-w-0">
+                        <div className="text-xs font-medium text-sf-text-primary">Accent color</div>
+                        <div className="text-[11px] text-sf-text-muted truncate">
+                          The word currently being spoken uses this color.
+                        </div>
+                      </div>
+                    </div>
+                    <div className="flex items-center gap-2 flex-shrink-0">
+                      <label
+                        className="relative inline-flex w-9 h-9 rounded-lg overflow-hidden border border-sf-dark-600 cursor-pointer"
+                        style={{ backgroundColor: accentColor }}
+                        title="Pick any color"
+                      >
+                        <input
+                          type="color"
+                          value={accentColor}
+                          onChange={(e) => setAccentColor(e.target.value)}
+                          className="absolute inset-0 w-full h-full opacity-0 cursor-pointer"
+                          aria-label="Accent color"
+                        />
+                      </label>
+                      <code className="text-[11px] text-sf-text-muted font-mono uppercase">
+                        {String(accentColor || '').toUpperCase()}
+                      </code>
+                      <button
+                        type="button"
+                        onClick={() => setAccentColor(selectedPreset.keyWordColor || DEFAULT_KINETIC_ACCENT_COLOR)}
+                        disabled={accentColor === (selectedPreset.keyWordColor || DEFAULT_KINETIC_ACCENT_COLOR)}
+                        className="rounded-md border border-sf-dark-600 bg-sf-dark-900 p-1.5 text-sf-text-muted hover:text-sf-text-primary hover:bg-sf-dark-800 disabled:opacity-40 disabled:cursor-not-allowed"
+                        title="Reset to preset default"
+                      >
+                        <RotateCcw className="w-3.5 h-3.5" />
+                      </button>
+                    </div>
+                  </div>
+                </div>
+              )}
             </section>
           </div>
 
@@ -793,19 +919,89 @@ function CaptionWorkspace({
 
           </div>
 
-          <div className="flex-shrink-0 border-t border-sf-dark-700 px-5 py-4 flex items-center justify-between gap-3">
+          <div className="flex-shrink-0 border-t border-sf-dark-700 px-5 py-4 flex items-start justify-between gap-3">
             {(statusMessage || error) ? (
-              <div className="flex items-center gap-2 text-xs min-w-0 flex-1 overflow-hidden">
+              <div className="flex items-start gap-2 text-xs min-w-0 flex-1 overflow-hidden">
                 {busy ? (
-                  <Loader2 className="w-3.5 h-3.5 flex-shrink-0 text-sf-accent animate-spin" />
+                  <Loader2 className="w-3.5 h-3.5 mt-0.5 flex-shrink-0 text-sf-accent animate-spin" />
                 ) : error ? (
-                  <X className="w-3.5 h-3.5 flex-shrink-0 text-sf-error" />
+                  <X className="w-3.5 h-3.5 mt-0.5 flex-shrink-0 text-sf-error" />
                 ) : (
-                  <RefreshCw className="w-3.5 h-3.5 flex-shrink-0 text-sf-success" />
+                  <RefreshCw className="w-3.5 h-3.5 mt-0.5 flex-shrink-0 text-sf-success" />
                 )}
-                <span className={`truncate ${error ? 'text-sf-error' : 'text-sf-text-muted'}`}>
-                  {error || statusMessage}
-                </span>
+                {error ? (
+                  (() => {
+                    const fullErrorText = String(error)
+                    const lines = fullErrorText.split('\n').filter(Boolean)
+                    const hasDetails = lines.length > 1
+                    const handleCopyError = async () => {
+                      try {
+                        if (navigator.clipboard?.writeText) {
+                          await navigator.clipboard.writeText(fullErrorText)
+                        } else {
+                          // Execution fallback for ancient runtimes / locked-down clipboards.
+                          const ta = document.createElement('textarea')
+                          ta.value = fullErrorText
+                          ta.style.position = 'fixed'
+                          ta.style.opacity = '0'
+                          document.body.appendChild(ta)
+                          ta.select()
+                          document.execCommand('copy')
+                          document.body.removeChild(ta)
+                        }
+                        setErrorCopied(true)
+                        setTimeout(() => setErrorCopied(false), 1500)
+                      } catch (err) {
+                        console.warn('[CaptionWorkspace] clipboard copy failed:', err)
+                      }
+                    }
+                    return (
+                      <div className="min-w-0 flex-1 text-sf-error">
+                        <div className={hasDetails ? 'select-text' : 'truncate select-text'}>{lines[0] || error}</div>
+                        {hasDetails && errorExpanded && (
+                          <pre className="mt-1 max-h-40 overflow-auto whitespace-pre-wrap break-words rounded bg-sf-dark-900 border border-sf-dark-700 p-2 text-[11px] text-sf-text-muted font-mono select-text cursor-text">
+                            {lines.slice(1).join('\n')}
+                          </pre>
+                        )}
+                        <div className="mt-1 flex items-center gap-3 text-[11px]">
+                          {hasDetails && (
+                            <button
+                              type="button"
+                              onClick={() => setErrorExpanded((v) => !v)}
+                              className="underline text-sf-text-muted hover:text-sf-text-primary"
+                            >
+                              {errorExpanded ? 'Hide details' : `Show details (${lines.length - 1} line${lines.length - 1 === 1 ? '' : 's'})`}
+                            </button>
+                          )}
+                          <button
+                            type="button"
+                            onClick={handleCopyError}
+                            className={`inline-flex items-center gap-1 rounded px-1.5 py-0.5 transition-colors ${
+                              errorCopied
+                                ? 'text-sf-success bg-sf-success/10'
+                                : 'text-sf-text-muted hover:text-sf-text-primary hover:bg-sf-dark-700'
+                            }`}
+                            title="Copy full error message to the clipboard"
+                          >
+                            {errorCopied ? (
+                              <>
+                                <Check className="w-3 h-3" />
+                                Copied
+                              </>
+                            ) : (
+                              <>
+                                <Copy className="w-3 h-3" />
+                                Copy error
+                              </>
+                            )}
+                          </button>
+                        </div>
+                      </div>
+                    )
+                  })()
+                ) : (
+                  <span className="truncate text-sf-text-muted">{statusMessage}</span>
+                )}
               </div>
             ) : (
               <div />

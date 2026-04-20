@@ -87,6 +87,18 @@ function ensureArgFlag(args, flag) {
   return args.includes(flag) ? args : [...args, flag]
 }
 
+/**
+ * Append `[flag, value]` to an args array unless the flag is already
+ * present. Used for ComfyUI args that take a value, e.g.
+ * `--enable-cors-header "*"`. If the user supplied the flag themselves
+ * (via `extraArgs` in settings) we leave their value untouched rather
+ * than emit it twice — aiohttp parses the last occurrence, but it's
+ * cleaner to not duplicate.
+ */
+function ensureArgWithValue(args, flag, value) {
+  return args.includes(flag) ? args : [...args, flag, value]
+}
+
 function parseHttpBase(httpBase) {
   try {
     const url = new URL(String(httpBase || 'http://127.0.0.1:8188'))
@@ -208,6 +220,150 @@ function killProcessTree(child) {
 }
 
 /**
+ * Terminate a process tree by pid only (no child-process handle). Used
+ * when we've reclaimed a ComfyUI from a previous ComfyStudio session.
+ */
+function killByPid(pid) {
+  return new Promise((resolve, reject) => {
+    const numeric = Number(pid)
+    if (!Number.isFinite(numeric) || numeric <= 0) {
+      reject(new Error('Invalid pid'))
+      return
+    }
+
+    if (process.platform === 'win32') {
+      try {
+        const killer = spawn('taskkill', ['/PID', String(numeric), '/T', '/F'], { windowsHide: true })
+        let errored = false
+        killer.on('error', (err) => {
+          errored = true
+          reject(err)
+        })
+        killer.on('exit', (code) => {
+          if (errored) return
+          // taskkill returns 128 for "process not found" and 0 on success.
+          // Either way the pid is gone, which is what we want.
+          if (code === 0 || code === 128) {
+            resolve()
+          } else {
+            reject(new Error(`taskkill exited with code ${code}`))
+          }
+        })
+      } catch (error) {
+        reject(error)
+      }
+      return
+    }
+
+    try {
+      process.kill(numeric, 'SIGTERM')
+    } catch (error) {
+      if (error?.code !== 'ESRCH') {
+        reject(error)
+        return
+      }
+      resolve()
+      return
+    }
+    // Escalate to SIGKILL if still alive after 8s.
+    setTimeout(() => {
+      try { process.kill(numeric, 'SIGKILL') } catch (_) { /* ignore */ }
+      resolve()
+    }, 8_000)
+  })
+}
+
+/**
+ * Windows: parse `netstat -ano` output to find the PID listening on a
+ * given TCP port. Looks for the first LISTENING row matching the port.
+ */
+function findPidForPortWindows(port) {
+  return new Promise((resolve) => {
+    try {
+      const proc = spawn('netstat.exe', ['-ano', '-p', 'TCP'], { windowsHide: true })
+      let output = ''
+      proc.stdout?.on('data', (buf) => { output += buf.toString('utf8') })
+      proc.on('error', () => resolve(null))
+      proc.on('exit', () => {
+        try {
+          const lines = output.split(/\r?\n/)
+          for (const line of lines) {
+            if (!/LISTENING/i.test(line)) continue
+            // Columns:  Proto  Local Address       Foreign Address       State       PID
+            // We match either 127.0.0.1:<port> or 0.0.0.0:<port>.
+            const match = line.match(/\s(\d+(?:\.\d+){3}|\[[^\]]+\]):(\d+)\s.*LISTENING\s+(\d+)/i)
+            if (match && Number(match[2]) === Number(port)) {
+              resolve(Number(match[3]))
+              return
+            }
+          }
+          resolve(null)
+        } catch (_) {
+          resolve(null)
+        }
+      })
+    } catch (_) {
+      resolve(null)
+    }
+  })
+}
+
+function findProcessNameWindows(pid) {
+  return new Promise((resolve) => {
+    try {
+      const proc = spawn('tasklist.exe', ['/FI', `PID eq ${pid}`, '/FO', 'CSV', '/NH'], { windowsHide: true })
+      let output = ''
+      proc.stdout?.on('data', (buf) => { output += buf.toString('utf8') })
+      proc.on('error', () => resolve(''))
+      proc.on('exit', () => {
+        try {
+          const line = output.split(/\r?\n/).find((l) => l && !/INFO:/i.test(l))
+          if (!line) { resolve(''); return }
+          // CSV like: "python.exe","12345","Console","1","512,432 K"
+          const match = line.match(/^"([^"]+)"/)
+          resolve(match?.[1] || '')
+        } catch (_) {
+          resolve('')
+        }
+      })
+    } catch (_) {
+      resolve('')
+    }
+  })
+}
+
+function findPidForPortPosix(port) {
+  return new Promise((resolve) => {
+    try {
+      const proc = spawn('lsof', ['-nP', '-iTCP', `-sTCP:LISTEN`, `-iTCP:${port}`, '-Fp'], {})
+      let output = ''
+      proc.stdout?.on('data', (buf) => { output += buf.toString('utf8') })
+      proc.on('error', () => resolve(null))
+      proc.on('exit', () => {
+        const match = output.match(/^p(\d+)/m)
+        resolve(match ? Number(match[1]) : null)
+      })
+    } catch (_) {
+      resolve(null)
+    }
+  })
+}
+
+function findProcessNamePosix(pid) {
+  return new Promise((resolve) => {
+    try {
+      const proc = spawn('ps', ['-p', String(pid), '-o', 'comm='], {})
+      let output = ''
+      proc.stdout?.on('data', (buf) => { output += buf.toString('utf8') })
+      proc.on('error', () => resolve(''))
+      proc.on('exit', () => resolve(output.trim()))
+    } catch (_) {
+      resolve('')
+    }
+  })
+}
+
+/**
  * Scan the parent directory of the ComfyUI root for common launcher scripts.
  * Returns an array of candidate launchers ranked by preference.
  */
@@ -265,7 +421,7 @@ function formatLogFilename(date = new Date()) {
 }
 
 class ComfyLauncher extends EventEmitter {
-  constructor({ logDir, getHttpBase, getConfig, setConfig, getComfyRootPath }) {
+  constructor({ logDir, stateFilePath, getHttpBase, getConfig, setConfig, getComfyRootPath }) {
     super()
     this._state = 'unknown'
     this._child = null
@@ -289,6 +445,7 @@ class ComfyLauncher extends EventEmitter {
     this._logBytesWritten = 0
 
     this._logDir = logDir
+    this._stateFilePath = stateFilePath || (logDir ? path.join(path.dirname(logDir), 'comfy-launcher.state.json') : '')
     this._getHttpBase = getHttpBase
     this._getConfig = getConfig
     this._setConfig = setConfig
@@ -297,7 +454,14 @@ class ComfyLauncher extends EventEmitter {
 
   async init() {
     await this._ensureLogDir()
-    await this._detectExternal()
+    // Layer 2 — try to reclaim a previously spawned ComfyUI before falling
+    // back to plain external detection. This handles the "ComfyStudio
+    // crashed but ComfyUI is still running" case where we want full Stop/
+    // Restart control again, not just read-only external status.
+    const reclaimed = await this._tryReclaimFromStateFile()
+    if (!reclaimed) {
+      await this._detectExternal()
+    }
   }
 
   async _ensureLogDir() {
@@ -332,6 +496,86 @@ class ComfyLauncher extends EventEmitter {
     if (this._logStream) {
       try { this._logStream.end() } catch (_) { /* ignore */ }
       this._logStream = null
+    }
+  }
+
+  /**
+   * Copy our Python runtime-guard package into the user's ComfyUI
+   * custom_nodes directory. Idempotent and fast: we compare file contents
+   * and skip the write if it already matches. If ComfyUI isn't laid out
+   * the way we expect we quietly bail — the guard is a "nice to have",
+   * not required for boot.
+   *
+   * The guarantees the guard provides (see prestartup_script.py for the
+   * full rationale):
+   *
+   *   1. Swallow Windows pipe `OSError [Errno 22]` from
+   *      `io.TextIOWrapper.flush`. Fixes the whole "emoji print crashes
+   *      ComfyUI" bug class (`💾 CACHE HIT`, `📝 Punctuation / Truecase`,
+   *      etc. from tts_audio_suite and friends).
+   *
+   *   2. Inject `CREATE_NO_WINDOW` into every Python `subprocess.Popen`
+   *      call on Windows unless the caller explicitly opted into a new
+   *      console. Fixes the UX problem where three or four cmd windows
+   *      flash on screen as custom nodes probe pip / git / ffmpeg during
+   *      ComfyUI boot — which reads as "my computer has a virus" to
+   *      non-technical users.
+   *
+   * The directory name is kept as `_comfystudio_stdout_guard` for
+   * backwards compatibility with existing user installs (renaming would
+   * leave orphan directories behind). The name no longer tells the full
+   * story but the behavior is documented above.
+   */
+  async _installStdoutGuard(launcherScript) {
+    const portable = detectPortableLayout(launcherScript)
+    if (!portable) {
+      this._appendLog('system', 'runtime guard skipped: non-portable ComfyUI layout')
+      return
+    }
+    const customNodesDir = path.join(portable.cwd, 'ComfyUI', 'custom_nodes')
+    try {
+      const stat = await fsp.stat(customNodesDir)
+      if (!stat.isDirectory()) {
+        this._appendLog('system', `runtime guard skipped: ${customNodesDir} is not a directory`)
+        return
+      }
+    } catch {
+      this._appendLog('system', `runtime guard skipped: no custom_nodes dir at ${customNodesDir}`)
+      return
+    }
+
+    const sourceDir = path.join(__dirname, 'comfyui-injected', '_comfystudio_stdout_guard')
+    const targetDir = path.join(customNodesDir, '_comfystudio_stdout_guard')
+    await fsp.mkdir(targetDir, { recursive: true })
+
+    let filenames
+    try {
+      filenames = await fsp.readdir(sourceDir)
+    } catch (err) {
+      throw new Error(`runtime guard source missing: ${err.message}`)
+    }
+
+    let written = 0
+    for (const filename of filenames) {
+      if (!/\.py$/i.test(filename)) continue
+      const src = path.join(sourceDir, filename)
+      const dst = path.join(targetDir, filename)
+      const desired = await fsp.readFile(src)
+      let current = null
+      try {
+        current = await fsp.readFile(dst)
+      } catch {
+        // No existing file — fall through to write.
+      }
+      if (current && Buffer.isBuffer(current) && current.equals(desired)) continue
+      await fsp.writeFile(dst, desired)
+      written += 1
+    }
+
+    if (written > 0) {
+      this._appendLog('system', `runtime guard installed (${written} file${written === 1 ? '' : 's'} written to ${targetDir})`)
+    } else {
+      this._appendLog('system', `runtime guard up to date at ${targetDir}`)
     }
   }
 
@@ -393,6 +637,27 @@ class ComfyLauncher extends EventEmitter {
     return this._logRing.slice(-count)
   }
 
+  /**
+   * Accept a single log line from an external source (e.g. the renderer
+   * forwarding ComfyUI websocket events). The whole point is to make the
+   * launcher log viewer useful even when ComfyUI was adopted from an
+   * external process and we don't own its stdout — and to surface
+   * generation progress / errors that otherwise live only in the ComfyUI
+   * console window.
+   *
+   * `stream` is normalised to a small whitelist so we never get an
+   * unexpected tag reaching the viewer filter controls.
+   */
+  appendExternalLog({ stream, text } = {}) {
+    const raw = typeof text === 'string' ? text : text == null ? '' : String(text)
+    const trimmed = raw.replace(/\r?\n+$/g, '')
+    if (!trimmed) return false
+    const allowed = new Set(['event', 'generation', 'system', 'stdout', 'stderr'])
+    const label = allowed.has(stream) ? stream : 'event'
+    this._appendLog(label, trimmed)
+    return true
+  }
+
   async _detectExternal() {
     const httpBase = this._getHttpBase?.() || ''
     if (!httpBase) {
@@ -409,18 +674,308 @@ class ComfyLauncher extends EventEmitter {
     }
 
     const probe = await probeHttp(httpBase, 1500)
-    if (probe.ok) {
-      this._ownership = 'external'
-      this._setState('external', { statusMessage: `ComfyUI already running at ${httpBase}` })
-    } else {
+    if (!probe.ok) {
       this._ownership = 'none'
       this._setState('idle', { statusMessage: `Something is on ${httpBase} but /system_stats did not respond.` })
+      return
     }
+
+    // Port is answering ComfyUI. Before settling for a read-only "external"
+    // state, try to find its PID via netstat/lsof. If we can identify it,
+    // we can offer Stop/Restart just like a process we spawned ourselves.
+    // This covers the "ComfyStudio crashed, ComfyUI kept running, no state
+    // file" case, as well as users who launched ComfyUI manually.
+    const pid = await this._findOwningPidFor(httpBase)
+    if (pid) {
+      const parsed = parseHttpBase(httpBase)
+      this._child = null
+      this._pid = pid
+      this._ownership = 'ours'
+      this._startedAt = nowMs()
+      this._exitCode = null
+      this._exitSignal = null
+      // Persist so subsequent boots can reclaim directly without needing
+      // netstat (faster + works on locked-down machines).
+      void this._writeStateFile({
+        pid,
+        port: parsed?.port || null,
+        httpBase,
+        startedAt: this._startedAt,
+      })
+      this._appendLog('system', `Adopted running ComfyUI (pid ${pid}) from external process. Stop/Restart enabled.`)
+      this._setState('running', {
+        statusMessage: `Connected to running ComfyUI (pid ${pid}). ComfyStudio didn't start it, but can stop or restart it.`,
+      })
+      return
+    }
+
+    // Couldn't identify the PID (no netstat permission, locked down, etc.).
+    // Fall back to the classic read-only external state.
+    this._ownership = 'external'
+    this._setState('external', { statusMessage: `ComfyUI already running at ${httpBase}` })
+  }
+
+  /**
+   * Return the PID of the process listening on the HTTP port, or null if
+   * we can't determine it. Uses the same platform-specific helpers as
+   * describePortOwner().
+   */
+  async _findOwningPidFor(httpBase) {
+    const base = String(httpBase || '').trim()
+    if (!base) return null
+    const parsed = parseHttpBase(base)
+    const port = parsed.port
+    try {
+      if (process.platform === 'win32') {
+        return await findPidForPortWindows(port)
+      }
+      return await findPidForPortPosix(port)
+    } catch (_) {
+      return null
+    }
+  }
+
+  /**
+   * If ComfyUI is already answering on httpBase, adopt it instead of
+   * spawning a duplicate. Used by start() (Layer 1) and by boot-time
+   * reclaim checks (Layer 2).
+   *
+   * Returns true if we successfully adopted an existing instance.
+   */
+  async _tryAdoptExistingInstance(httpBase) {
+    const base = String(httpBase || '').trim()
+    if (!base) return false
+    const portOpen = await isPortOpen(base, 500)
+    if (!portOpen) return false
+    const probe = await probeHttp(base, 2000)
+    if (!probe.ok) {
+      // Port is taken but the listener isn't ComfyUI (or it's still booting).
+      // Surface a clear idle status but let start() continue — spawn will
+      // fail fast with EADDRINUSE which is handled in Layer 3.
+      this._lastStatusMessage = `Port ${parseHttpBase(base).port} is in use but no ComfyUI responded on /system_stats.`
+      return false
+    }
+
+    this._appendLog('system', `Detected existing ComfyUI on ${base} — adopting instead of spawning.`)
+
+    // Try to identify the owning PID so we can offer Stop/Restart. If we
+    // can't (e.g. netstat unavailable), fall back to read-only external.
+    const pid = await this._findOwningPidFor(base)
+    this._child = null
+    this._exitCode = null
+    this._exitSignal = null
+
+    if (pid) {
+      const parsed = parseHttpBase(base)
+      this._pid = pid
+      this._ownership = 'ours'
+      this._startedAt = nowMs()
+      void this._writeStateFile({
+        pid,
+        port: parsed?.port || null,
+        httpBase: base,
+        startedAt: this._startedAt,
+      })
+      this._setState('running', {
+        statusMessage: `Connected to running ComfyUI (pid ${pid}) at ${base}. Stop/Restart enabled.`,
+      })
+      return true
+    }
+
+    this._pid = null
+    this._ownership = 'external'
+    this._setState('external', {
+      statusMessage: `Adopted running ComfyUI at ${base}. Stop or restart it from the window where it was started.`,
+    })
+    return true
+  }
+
+  // ---- Layer 3: scan logs for well-known errors -------------------------
+
+  /**
+   * Look for the tell-tale bind-failure lines emitted by asyncio / uvicorn /
+   * Python and flip the launcher into a "port-in-use" error state the UI
+   * can render as an actionable banner. Safe to call on every line; exits
+   * early after we've already latched the error so we don't re-fire it on
+   * subsequent tracebacks.
+   */
+  _scanForKnownErrors(line) {
+    if (!line || this._lastError === 'port-in-use') return
+    const text = String(line)
+    const isBindError =
+      text.includes('Errno 10048') ||
+      /\bWinError\s*10048\b/i.test(text) ||
+      /only one usage of each socket address/i.test(text) ||
+      text.includes('EADDRINUSE') ||
+      /address already in use/i.test(text)
+    if (!isBindError) return
+
+    const base = this._getHttpBase?.() || ''
+    const parsed = base ? parseHttpBase(base) : null
+    const port = parsed?.port || 8188
+    this._appendLog('system', `Detected port-in-use error — port ${port} is already bound by another process.`)
+    this._setState('crashed', {
+      statusMessage: `Port ${port} is already in use. ComfyUI could not bind to it.`,
+      error: 'port-in-use',
+    })
+  }
+
+  /**
+   * Best-effort port-owner lookup. Returns { pid, name } when we can
+   * identify who's holding the HTTP port, or { pid: null } otherwise.
+   * Callers should not block the UI on this — it runs a short-lived
+   * system command.
+   */
+  async describePortOwner() {
+    const base = this._getHttpBase?.() || ''
+    if (!base) return { pid: null, name: '', port: null }
+    const parsed = parseHttpBase(base)
+    const port = parsed.port
+    try {
+      if (process.platform === 'win32') {
+        const pid = await findPidForPortWindows(port)
+        if (!pid) return { pid: null, name: '', port }
+        const name = await findProcessNameWindows(pid)
+        return { pid, name, port }
+      }
+      const pid = await findPidForPortPosix(port)
+      if (!pid) return { pid: null, name: '', port }
+      const name = await findProcessNamePosix(pid)
+      return { pid, name, port }
+    } catch (_) {
+      return { pid: null, name: '', port }
+    }
+  }
+
+  // ---- Layer 2: persist + reclaim ---------------------------------------
+
+  async _readStateFile() {
+    if (!this._stateFilePath) return null
+    try {
+      const raw = await fsp.readFile(this._stateFilePath, 'utf8')
+      const parsed = JSON.parse(raw)
+      if (!parsed || typeof parsed !== 'object') return null
+      const pid = Number(parsed.pid)
+      if (!Number.isFinite(pid) || pid <= 0) return null
+      return {
+        pid,
+        port: Number(parsed.port) || null,
+        httpBase: String(parsed.httpBase || ''),
+        startedAt: Number(parsed.startedAt) || 0,
+      }
+    } catch (_) {
+      return null
+    }
+  }
+
+  async _writeStateFile(record) {
+    if (!this._stateFilePath) return
+    try {
+      await fsp.mkdir(path.dirname(this._stateFilePath), { recursive: true })
+      const payload = JSON.stringify(record, null, 2)
+      await fsp.writeFile(this._stateFilePath, payload, 'utf8')
+    } catch (error) {
+      this._appendLog('system', `Could not persist launcher state: ${error?.message || error}`)
+    }
+  }
+
+  async _clearStateFile(reason = '') {
+    if (!this._stateFilePath) return
+    try {
+      await fsp.unlink(this._stateFilePath)
+      if (reason) this._appendLog('system', `Cleared launcher state file (${reason}).`)
+    } catch (error) {
+      if (error?.code !== 'ENOENT') {
+        this._appendLog('system', `Could not clear launcher state file: ${error?.message || error}`)
+      }
+    }
+  }
+
+  _pidIsAlive(pid) {
+    const numeric = Number(pid)
+    if (!Number.isFinite(numeric) || numeric <= 0) return false
+    try {
+      // signal 0 is "just check existence / permissions". Throws ESRCH if
+      // the process is gone. On Windows EPERM can happen for processes we
+      // don't own — treat that as "alive but not ours" and let the
+      // port-probe decide whether it's actually ComfyUI.
+      process.kill(numeric, 0)
+      return true
+    } catch (error) {
+      if (error?.code === 'EPERM') return true
+      return false
+    }
+  }
+
+  /**
+   * Called once during init(). If a previous ComfyStudio session wrote a
+   * state file and the recorded PID is still alive and the HTTP endpoint
+   * still answers as ComfyUI, we "reclaim" the process: treat it as our
+   * own, so Stop / Restart work normally. Otherwise clear the stale file.
+   */
+  async _tryReclaimFromStateFile() {
+    const record = await this._readStateFile()
+    if (!record) return false
+
+    const httpBase = this._getHttpBase?.() || record.httpBase || ''
+    if (!httpBase) {
+      await this._clearStateFile('no http base')
+      return false
+    }
+
+    const alive = this._pidIsAlive(record.pid)
+    if (!alive) {
+      await this._clearStateFile(`pid ${record.pid} is gone`)
+      return false
+    }
+
+    const portOpen = await isPortOpen(httpBase, 500)
+    if (!portOpen) {
+      // PID exists but nothing is on the port. Could be a zombie, or a
+      // launcher that hasn't finished binding yet. Be conservative: don't
+      // claim ownership and don't delete the file — let the normal start
+      // flow re-evaluate.
+      return false
+    }
+
+    const probe = await probeHttp(httpBase, 2000)
+    if (!probe.ok) {
+      // Something is on the port but it isn't answering ComfyUI.
+      // Don't claim ownership of a foreign process.
+      await this._clearStateFile('port taken by non-ComfyUI listener')
+      return false
+    }
+
+    this._child = null // we can't regain stdio pipes for a process we didn't just spawn
+    this._pid = record.pid
+    this._ownership = 'ours'
+    this._startedAt = record.startedAt || nowMs()
+    this._exitCode = null
+    this._exitSignal = null
+    this._appendLog('system', `Reclaimed ComfyUI from previous session (pid ${record.pid}) at ${httpBase}.`)
+    this._setState('running', {
+      statusMessage: `Reconnected to ComfyUI from previous session (pid ${record.pid}).`,
+    })
+    return true
   }
 
   async start() {
     if (this._state === 'running' || this._state === 'starting' || this._state === 'external') {
       return { success: false, error: `ComfyUI is already in state "${this._state}".` }
+    }
+
+    const httpBase = this._getHttpBase?.() || ''
+
+    // Layer 1 — probe before spawn. If ComfyUI is already answering on the
+    // configured port (e.g. the user launched it manually, or our previous
+    // ComfyStudio session crashed and left ComfyUI alive), adopting it is
+    // always the right answer. Spawning a second process would fail with
+    // EADDRINUSE and only confuse the user.
+    if (httpBase) {
+      const adopted = await this._tryAdoptExistingInstance(httpBase)
+      if (adopted) {
+        return { success: true, adopted: true, httpBase }
+      }
     }
 
     const config = safeCloneConfig(this._getConfig?.())
@@ -440,12 +995,23 @@ class ComfyLauncher extends EventEmitter {
       return { success: false, error: message }
     }
 
-    const httpBase = this._getHttpBase?.() || ''
     this._startupTimeoutMs = Math.max(10_000, Number(config.startupTimeoutMs) || DEFAULT_CONFIG.startupTimeoutMs)
 
     this._openLogFile()
     this._appendLog('system', `Starting ComfyUI from ${launcherScript}`)
     this._appendLog('system', `cwd=${path.dirname(launcherScript)} httpBase=${httpBase || 'unknown'}`)
+
+    // Install our runtime guard into the user's custom_nodes/ dir. It's a
+    // tiny prestartup hook that (a) swallows the Windows pipe flush quirk
+    // so emoji prints in third-party nodes don't take down the workflow,
+    // and (b) injects CREATE_NO_WINDOW into Python subprocess calls so
+    // custom nodes probing pip/git/ffmpeg at boot don't flash cmd windows
+    // on screen. Best-effort — if it fails we log and keep going.
+    try {
+      await this._installStdoutGuard(launcherScript)
+    } catch (err) {
+      this._appendLog('system', `runtime guard install skipped: ${err?.message || err}`)
+    }
 
     let child
     try {
@@ -468,15 +1034,34 @@ class ComfyLauncher extends EventEmitter {
     this._probingSince = nowMs()
     this._setState('starting', { statusMessage: `Starting ComfyUI (pid ${this._pid}). First boot can take 30-60s.` })
 
+    // Persist pid/port so a future ComfyStudio boot can reclaim this child
+    // if we crash before it exits. Fire-and-forget: we never block startup
+    // on disk I/O.
+    if (this._pid) {
+      const parsed = httpBase ? parseHttpBase(httpBase) : null
+      void this._writeStateFile({
+        pid: this._pid,
+        port: parsed?.port || null,
+        httpBase: httpBase || '',
+        startedAt: this._startedAt,
+      })
+    }
+
     child.stdout?.on('data', (buf) => {
       const result = chunkToLines(buf, this._stdoutTrailing)
       this._stdoutTrailing = result.trailing
-      for (const line of result.lines) this._appendLog('stdout', line)
+      for (const line of result.lines) {
+        this._appendLog('stdout', line)
+        this._scanForKnownErrors(line)
+      }
     })
     child.stderr?.on('data', (buf) => {
       const result = chunkToLines(buf, this._stderrTrailing)
       this._stderrTrailing = result.trailing
-      for (const line of result.lines) this._appendLog('stderr', line)
+      for (const line of result.lines) {
+        this._appendLog('stderr', line)
+        this._scanForKnownErrors(line)
+      }
     })
     child.on('exit', (code, signal) => {
       this._exitCode = typeof code === 'number' ? code : null
@@ -489,6 +1074,7 @@ class ComfyLauncher extends EventEmitter {
       this._pid = null
       this._ownership = 'none'
       this._stopProbing()
+      void this._clearStateFile('process exited')
 
       if (explicit) {
         this._setState('stopped', { statusMessage: 'ComfyUI stopped.' })
@@ -517,6 +1103,25 @@ class ComfyLauncher extends EventEmitter {
     const extraArgTokens = extraArgs ? splitShellArgs(extraArgs) : []
     const isWindowsBat = /\.(bat|cmd)$/i.test(launcherScript)
 
+    // Env vars needed on every spawn path to keep Python's stdout sane when
+    // we're owning the pipes:
+    //   PYTHONIOENCODING=utf-8  — so nodes that print non-ASCII (emojis,
+    //     CJK) don't hit codec errors on Windows code-page pipes.
+    //   PYTHONUTF8=1            — belt-and-suspenders: activates Python's
+    //     full UTF-8 Mode (affects more defaults than PYTHONIOENCODING).
+    //   PYTHONUNBUFFERED=1      — CRITICAL. Fixes a crash where custom-node
+    //     logging wrappers (notably ComfyUI-Manager's prestartup_script)
+    //     call `original_stdout.flush()` without a try/except. On Windows
+    //     piped stdout, flush() can raise OSError:[Errno 22] for normal
+    //     messages, which aborts the whole node. Unbuffered stdout empties
+    //     the buffer after every write, so flush() becomes a safe no-op.
+    const pythonEnv = {
+      ...process.env,
+      PYTHONIOENCODING: 'utf-8',
+      PYTHONUTF8: '1',
+      PYTHONUNBUFFERED: '1',
+    }
+
     // Preferred path: if the launcher lives inside a standard ComfyUI
     // portable build, spawn python directly. This lets us pass flags like
     // --disable-auto-launch reliably because the default .bat files in
@@ -527,6 +1132,18 @@ class ComfyLauncher extends EventEmitter {
       if (config.disableAutoLaunch !== false) {
         baseArgs = ensureArgFlag(baseArgs, '--disable-auto-launch')
       }
+      // --enable-cors-header "*" is required for ComfyStudio's renderer to
+      // talk to ComfyUI in dev mode (Vite at 127.0.0.1:5173 vs. ComfyUI at
+      // 127.0.0.1:8188) and to read mask / render-cache PNGs back into a
+      // canvas without being blocked by ComfyUI's origin-only middleware.
+      // See comfyui/server.py::origin_only_middleware — when this flag is
+      // absent, any request whose Origin host != ComfyUI's Host is
+      // rejected with 403, which shows up in the ComfyUI log as a wall of
+      // "WARNING: request with non matching host and origin" lines and
+      // silently breaks cross-origin image readback. In production Electron
+      // the page loads from file:// (Origin: "null") so the check is a
+      // no-op and the lack of this flag didn't matter; dev mode exposed it.
+      baseArgs = ensureArgWithValue(baseArgs, '--enable-cors-header', '*')
       const mergedArgs = (() => {
         const out = [...baseArgs]
         for (const token of extraArgTokens) {
@@ -544,7 +1161,7 @@ class ComfyLauncher extends EventEmitter {
         // ComfyStudio is running; on detach we release them explicitly.
         detached: true,
         stdio: ['ignore', 'pipe', 'pipe'],
-        env: { ...process.env, PYTHONIOENCODING: 'utf-8' },
+        env: pythonEnv,
       })
     }
 
@@ -553,6 +1170,13 @@ class ComfyLauncher extends EventEmitter {
     if (process.platform === 'win32' && isWindowsBat) {
       const args = ['/c', launcherScript]
       if (config.disableAutoLaunch !== false) args.push('--disable-auto-launch')
+      // See the big comment on --enable-cors-header in the portable branch
+      // above. Whether this actually reaches main.py depends on the user's
+      // .bat forwarding %*; the stock ComfyUI portable .bat files do NOT,
+      // so users on the fallback path may still need to either (a) let us
+      // use the portable python directly, or (b) add the flag to their
+      // launcher script themselves.
+      args.push('--enable-cors-header', '*')
       if (extraArgTokens.length) args.push(...extraArgTokens)
       this._appendLog('system', `Launching ComfyUI via cmd /c ${launcherScript} (args forwarding depends on your .bat)`)
       return spawn('cmd.exe', args, {
@@ -560,12 +1184,18 @@ class ComfyLauncher extends EventEmitter {
         windowsHide: true,
         detached: true,
         stdio: ['ignore', 'pipe', 'pipe'],
+        env: pythonEnv,
       })
     }
 
     if (process.platform !== 'win32') {
       const parts = []
       if (config.disableAutoLaunch !== false) parts.push('--disable-auto-launch')
+      // Same rationale as the Windows .bat branch. Shell-quoted so the
+      // asterisk isn't expanded by bash glob: launchers running in dirs
+      // with matching filenames would otherwise expand `*` into the
+      // directory listing and confuse aiohttp's arg parser.
+      parts.push('--enable-cors-header "*"')
       if (extraArgs) parts.push(extraArgs)
       const cmd = parts.length
         ? `exec "${launcherScript}" ${parts.join(' ')}`
@@ -574,15 +1204,20 @@ class ComfyLauncher extends EventEmitter {
         cwd,
         stdio: ['ignore', 'pipe', 'pipe'],
         detached: true,
+        env: pythonEnv,
       })
     }
 
     const finalArgs = [...extraArgTokens]
     if (config.disableAutoLaunch !== false) finalArgs.unshift('--disable-auto-launch')
+    // See portable-branch comment above for the rationale. Passed directly
+    // (no shell quoting needed since we're spawning without a shell).
+    finalArgs.push('--enable-cors-header', '*')
     return spawn(launcherScript, finalArgs, {
       cwd,
       windowsHide: true,
       stdio: ['ignore', 'pipe', 'pipe'],
+      env: pythonEnv,
     })
   }
 
@@ -628,16 +1263,39 @@ class ComfyLauncher extends EventEmitter {
     if (this._state === 'external') {
       return { success: false, error: 'ComfyUI was started outside of ComfyStudio. Stop it from the window where you started it.' }
     }
-    if (!this._child) {
+    if (!this._child && !this._pid) {
       return { success: false, error: 'No ComfyUI process is currently owned by ComfyStudio.' }
     }
     this._setState('stopping', { statusMessage: 'Stopping ComfyUI…' })
     this._appendLog('system', 'Stop requested by user.')
+
+    // Normal case: we spawned the child and have it on `_child`.
+    if (this._child) {
+      try {
+        await killProcessTree(this._child)
+        void this._clearStateFile('stop requested')
+        return { success: true }
+      } catch (error) {
+        const message = `Failed to stop ComfyUI: ${error?.message || error}`
+        this._appendLog('system', message)
+        this._setState('running', { statusMessage: message, error: 'stop-failed' })
+        return { success: false, error: message }
+      }
+    }
+
+    // Reclaimed case: we only have the PID (previous ComfyStudio session
+    // spawned it). Kill by PID directly.
+    const pid = this._pid
     try {
-      await killProcessTree(this._child)
+      await killByPid(pid)
+      this._pid = null
+      this._ownership = 'none'
+      this._stopProbing()
+      void this._clearStateFile('stop requested (reclaimed)')
+      this._setState('stopped', { statusMessage: 'ComfyUI stopped.' })
       return { success: true }
     } catch (error) {
-      const message = `Failed to stop ComfyUI: ${error?.message || error}`
+      const message = `Failed to stop ComfyUI (pid ${pid}): ${error?.message || error}`
       this._appendLog('system', message)
       this._setState('running', { statusMessage: message, error: 'stop-failed' })
       return { success: false, error: message }
@@ -652,12 +1310,13 @@ class ComfyLauncher extends EventEmitter {
       }
     }
 
-    if (this._child) {
+    if (this._child || (this._pid && this._ownership === 'ours')) {
       this._appendLog('system', 'Restart requested by user.')
       const stopResult = await this.stop()
       if (!stopResult.success) return stopResult
-      // Wait for the child exit to fully settle.
-      await sleep(300)
+      // Wait for the child exit to fully settle and the port to close so
+      // the subsequent start() doesn't hit EADDRINUSE.
+      await sleep(600)
     }
 
     return this.start()
@@ -669,12 +1328,19 @@ class ComfyLauncher extends EventEmitter {
   }
 
   async shutdown({ confirmStop = true } = {}) {
-    if (!this._child) return { stopped: false }
+    if (!this._child && !this._pid) return { stopped: false }
     const config = safeCloneConfig(this._getConfig?.())
     if (!config.stopOnQuit && !confirmStop) return { stopped: false }
     this._setState('stopping', { statusMessage: 'Stopping ComfyUI (app shutting down)…' })
     this._appendLog('system', 'Shutdown requested by host app.')
-    try { await killProcessTree(this._child) } catch (_) { /* ignore */ }
+    try {
+      if (this._child) {
+        await killProcessTree(this._child)
+      } else if (this._pid) {
+        await killByPid(this._pid)
+      }
+    } catch (_) { /* ignore */ }
+    void this._clearStateFile('host shutdown')
     return { stopped: true }
   }
 

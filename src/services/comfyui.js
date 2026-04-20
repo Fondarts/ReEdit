@@ -8,6 +8,10 @@ import {
   getLocalComfyWsBaseSync,
   hydrateLocalComfyConnection,
 } from './localComfyConnection'
+import {
+  isInsufficientCreditsError,
+  notifyComfyPartnerCreditsLow,
+} from './comfyPartnerAuth'
 
 const COMFY_ORG_API_KEY_SETTING_KEY = 'comfyApiKeyComfyOrg';
 const COMFY_ORG_API_KEY_LOCAL_KEY = 'comfystudio-comfy-api-key';
@@ -77,7 +81,42 @@ class ComfyUIService {
     this.wsFailCount = 0;
     this.lastWsAttempt = 0;
     this.wsBackoffMs = 5000; // Minimum time between reconnection attempts
+    // Small rolling cache of promptId -> { [nodeId]: classType }. Consumers
+    // (e.g. the launcher log bridge) can use this to label node IDs with
+    // their class_type in human-readable log output.
+    this._promptNodeMeta = new Map();
+    this._promptNodeMetaMax = 32;
     void hydrateLocalComfyConnection()
+  }
+
+  /**
+   * Look up the class_type of a node in a recently-submitted prompt.
+   * Returns null if the prompt has aged out of the cache or the node is
+   * unknown.
+   */
+  getNodeClassType(promptId, nodeId) {
+    if (!promptId || nodeId == null) return null;
+    const meta = this._promptNodeMeta.get(String(promptId));
+    if (!meta) return null;
+    return meta[String(nodeId)] || null;
+  }
+
+  _rememberPromptNodeMeta(promptId, workflow) {
+    if (!promptId || !workflow || typeof workflow !== 'object') return;
+    try {
+      const map = {};
+      for (const [nodeId, node] of Object.entries(workflow)) {
+        if (node && typeof node === 'object' && typeof node.class_type === 'string') {
+          map[String(nodeId)] = node.class_type;
+        }
+      }
+      this._promptNodeMeta.set(String(promptId), map);
+      while (this._promptNodeMeta.size > this._promptNodeMetaMax) {
+        const firstKey = this._promptNodeMeta.keys().next().value;
+        if (firstKey === undefined) break;
+        this._promptNodeMeta.delete(firstKey);
+      }
+    } catch (_) { /* ignore */ }
   }
 
   generateClientId() {
@@ -210,6 +249,34 @@ class ComfyUIService {
       });
     } else if (type === 'status') {
       this.emit('status', data.data);
+    } else if (type === 'execution_start') {
+      this.emit('execution_start', {
+        promptId: data.data?.prompt_id,
+        timestamp: data.data?.timestamp,
+      });
+    } else if (type === 'execution_cached') {
+      this.emit('execution_cached', {
+        promptId: data.data?.prompt_id,
+        nodes: Array.isArray(data.data?.nodes) ? data.data.nodes : [],
+      });
+    } else if (type === 'execution_success') {
+      this.emit('execution_success', {
+        promptId: data.data?.prompt_id,
+        timestamp: data.data?.timestamp,
+      });
+    } else if (type === 'execution_error') {
+      this.emit('execution_error', {
+        promptId: data.data?.prompt_id,
+        nodeId: data.data?.node_id,
+        nodeType: data.data?.node_type,
+        message: data.data?.exception_message || data.data?.exception_type || 'Execution error',
+        traceback: Array.isArray(data.data?.traceback) ? data.data.traceback : undefined,
+      });
+    } else if (type === 'execution_interrupted') {
+      this.emit('execution_interrupted', {
+        promptId: data.data?.prompt_id,
+        nodeId: data.data?.node_id,
+      });
     }
   }
 
@@ -289,14 +356,95 @@ class ComfyUIService {
       });
 
       if (!response.ok) {
-        const error = await response.json();
-        throw new Error(error.error?.message || 'Failed to queue prompt');
+        // Try to pull a structured body for better error messages. Some
+        // ComfyUI / partner-node failures return JSON, others a plain string.
+        let errorBody = null
+        try {
+          errorBody = await response.json()
+        } catch (_) {
+          try { errorBody = await response.text() } catch (_) { /* ignore */ }
+        }
+
+        // ComfyUI's /prompt validation failures put the real cause in
+        // `node_errors` (per-node diagnostics like "value_not_in_list",
+        // "required_input_missing", or custom validators) and extra context
+        // in `error.details` / `error.extra_info`. The top-level
+        // `error.message` is usually just the generic label
+        // ("Prompt outputs failed validation"), so we synthesise a richer
+        // message that callers (and users) can actually act on.
+        const topMessage =
+          (errorBody && typeof errorBody === 'object' && (errorBody.error?.message || errorBody.message)) ||
+          (typeof errorBody === 'string' && errorBody) ||
+          `Failed to queue prompt (${response.status})`
+
+        const nodeErrorLines = []
+        if (errorBody && typeof errorBody === 'object' && errorBody.node_errors && typeof errorBody.node_errors === 'object') {
+          for (const [nodeId, nodeInfo] of Object.entries(errorBody.node_errors)) {
+            const classType = nodeInfo?.class_type || 'unknown'
+            const errs = Array.isArray(nodeInfo?.errors) ? nodeInfo.errors : []
+            for (const nodeErr of errs) {
+              const parts = [
+                `Node ${nodeId} (${classType})`,
+                nodeErr?.type ? `[${nodeErr.type}]` : null,
+                nodeErr?.message || null,
+                nodeErr?.details ? `— ${nodeErr.details}` : null,
+              ].filter(Boolean)
+              nodeErrorLines.push(parts.join(' '))
+            }
+          }
+        }
+
+        const extraDetails =
+          errorBody && typeof errorBody === 'object'
+            ? errorBody.error?.details || errorBody.details || null
+            : null
+
+        const message = [
+          topMessage,
+          nodeErrorLines.length ? nodeErrorLines.join('\n') : null,
+          extraDetails && typeof extraDetails === 'string' && !nodeErrorLines.length ? extraDetails : null,
+        ]
+          .filter(Boolean)
+          .join('\n')
+
+        // Detect Comfy partner credit exhaustion at the earliest possible
+        // point. Dispatching the event here means any chip/banner anywhere
+        // in the UI can flip into the actionable "out of credits" state
+        // regardless of which code path triggered the submission.
+        const insufficient =
+          response.status === 402 ||
+          isInsufficientCreditsError({ status: response.status, message, error: errorBody })
+        if (insufficient) {
+          notifyComfyPartnerCreditsLow({
+            status: response.status,
+            message,
+          })
+        }
+
+        try { console.error('[ComfyUI] /prompt error body:', errorBody) } catch (_) { /* ignore */ }
+
+        const err = new Error(message)
+        err.status = response.status
+        err.insufficientCredits = insufficient
+        err.rawBody = errorBody
+        err.nodeErrors = (errorBody && typeof errorBody === 'object' && errorBody.node_errors) || null
+        throw err
       }
 
       const result = await response.json();
+      this._rememberPromptNodeMeta(result?.prompt_id, workflow);
       return result.prompt_id;
     } catch (error) {
       console.error('Error queuing prompt:', error);
+      // Also catch cases where the error string surfaced from deeper in the
+      // stack already signalled insufficient funds (e.g. partner node threw
+      // after the initial /prompt queue accepted the request).
+      if (!error?.insufficientCredits && isInsufficientCreditsError(error)) {
+        notifyComfyPartnerCreditsLow({
+          status: error?.status ?? null,
+          message: error?.message ?? String(error),
+        })
+      }
       throw error;
     }
   }
@@ -648,14 +796,46 @@ class ComfyUIService {
 // Singleton instance
 export const comfyui = new ComfyUIService();
 
+const IMAGE_EXTENSIONS_FOR_MASK_WORKFLOW = ['.png', '.jpg', '.jpeg', '.webp', '.gif', '.bmp', '.tiff', '.tif']
+
+/**
+ * Heuristic: is `filename` a still image (versus a video)? Used to decide
+ * whether the mask workflow should wire up `VHS_LoadVideo` or `LoadImage` for
+ * node 8. We only peek at the extension because that's the same signal ComfyUI
+ * itself uses to route uploads into `input/` — the file contents have already
+ * been validated by the uploader.
+ */
+function isImageFilenameForMaskWorkflow(filename) {
+  const name = String(filename || '').toLowerCase()
+  const dot = name.lastIndexOf('.')
+  if (dot < 0) return false
+  const ext = name.slice(dot)
+  return IMAGE_EXTENSIONS_FOR_MASK_WORKFLOW.includes(ext)
+}
+
 /**
  * Workflow modifier for Mask Generation (SAM3 + MatAnyone)
- * 
+ *
  * Workflow nodes:
- * - Node 8 (VHS_LoadVideo): Load the input video/image
+ * - Node 8 (VHS_LoadVideo OR LoadImage): Load the input video/image
  * - Node 12 (SAM3VideoSegmentation): Text prompt for segmentation
  * - Node 5 (SaveImage): Output filename prefix
- * 
+ *
+ * Why two loader classes: `VHS_LoadVideo` goes through OpenCV's VideoCapture,
+ * which can (and does, inconsistently) fail to open single-frame PNG/JPG/WEBP
+ * files with a generic `ValueError: ... could not be loaded with cv.` This
+ * bites every user who tries to mask a still image — the most common mask-gen
+ * use case. The failure surfaces in the app as a useless "Generation failed"
+ * banner because the error only lives in ComfyUI's history payload.
+ *
+ * The fix is the same trick we applied to the caption transcription workflow:
+ * inspect the uploaded filename, and if it's an image, rewrite node 8 as a
+ * ComfyUI-builtin `LoadImage` (which reads PIL-supported formats natively and
+ * returns a 1-frame IMAGE tensor `[1,H,W,C]`). Downstream nodes
+ * (`SAM3VideoSegmentation`, `MatAnyoneVideoMatting`) already declare their
+ * `video_frames` input as IMAGE, so a 1-frame batch drops right in without
+ * re-wiring slots.
+ *
  * @param {Object} workflow - The base mask generation workflow
  * @param {Object} options - Configuration options
  * @returns {Object} Modified workflow
@@ -672,9 +852,30 @@ export function modifyMaskWorkflow(workflow, options = {}) {
   // Create a deep copy
   const modified = JSON.parse(JSON.stringify(workflow));
 
-  // Update input video/image (node 8 - VHS_LoadVideo)
   if (modified['8']) {
-    modified['8'].inputs.video = inputFilename;
+    if (isImageFilenameForMaskWorkflow(inputFilename)) {
+      // Replace VHS_LoadVideo with LoadImage. Output slot 0 is IMAGE on both
+      // classes, so the existing `["8", 0]` references in downstream nodes stay
+      // valid. We intentionally drop VHS-specific inputs (force_rate,
+      // frame_load_cap, format, etc.) because LoadImage doesn't accept them
+      // and ComfyUI will reject the prompt with "extra inputs not allowed".
+      modified['8'] = {
+        inputs: {
+          image: inputFilename,
+          // The `upload` hint is how the ComfyUI web client triggers the upload
+          // dropzone, but the server ignores it during graph execution. Still,
+          // we include it so the workflow matches what ComfyUI exports when a
+          // user picks an uploaded image manually.
+          upload: 'image',
+        },
+        class_type: 'LoadImage',
+        _meta: {
+          title: 'Load Image',
+        },
+      }
+    } else {
+      modified['8'].inputs.video = inputFilename;
+    }
   }
 
   // Update text prompt and threshold (node 12 - SAM3VideoSegmentation)

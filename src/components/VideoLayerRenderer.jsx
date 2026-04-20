@@ -34,6 +34,15 @@ function isLayerFullyObscuring(clip, playheadPosition, getAssetById) {
   if (asset?.settings?.hasAlpha === true) {
     return false
   }
+  // A clip with an enabled mask effect punches transparency into itself via
+  // MaskedVideoCanvas, so layers below it must keep rendering. Without this
+  // guard the culler thinks an untransformed, full-opacity masked clip fully
+  // covers the frame and drops the background layer -- the hole the mask
+  // carves out then shows nothing (black preview backdrop) instead of the
+  // layer the user composed underneath.
+  if (Array.isArray(clip.effects) && clip.effects.some(e => e?.type === 'mask' && e?.enabled)) {
+    return false
+  }
   const clipTime = playheadPosition - (clip.startTime || 0)
   const t = getAnimatedTransform(clip, clipTime)
   if (!t) return false
@@ -391,41 +400,300 @@ function useClipUrl(clip) {
 }
 
 /**
- * Hook to get mask effect styles for a clip
- * Returns CSS mask properties if the clip has enabled mask effects
- * Returns empty object if clip is using cached render (mask already baked in)
+ * Module-level cache of decoded mask-frame images.
+ *
+ * Rationale (and change history):
+ *
+ * The original live-preview path applied masks via CSS
+ * `mask-image: url(<comfyui /view URL>)` on a div wrapping the video element
+ * and swapped that URL to a different PNG on every tick of the PNG sequence.
+ * That approach had a string of problems that turned out to be unfixable
+ * without getting off the CSS-mask primitive entirely:
+ *
+ *   1. Every URL change made Chrome re-resolve the mask-image asset. Until
+ *      that resolved (even from the CSS image cache), the element painted
+ *      with no mask at all — the visible "flash to unmasked video".
+ *   2. Even holding the URL constant, any state update in the app that
+ *      caused React to re-spread the styles object onto the div (e.g. the
+ *      ComfyUI WebSocket reconnect that fires every 5s on a dead
+ *      connection, or any polling interval that happens to cascade into
+ *      VideoLayer) made Chrome re-evaluate mask-image and occasionally
+ *      drop it for a paint. User report: "it flashes every 5 seconds" while
+ *      the playhead was parked.
+ *   3. CSS mask-image puts the video layer onto a slow software paint path
+ *      in Chromium; GPU-accelerated video layers and mask compositing don't
+ *      play well together, so even the steady-state case was doing extra
+ *      work on the CPU for no reason.
+ *
+ * The export path (`exporter.js`) has always composited masks on a canvas
+ * via `globalCompositeOperation = 'destination-in'` and has never had any
+ * of these issues because it's an atomic per-frame paint. MaskedVideoCanvas
+ * below is the same algorithm running live. This module-level Map stores
+ * the decoded `<img>` elements it needs; every entry is keyed by
+ * `maskAsset.id` and carries a cheap `version` token so we rebuild when
+ * the mask is regenerated but reuse when the same asset is applied to
+ * another clip.
+ *
+ * Note: we still call the preloader for image-layer masks (which continue
+ * to use CSS mask-image — different element, no flashing reported there).
+ * Canvas compositing is video-only for now; images can follow if needed.
+ */
+// maskAsset.id -> { version, entries: Array<HTMLCanvasElement | null> }
+// Each entry is the alpha-encoded processed canvas for one frame of the
+// mask PNG sequence (see processMaskImageToAlphaCanvas), or null if that
+// frame hasn't finished loading + processing yet.
+const maskFramePreloadCache = new Map()
+
+function collectMaskFrameUrls(maskAsset) {
+  if (!maskAsset) return []
+  const frames = Array.isArray(maskAsset.maskFrames) ? maskAsset.maskFrames : []
+  const urls = frames.map((f) => f?.url).filter(Boolean)
+  if (urls.length > 0) return urls
+  return maskAsset.url ? [maskAsset.url] : []
+}
+
+/**
+ * Turn a raw grayscale SAM3 mask PNG into a canvas whose ALPHA channel
+ * encodes the mask. This is the piece CSS `mask-mode: luminance` does for
+ * us behind the scenes; on canvas we have to do it explicitly because
+ * `globalCompositeOperation = 'destination-in'` operates on the source's
+ * alpha channel only. SAM3 PNGs ship as RGB (alpha=255 everywhere), so
+ * without this pass `destination-in` would keep the whole frame.
+ *
+ * Runs once per frame at preload time, not per paint, so the ~10ms cost
+ * of a per-pixel loop on a 1080p mask is paid once and then the render
+ * loop stays free.
+ */
+function processMaskImageToAlphaCanvas(img) {
+  const w = img?.naturalWidth
+  const h = img?.naturalHeight
+  if (!w || !h) return null
+  try {
+    const canvas = document.createElement('canvas')
+    canvas.width = w
+    canvas.height = h
+    const ctx = canvas.getContext('2d', { alpha: true, willReadFrequently: true })
+    if (!ctx) return null
+    ctx.drawImage(img, 0, 0)
+    const data = ctx.getImageData(0, 0, w, h)
+    const pixels = data.data
+    for (let i = 0; i < pixels.length; i += 4) {
+      // Luminance → alpha. RGB can be anything afterwards since
+      // destination-in only samples alpha; we set them white for clarity
+      // while debugging (e.g. temporarily compositing onto a red bg).
+      const lum = (pixels[i] + pixels[i + 1] + pixels[i + 2]) / 3
+      pixels[i] = 255
+      pixels[i + 1] = 255
+      pixels[i + 2] = 255
+      pixels[i + 3] = lum
+    }
+    ctx.putImageData(data, 0, 0)
+    return canvas
+  } catch (err) {
+    // SecurityError here means the image was cross-origin without CORS
+    // headers — drawImage succeeded but getImageData tainted. Shouldn't
+    // happen against ComfyUI's /view (open CORS) but we log so the
+    // failure mode is findable if a user ever hits it.
+    console.warn('[mask] failed to process mask image into alpha canvas', err)
+    return null
+  }
+}
+
+function ensureMaskFramesPreloaded(maskAsset) {
+  if (!maskAsset?.id) return
+  const urls = collectMaskFrameUrls(maskAsset)
+  if (urls.length === 0) return
+  // Version key invalidates the cache when the mask asset's frame list
+  // changes (regeneration). We intentionally don't hash every URL — the
+  // frame count flip plus first/last URLs is enough signal and keeps this
+  // O(1) per mount.
+  const version = `${urls.length}:${urls[0]}:${urls[urls.length - 1]}`
+  const existing = maskFramePreloadCache.get(maskAsset.id)
+  if (existing && existing.version === version) return
+
+  // Entries start as null (not yet loaded + processed) and get filled in
+  // when each Image's onload fires. The renderer treats null as "not
+  // ready; draw video unmasked for this frame", so the user briefly sees
+  // the raw clip for a paint or two and then the mask pops in — no more
+  // disruptive than the mask itself appearing.
+  const entries = urls.map(() => null)
+  const record = { version, entries }
+  maskFramePreloadCache.set(maskAsset.id, record)
+
+  urls.forEach((url, idx) => {
+    const img = new Image()
+    img.crossOrigin = 'anonymous'
+    img.decoding = 'async'
+    img.onload = () => {
+      // Guard against stale completions: if the record was replaced while
+      // we were downloading (user regenerated the mask), drop the result.
+      if (maskFramePreloadCache.get(maskAsset.id) !== record) return
+      record.entries[idx] = processMaskImageToAlphaCanvas(img)
+    }
+    img.onerror = () => {
+      if (maskFramePreloadCache.get(maskAsset.id) !== record) return
+      // Leave as null; renderer will fall back to unmasked for this frame.
+    }
+    img.src = url
+  })
+}
+
+function useMaskFramePreloader(maskAsset) {
+  useEffect(() => {
+    if (!maskAsset) return
+    ensureMaskFramesPreloaded(maskAsset)
+  }, [maskAsset?.id, maskAsset?.frameCount, maskAsset?.maskFrames?.length])
+}
+
+/**
+ * Look up a preloaded, alpha-encoded mask canvas for a given frame index.
+ * Returns null if the frame hasn't finished decoding + processing yet —
+ * callers should either draw the unmasked video or skip the draw.
+ */
+function getPreloadedMaskFrame(maskAsset, frameIndex) {
+  if (!maskAsset?.id) return null
+  const entry = maskFramePreloadCache.get(maskAsset.id)
+  if (!entry || !Array.isArray(entry.entries) || entry.entries.length === 0) return null
+  const clamped = Math.max(0, Math.min(frameIndex | 0, entry.entries.length - 1))
+  return entry.entries[clamped] || null
+}
+
+/**
+ * Hook that figures out the *active* mask for a clip and the correct
+ * frame index within it, without producing any CSS styles.
+ *
+ * Used by:
+ *   - `MaskedVideoCanvas` to know what to paint.
+ *   - `VideoLayer` to decide whether to render the canvas compositor at all.
+ *
+ * Deliberately split from `useMaskEffectStyle` below: image layers still
+ * go through CSS mask (works fine there, no flashing reported), video layers
+ * go through the canvas compositor (no CSS mask at all).
+ */
+function useMaskFrameSelection(clip, playheadPosition, isCachedRender = false) {
+  const getAssetById = useAssetsStore(state => state.getAssetById)
+
+  // Identity-only memo: only recomputes when the clip's effect list changes
+  // or a new mask asset is assigned. Does NOT depend on playheadPosition.
+  const meta = useMemo(() => {
+    if (isCachedRender || !clip || !clip.effects) return { isActive: false }
+    const maskEffects = clip.effects.filter((e) => e.type === 'mask' && e.enabled)
+    if (maskEffects.length === 0) return { isActive: false }
+    const effect = maskEffects[0]
+    const asset = getAssetById(effect.maskAssetId)
+    if (!asset) return { isActive: false }
+    const sourceAsset = asset.sourceAssetId ? getAssetById(asset.sourceAssetId) : null
+    return {
+      isActive: true,
+      maskAsset: asset,
+      invertMask: !!effect.invertMask,
+      maskFrameCount: asset.frameCount || asset.maskFrames?.length || 1,
+      sourceDuration:
+        clip.sourceDuration
+        || sourceAsset?.duration
+        || sourceAsset?.settings?.duration
+        || asset?.settings?.duration
+        || clip.duration,
+    }
+  }, [clip, clip?.effects, isCachedRender, getAssetById])
+
+  // Kick off preloading for the mask's PNG sequence as soon as it's bound
+  // to a clip. Harmless if already cached.
+  useMaskFramePreloader(meta.maskAsset)
+
+  // The only piece of state that changes as the playhead moves.
+  const frameIndex = useMemo(() => {
+    if (!meta.isActive || !meta.maskAsset) return 0
+    if (!Array.isArray(meta.maskAsset.maskFrames) || meta.maskAsset.maskFrames.length <= 1) return 0
+    const clipTime = playheadPosition - clip.startTime
+    const rawTimeScale = clip?.sourceTimeScale || (clip?.timelineFps && clip?.sourceFps
+      ? clip.timelineFps / clip.sourceFps
+      : 1)
+    const speed = Number(clip?.speed)
+    const speedScale = Number.isFinite(speed) && speed > 0 ? speed : 1
+    const timeScale = rawTimeScale * speedScale
+    const reverse = !!clip?.reverse
+    const trimStart = clip.trimStart || 0
+    const rawTrimEnd = clip.trimEnd ?? meta.sourceDuration ?? trimStart
+    const trimEnd = Number.isFinite(rawTrimEnd) ? rawTrimEnd : trimStart
+    const sourceTime = reverse
+      ? trimEnd - clipTime * timeScale
+      : trimStart + clipTime * timeScale
+    const sourceProgress = meta.sourceDuration > 0
+      ? Math.max(0, Math.min(1, sourceTime / meta.sourceDuration))
+      : 0
+    return Math.min(
+      Math.max(0, Math.floor(sourceProgress * meta.maskFrameCount)),
+      meta.maskFrameCount - 1,
+    )
+  }, [
+    meta.isActive,
+    meta.maskAsset,
+    meta.maskFrameCount,
+    meta.sourceDuration,
+    clip?.startTime,
+    clip?.sourceTimeScale,
+    clip?.timelineFps,
+    clip?.sourceFps,
+    clip?.speed,
+    clip?.reverse,
+    clip?.trimStart,
+    clip?.trimEnd,
+    playheadPosition,
+  ])
+
+  return {
+    isActive: !!meta.isActive,
+    maskAsset: meta.maskAsset || null,
+    invertMask: !!meta.invertMask,
+    frameIndex,
+    maskFrameCount: meta.maskFrameCount || 0,
+  }
+}
+
+/**
+ * Legacy CSS-mask hook.
+ *
+ * Kept ONLY for image layers; video layers no longer touch CSS mask
+ * because it flashes whenever any unrelated state update causes the
+ * styles object to be re-spread onto the div (see the comment on
+ * `maskFramePreloadCache`). Video layers use `<MaskedVideoCanvas>`
+ * instead.
+ *
+ * When called on a video clip this returns `{}` so callers that still
+ * spread `...maskStyles` are no-ops. That's the cheapest way to disarm
+ * the CSS path without surgery at every call site.
  */
 function useMaskEffectStyle(clip, playheadPosition, isCachedRender = false) {
   const getAssetById = useAssetsStore(state => state.getAssetById)
-  
+
+  // Always keep the preloader warm if a mask is bound, even on video
+  // clips — MaskedVideoCanvas reads from the same cache.
+  const resolvedMaskAsset = useMemo(() => {
+    if (isCachedRender || !clip?.effects) return null
+    const effects = clip.effects.filter((e) => e.type === 'mask' && e.enabled)
+    if (effects.length === 0) return null
+    return getAssetById(effects[0].maskAssetId) || null
+  }, [clip, clip?.effects, isCachedRender, getAssetById])
+  useMaskFramePreloader(resolvedMaskAsset)
+
   return useMemo(() => {
-    // Skip CSS masks if using cached render (mask is already composited)
     if (isCachedRender) return {}
-    
-    if (!clip || !clip.effects) return {}
-    
-    // Find enabled mask effects
-    const maskEffects = clip.effects.filter(e => e.type === 'mask' && e.enabled)
-    if (maskEffects.length === 0) return {}
-    
-    // Use the first mask effect (for now, we only support one mask per clip)
-    const maskEffect = maskEffects[0]
-    const maskAsset = getAssetById(maskEffect.maskAssetId)
-    
-    if (!maskAsset) return {}
-    const sourceAsset = maskAsset.sourceAssetId ? getAssetById(maskAsset.sourceAssetId) : null
-    const maskFrameCount = maskAsset.frameCount || maskAsset.maskFrames?.length || 1
+    // Video clips: canvas compositor handles it. Don't fight it from CSS.
+    if (clip?.type === 'video') return {}
+    if (!resolvedMaskAsset) return {}
+
+    const maskFrameCount = resolvedMaskAsset.frameCount || resolvedMaskAsset.maskFrames?.length || 1
+    const sourceAsset = resolvedMaskAsset.sourceAssetId ? getAssetById(resolvedMaskAsset.sourceAssetId) : null
     const sourceDuration = clip.sourceDuration
       || sourceAsset?.duration
       || sourceAsset?.settings?.duration
-      || maskAsset?.settings?.duration
+      || resolvedMaskAsset?.settings?.duration
       || clip.duration
-    
-    // For video masks (PNG sequences), we need to get the correct frame
-    let maskUrl = maskAsset.url
-    
-    if (maskAsset.maskFrames && maskAsset.maskFrames.length > 1) {
-      // Calculate which frame to use based on SOURCE time (trim-aware)
+
+    let maskUrl = resolvedMaskAsset.url
+    let frameIndex = 0
+    if (Array.isArray(resolvedMaskAsset.maskFrames) && resolvedMaskAsset.maskFrames.length > 1) {
       const clipTime = playheadPosition - clip.startTime
       const rawTimeScale = clip?.sourceTimeScale || (clip?.timelineFps && clip?.sourceFps
         ? clip.timelineFps / clip.sourceFps
@@ -443,20 +711,16 @@ function useMaskEffectStyle(clip, playheadPosition, isCachedRender = false) {
       const sourceProgress = sourceDuration > 0
         ? Math.max(0, Math.min(1, sourceTime / sourceDuration))
         : 0
-      const frameIndex = Math.min(
+      frameIndex = Math.min(
         Math.max(0, Math.floor(sourceProgress * maskFrameCount)),
-        maskFrameCount - 1
+        maskFrameCount - 1,
       )
-      
-      // Get the URL for this specific frame
-      if (maskAsset.maskFrames[frameIndex]?.url) {
-        maskUrl = maskAsset.maskFrames[frameIndex].url
-      }
+      maskUrl = resolvedMaskAsset.maskFrames[frameIndex]?.url || maskUrl
     }
-    
     if (!maskUrl) return {}
-    
-    // Build CSS mask styles
+
+    const invertMask = !!clip.effects.find((e) => e.type === 'mask' && e.enabled)?.invertMask
+
     const maskStyles = {
       WebkitMaskImage: `url(${maskUrl})`,
       maskImage: `url(${maskUrl})`,
@@ -466,21 +730,205 @@ function useMaskEffectStyle(clip, playheadPosition, isCachedRender = false) {
       maskPosition: 'center',
       WebkitMaskRepeat: 'no-repeat',
       maskRepeat: 'no-repeat',
-      // Use luminance mode - white = visible, black = transparent
       WebkitMaskMode: 'luminance',
       maskMode: 'luminance',
     }
-    
-    // Handle mask inversion
-    if (maskEffect.invertMask) {
-      // Invert by using a filter (note: limited browser support for mask-composite)
-      // Alternative: we could invert the actual mask image server-side
+
+    if (invertMask) {
       maskStyles.filter = 'invert(1)'
     }
-    
+
     return maskStyles
-  }, [clip, clip?.effects, playheadPosition, isCachedRender, getAssetById])
+  }, [isCachedRender, clip, clip?.type, clip?.effects, clip?.startTime, clip?.sourceDuration, clip?.duration, clip?.sourceTimeScale, clip?.timelineFps, clip?.sourceFps, clip?.speed, clip?.reverse, clip?.trimStart, clip?.trimEnd, resolvedMaskAsset, playheadPosition, getAssetById])
 }
+
+/**
+ * Canvas compositor for masked video clips.
+ *
+ * Draws `<video>` frames + the matching mask PNG into a canvas every tick,
+ * using `globalCompositeOperation = 'destination-in'` (or 'destination-out'
+ * for inverted masks) to punch out the unmasked areas. This is the same
+ * algorithm `exporter.js` uses when baking the render cache — we're just
+ * running it live.
+ *
+ * Why not CSS `mask-image`: see the big block comment on
+ * `maskFramePreloadCache` above. Tl;dr: it flashes. This component does
+ * not.
+ *
+ * What it does NOT own:
+ *   - Keeping the `<video>` element loaded / seeking / playback / audio.
+ *     That's still `VideoLayer`'s job via `videoCache`. We just peek at
+ *     the element and sample whatever frame it currently has decoded.
+ *   - Hold-frame behavior during clip-src transitions. For masked clips
+ *     there's a brief unmasked frame at cuts; acceptable since the render
+ *     cache exists exactly for this case.
+ *
+ * What it DOES own:
+ *   - A single `<canvas>` element positioned where the video would have
+ *     painted, with the same CSS transforms / filters / opacity applied.
+ *   - A RAF-driven draw loop that paints only when something has changed
+ *     (video frame time, mask frame index, or mask invert). Idle cost is
+ *     a per-RAF dirty check — a few microseconds.
+ *   - Drawing the source video unmasked as a fallback when the mask frame
+ *     hasn't finished decoding yet. That one-frame "unmasked flash" on
+ *     very first paint is the only failure mode that survived the
+ *     rewrite, and it disappears as soon as the preloader finishes.
+ */
+const MaskedVideoCanvas = memo(function MaskedVideoCanvas({
+  clip,
+  layerIndex,
+  transformStyle,
+  combinedFilter,
+  opacity,
+  maskAsset,
+  frameIndex,
+  invertMask,
+}) {
+  const canvasRef = useRef(null)
+  const getAssetById = useAssetsStore(state => state.getAssetById)
+
+  // Hot inputs live in refs so the RAF loop sees the latest values without
+  // the effect tearing down on every frame-index bump.
+  const maskAssetRef = useRef(maskAsset)
+  const frameIndexRef = useRef(frameIndex)
+  const invertMaskRef = useRef(invertMask)
+  useEffect(() => { maskAssetRef.current = maskAsset }, [maskAsset])
+  useEffect(() => { frameIndexRef.current = frameIndex }, [frameIndex])
+  useEffect(() => { invertMaskRef.current = invertMask }, [invertMask])
+
+  useEffect(() => {
+    const canvas = canvasRef.current
+    if (!canvas) return
+    const ctx = canvas.getContext('2d', { alpha: true })
+    if (!ctx) return
+    let disposed = false
+    let rafId = null
+
+    // Previous-paint signature. We only actually draw when something has
+    // changed, so a paused playhead with a loaded mask costs O(1) per RAF
+    // (one object-prop compare) and stays stable at ~60fps budget.
+    const last = {
+      maskAssetId: null,
+      frame: -1,
+      videoTime: -1,
+      invert: null,
+      w: 0,
+      h: 0,
+      hadMask: null,
+    }
+
+    const getVideo = () => {
+      const resolvedUrl = resolvePlaybackUrl(clip, getAssetById)
+      if (!resolvedUrl) return null
+      // videoCache keys on a { ...clip, url } shape. We build the same shape
+      // rather than mutating the caller's clip object.
+      const clipWithUrl = { ...clip, url: resolvedUrl }
+      return videoCache.getVideoElement(clipWithUrl)
+    }
+
+    const tick = () => {
+      if (disposed) return
+      const video = getVideo()
+      if (video && video.videoWidth && video.videoHeight && video.readyState >= 2) {
+        const vw = video.videoWidth
+        const vh = video.videoHeight
+        const maskAssetCur = maskAssetRef.current
+        // maskCanvas is the alpha-encoded canvas produced by
+        // processMaskImageToAlphaCanvas; null if the PNG hasn't finished
+        // loading yet or if SAM3 handed us something we can't process.
+        const maskCanvas = getPreloadedMaskFrame(maskAssetCur, frameIndexRef.current)
+        const currentTime = video.currentTime
+        const hadMask = !!maskCanvas
+        const invert = !!invertMaskRef.current
+        const maskAssetId = maskAssetCur?.id || null
+
+        const changed =
+          last.w !== vw ||
+          last.h !== vh ||
+          last.maskAssetId !== maskAssetId ||
+          last.frame !== frameIndexRef.current ||
+          Math.abs(last.videoTime - currentTime) > 0.0001 ||
+          last.invert !== invert ||
+          last.hadMask !== hadMask
+
+        if (changed) {
+          if (canvas.width !== vw) canvas.width = vw
+          if (canvas.height !== vh) canvas.height = vh
+
+          ctx.globalCompositeOperation = 'source-over'
+          ctx.clearRect(0, 0, vw, vh)
+          try {
+            ctx.drawImage(video, 0, 0, vw, vh)
+          } catch (_) {
+            // drawImage throws if the video element is in a weird interim
+            // state (readyState 2 but no decoded frame yet on some codecs).
+            // Swallow and try again next tick.
+          }
+
+          if (maskCanvas) {
+            // destination-in / destination-out sample the SOURCE's alpha
+            // channel only. processMaskImageToAlphaCanvas pre-baked the
+            // mask's luminance into its alpha channel, so these ops do
+            // what the user expects: keep the video where the mask is
+            // bright (or where it's dark, if invertMask is on).
+            ctx.globalCompositeOperation = invert ? 'destination-out' : 'destination-in'
+            try {
+              ctx.drawImage(maskCanvas, 0, 0, vw, vh)
+            } catch (_) { /* same rationale as drawImage(video) above */ }
+            ctx.globalCompositeOperation = 'source-over'
+          }
+          // When maskCanvas is null we intentionally leave the unmasked
+          // video on the canvas. That's a better failure mode than
+          // showing a black hole while the first PNG decodes.
+
+          last.maskAssetId = maskAssetId
+          last.frame = frameIndexRef.current
+          last.videoTime = currentTime
+          last.invert = invert
+          last.w = vw
+          last.h = vh
+          last.hadMask = hadMask
+        }
+      }
+      rafId = requestAnimationFrame(tick)
+    }
+
+    rafId = requestAnimationFrame(tick)
+    return () => {
+      disposed = true
+      if (rafId) cancelAnimationFrame(rafId)
+    }
+    // Intentionally keyed on clip identity only — everything else runs
+    // through refs. A render that flips the clip (different source) tears
+    // the loop down and rebuilds it against the new video element.
+  }, [clip?.id, clip?.assetId, getAssetById])
+
+  return (
+    <canvas
+      ref={canvasRef}
+      className="pointer-events-none bg-transparent"
+      style={{
+        position: 'absolute',
+        top: 0,
+        left: 0,
+        right: 0,
+        bottom: 0,
+        width: '100%',
+        height: '100%',
+        // Keep aspect when the canvas backing store != element size.
+        // The backing store is the video's natural size; the element is
+        // sized to the preview area. This maps to the same behavior as
+        // `object-fit: contain` on a <video>.
+        objectFit: 'contain',
+        zIndex: layerIndex + 4, // above hold-frame + container
+        opacity,
+        ...transformStyle,
+        filter: combinedFilter,
+      }}
+      aria-hidden="true"
+    />
+  )
+})
 
 /**
  * VideoLayerRenderer - Renders video layers with preloading for seamless playback
@@ -573,9 +1021,16 @@ const VideoLayer = memo(function VideoLayer({
   
   const useSpriteScrub = ENABLE_SPRITE_SCRUBBING && !!spriteData?.url && !isCachedRender
   
-  // Get mask effect styles for video (skip if using cached render)
+  // Mask effect selection. Video clips use the canvas compositor (see
+  // MaskedVideoCanvas + the big comment on maskFramePreloadCache for why).
+  // useMaskEffectStyle returns `{}` for video clips, so the legacy style
+  // spread below is a harmless no-op — we keep it there to avoid touching
+  // every JSX site for this change.
+  const maskSelection = useMaskFrameSelection(clip, playheadPosition, isCachedRender)
   const maskStyles = useMaskEffectStyle(clip, playheadPosition, isCachedRender)
-  // Always compute mask styles for sprite overlay (sprites are from source)
+  // Sprite overlay is behind a feature flag that's currently off
+  // (ENABLE_SPRITE_SCRUBBING = false), so this is also an inert `{}` for
+  // video clips. Kept for parity with the existing spread sites.
   const spriteMaskStyles = useMaskEffectStyle(clip, playheadPosition, false)
   
   // Calculate clip-relative time for keyframe evaluation
@@ -1166,6 +1621,18 @@ const VideoLayer = memo(function VideoLayer({
   const combinedFilter = [adjustmentFilterValue, transformStyle.filter, maskStyles.filter].filter(Boolean).join(' ') || undefined
   const spriteCombinedFilter = [adjustmentFilterValue, transformStyle.filter, spriteMaskStyles.filter].filter(Boolean).join(' ') || undefined
 
+  // When a mask is active we hand visible rendering off to
+  // MaskedVideoCanvas (below). The container div still hosts the <video>
+  // element (needed for playback timing, seeking, and audio) but with
+  // opacity:0 so we don't see the unmasked frame through the mask. Same
+  // for the hold-frame canvas — during a cut on a masked clip we accept
+  // a brief frame of unmasked content rather than try to apply the mask
+  // to the hold-frame layer (render cache covers that use case better).
+  const maskActive = maskSelection.isActive
+  const containerOpacity = maskActive
+    ? 0
+    : ((showSprite && spriteInfo) || showHoldFrame ? 0 : 1)
+
   return (
     <>
       {hasTonalAdjustments && (
@@ -1187,13 +1654,30 @@ const VideoLayer = memo(function VideoLayer({
           right: 0,
           bottom: 0,
           zIndex: layerIndex + 1,
-          opacity: (showSprite && spriteInfo) || showHoldFrame ? 0 : 1,
+          opacity: containerOpacity,
           ...transformStyle,
           ...maskStyles,
           filter: combinedFilter,
         }}
       />
-      
+
+      {/* Masked video compositor. Rendered only when a mask effect is
+          active on this clip; reads the same video element as the
+          container above via videoCache and paints a per-frame composite
+          onto its own canvas. See MaskedVideoCanvas header for details. */}
+      {maskActive && (
+        <MaskedVideoCanvas
+          clip={clip}
+          layerIndex={layerIndex}
+          transformStyle={transformStyle}
+          combinedFilter={combinedFilter}
+          opacity={1}
+          maskAsset={maskSelection.maskAsset}
+          frameIndex={maskSelection.frameIndex}
+          invertMask={maskSelection.invertMask}
+        />
+      )}
+
       {/* Hold frame canvas - shows last frame during video src transition to prevent black flicker */}
       <div
         className="pointer-events-none"
@@ -1204,7 +1688,7 @@ const VideoLayer = memo(function VideoLayer({
           right: 0,
           bottom: 0,
           zIndex: layerIndex + 3,
-          display: showHoldFrame ? 'block' : 'none',
+          display: showHoldFrame && !maskActive ? 'block' : 'none',
           ...transformStyle,
           ...maskStyles,
           filter: combinedFilter,
@@ -1217,7 +1701,7 @@ const VideoLayer = memo(function VideoLayer({
       </div>
       
       {/* Sprite overlay (shown during fast scrubbing) */}
-      {showSprite && spriteOverlayStyle && (
+      {showSprite && spriteOverlayStyle && !maskActive && (
         <div
           className="pointer-events-none"
           style={{

@@ -564,7 +564,22 @@ export function useComfyUI() {
             // Check for errors
             if (promptHistory.status?.status_str === 'error') {
               console.error('Mask generation failed:', promptHistory.status);
-              setError('Mask generation failed');
+              // Extract the actual Python error from ComfyUI's `execution_error`
+              // message so the user sees something actionable instead of just
+              // "Mask generation failed". The messages array is a sequence of
+              // [event_type, payload] tuples; only `execution_error` has the
+              // exception details we want.
+              const messages = promptHistory.status?.messages || [];
+              const errorMsg = messages.find((m) => Array.isArray(m) && m[0] === 'execution_error');
+              if (errorMsg && errorMsg[1]) {
+                const { node_type: nodeType, exception_type: excType, exception_message: excMsg } = errorMsg[1];
+                const cleanMsg = String(excMsg || '').trim().split('\n')[0] || 'Unknown error';
+                // Friendly single-liner for common error classes; fall back to
+                // showing the node that blew up so the user can report it.
+                setError(`Mask generation failed at ${nodeType || 'node'}: ${cleanMsg}`);
+              } else {
+                setError('Mask generation failed');
+              }
               setIsGenerating(false);
               pollingStopped = true;
               return true; // Stop polling
