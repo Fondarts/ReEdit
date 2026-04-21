@@ -21,6 +21,10 @@ import WelcomeScreen from './components/WelcomeScreen'
 import BottomBar from './components/BottomBar'
 import useProjectStore from './stores/projectStore'
 import { WORKFLOW_SETUP_SECTION_ID } from './services/workflowSetupManager'
+import { REEDIT_MODE, REEDIT_FULLSCREEN_TABS, pickInitialReeditTab } from './config/mode'
+import ImportVideoView from './components/reedit/ImportVideoView'
+import AnalysisView from './components/reedit/AnalysisView'
+import ProposalView from './components/reedit/ProposalView'
 import {
   COMFY_CONNECTION_CHANGED_EVENT,
   getLocalComfyHttpBaseSync,
@@ -190,7 +194,7 @@ function App() {
     } catch (_) { /* ignore */ }
   }, [])
 
-  const isFullScreenTab = mainTab === 'export' || mainTab === 'generate' || mainTab === 'mog' || mainTab === 'llm-assistant' || mainTab === 'stock' || (showComfyUiTab && mainTab === 'comfyui')
+  const isFullScreenTab = mainTab === 'export' || mainTab === 'generate' || mainTab === 'mog' || mainTab === 'llm-assistant' || mainTab === 'stock' || (showComfyUiTab && mainTab === 'comfyui') || (REEDIT_MODE && REEDIT_FULLSCREEN_TABS.has(mainTab))
   // Editor layout insets (used for content when on Editor, and always for tab bar so it doesn't shift)
   const editorLeftInset = leftPanelExpanded ? ICON_BAR_WIDTH + leftPanelWidth : ICON_BAR_WIDTH
   const editorRightInset = inspectorExpanded ? ICON_BAR_WIDTH + inspectorWidth : ICON_BAR_WIDTH
@@ -212,7 +216,19 @@ function App() {
   useEffect(() => {
     initialize()
   }, [initialize])
-  
+
+  // Under REEDIT_MODE the first surface after opening/creating a project is
+  // not the timeline — it's the re-edit pipeline. We land on the right stage
+  // based on what's already persisted in the project file: no video yet →
+  // Import, video but no approved proposal → Analysis, proposal approved →
+  // Editor. Keyed on project identity (name) so re-opening the same project
+  // mid-session doesn't yank the user out of wherever they are.
+  useEffect(() => {
+    if (!REEDIT_MODE || !currentProject) return
+    setMainTab(pickInitialReeditTab(currentProject))
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [currentProject?.name])
+
   // Auto-save functionality
   useEffect(() => {
     if (!currentProject || !autoSaveEnabled) return
@@ -383,7 +399,13 @@ function App() {
             </WorkspaceErrorBoundary>
           </div>
         )}
-        {mainTab === 'export' ? (
+        {mainTab === 'import' ? (
+          <ImportVideoView onVideoImported={() => setMainTab('analysis')} />
+        ) : mainTab === 'analysis' ? (
+          <AnalysisView />
+        ) : mainTab === 'proposal' ? (
+          <ProposalView onNavigate={setMainTab} />
+        ) : mainTab === 'export' ? (
           <ExportPanel />
         ) : mainTab === 'stock' ? (
           <StockPanel />

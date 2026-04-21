@@ -1,6 +1,7 @@
 import { Fragment, useEffect, useState } from 'react'
 import { Copy, Minus, Square, X } from 'lucide-react'
 import ComfyLauncherChip from './ComfyLauncherChip'
+import { REEDIT_MODE, REEDIT_TABS } from '../config/mode'
 
 const TOP_TABS = [
   { id: 'editor', label: 'Editor' },
@@ -20,7 +21,14 @@ function TitleBar({
   centerInsetRight = 0,
   showComfyUiTab = false,
 }) {
-  const tabs = showComfyUiTab ? TOP_TABS : TOP_TABS.filter(t => t.id !== 'comfyui')
+  // Under REEDIT_MODE the TitleBar surfaces the re-edit pipeline tabs in
+  // pipeline order and hides the generic ComfyStudio ones. The ComfyUI
+  // iframe tab stays opt-in via the same showComfyUiTab setting, appended
+  // at the end so power users can still jump into raw ComfyUI.
+  const baseTabs = REEDIT_MODE ? REEDIT_TABS : TOP_TABS
+  const tabs = showComfyUiTab
+    ? (REEDIT_MODE ? [...baseTabs, { id: 'comfyui', label: 'ComfyUI' }] : baseTabs)
+    : baseTabs.filter(t => t.id !== 'comfyui')
   const [windowState, setWindowState] = useState({
     isMaximized: false,
     isFullScreen: false,

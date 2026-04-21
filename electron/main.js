@@ -1530,6 +1530,24 @@ ipcMain.handle('media:getFileUrl', (event, filePath) => {
   return `comfystudio://${encodedPath}`
 })
 
+// Reads a local file and returns it as a data URL (base64). Needed for
+// renderer code that has to feed a file into a multimodal API — the
+// renderer can't `fetch('comfystudio://...')` because the protocol is
+// registered via `protocol.handle()` without the `supportFetchAPI`
+// privilege, so fetch() gets a generic "Failed to fetch". The IPC hop
+// is cheap for per-scene thumbnail JPEGs (tens of KB).
+ipcMain.handle('media:readFileAsDataUrl', async (event, filePath, mimeType) => {
+  if (!filePath) return { success: false, error: 'filePath is required.' }
+  try {
+    const buf = await fs.readFile(filePath)
+    const mime = mimeType || (filePath.toLowerCase().endsWith('.png') ? 'image/png' : 'image/jpeg')
+    const dataUrl = `data:${mime};base64,${buf.toString('base64')}`
+    return { success: true, dataUrl, bytes: buf.length }
+  } catch (err) {
+    return { success: false, error: err?.message || String(err) }
+  }
+})
+
 ipcMain.handle('media:getFileUrlDirect', (event, filePath) => {
   // Return file:// URL directly (for when protocol isn't working)
   // Normalize path for URL
@@ -1595,6 +1613,186 @@ ipcMain.handle('media:getVideoFps', async (event, filePath) => {
       } catch (err) {
         resolve({ success: false, error: err.message })
       }
+    })
+  })
+})
+
+// ============================================================
+// project:re-edit — analysis pipeline (scene cut + thumbnails)
+// ============================================================
+//
+// Scene detection runs through PySceneDetect's content detector. We
+// tried FFmpeg's built-in `scene` filter first because it needed zero
+// bundling, but on real ad footage it under-detected heavily (missed
+// roughly half the hard cuts on a 17-cut 30s commercial). PySceneDetect
+// uses HSL-space frame diffing which is much more reliable on brand-
+// heavy footage where luma diffs alone are too small to trip the
+// threshold.
+//
+// The bridge is a small Python script in electron/reedit_scene_detect.py
+// that exits with:
+//   code 0 → JSON payload on stdout ({"success": true, "scenes": [...]})
+//   code 2 → PySceneDetect not installed (actionable error on stdout+stderr)
+//   code 1 → any other failure
+// Keeping the JSON schema identical to the previous FFmpeg handler means
+// the renderer doesn't have to care which detector ran.
+ipcMain.handle('analysis:detectScenes', async (event, videoPath, options = {}) => {
+  if (!videoPath) return { success: false, error: 'videoPath is required.' }
+
+  // PySceneDetect ContentDetector threshold: roughly 0–100, default 27.
+  // Lower → more sensitive. We expose the same `threshold` key the old
+  // handler used so the renderer can stay unchanged.
+  const threshold = Number.isFinite(options.threshold) ? options.threshold : 27
+  const minSceneDurSec = Number.isFinite(options.minSceneDurSec) ? options.minSceneDurSec : 0.5
+
+  const scriptPath = path.join(__dirname, 'reedit_scene_detect.py')
+  // Windows ships `python` (the py launcher shim); other platforms
+  // typically only expose `python3` as a first-class executable.
+  const pythonCmd = process.platform === 'win32' ? 'python' : 'python3'
+  const args = [scriptPath, videoPath, String(threshold), String(minSceneDurSec)]
+
+  return await new Promise((resolve) => {
+    const proc = spawn(pythonCmd, args, { windowsHide: true })
+    let stdout = ''
+    let stderr = ''
+
+    proc.stdout.on('data', (d) => { stdout += d.toString() })
+    proc.stderr.on('data', (d) => { stderr += d.toString() })
+    proc.on('error', (err) => {
+      if (err.code === 'ENOENT') {
+        resolve({
+          success: false,
+          error: `Python interpreter not found (looked for "${pythonCmd}" in PATH). Install Python 3 and retry.`,
+        })
+      } else {
+        resolve({ success: false, error: err.message })
+      }
+    })
+    proc.on('close', (code) => {
+      // The bridge always prints JSON, even on failure. Trust that first.
+      try {
+        const last = stdout.trim().split('\n').filter(Boolean).pop()
+        if (last) {
+          const parsed = JSON.parse(last)
+          resolve(parsed)
+          return
+        }
+      } catch (_) {
+        // Fall through to plain error reporting.
+      }
+      if (code !== 0) {
+        resolve({ success: false, error: stderr.trim() || `PySceneDetect exited with code ${code}` })
+      } else {
+        resolve({ success: false, error: 'PySceneDetect produced no output.' })
+      }
+    })
+  })
+})
+
+// Extracts a single contiguous sub-clip of the source video to its own
+// MP4 file. We need this because ComfyStudio's timeline filmstrip uses
+// a shared <video src={assetUrl}> for every clip of a given asset, and
+// Chromium ignores Media Fragments URIs (#t=2.79) on `file://` URLs —
+// so trim-based scene "virtual clips" all end up showing the same
+// frame. Extracting each scene to its own file means the asset URL is
+// unique per scene, the filmstrip works natively, and playback doesn't
+// need trim math.
+//
+// `-c copy` is stream copy (no re-encode) — milliseconds per scene, but
+// cuts land on the nearest keyframe before tcIn, which can drift up to
+// one GOP (typically <1s in web-delivered ads). That's usually fine for
+// the re-edit workflow; we can swap to re-encode here later if a pilot
+// complains about imprecise first frames.
+ipcMain.handle('analysis:extractSceneClip', async (event, options) => {
+  if (!ffmpegPath) return { success: false, error: 'FFmpeg binary not available.' }
+  const { videoPath, tcIn, tcOut, outputPath } = options || {}
+  if (!videoPath || !outputPath || !Number.isFinite(tcIn) || !Number.isFinite(tcOut) || tcOut <= tcIn) {
+    return { success: false, error: 'videoPath, tcIn, tcOut (tcOut > tcIn), and outputPath are required.' }
+  }
+
+  try {
+    await fs.mkdir(path.dirname(outputPath), { recursive: true })
+  } catch (err) {
+    return { success: false, error: `Cannot create output dir: ${err.message}` }
+  }
+
+  // Skip re-extraction if the file is already there and non-empty.
+  // Scene boundaries are deterministic per project, so a cached clip
+  // stays valid until the user changes the analysis.
+  try {
+    const stat = await fs.stat(outputPath)
+    if (stat?.size > 1024) {
+      return { success: true, path: outputPath, cached: true }
+    }
+  } catch (_) { /* missing file — proceed */ }
+
+  return await new Promise((resolve) => {
+    const args = [
+      '-hide_banner',
+      '-nostats',
+      '-ss', String(Math.max(0, tcIn)),
+      '-to', String(Math.max(tcIn + 0.05, tcOut)),
+      '-i', videoPath,
+      '-c', 'copy',
+      '-avoid_negative_ts', 'make_zero',
+      '-y',
+      outputPath,
+    ]
+    const proc = spawn(ffmpegPath, args, { windowsHide: true })
+    let stderr = ''
+    proc.stderr.on('data', (d) => { stderr += d.toString() })
+    proc.on('error', (err) => resolve({ success: false, error: err.message }))
+    proc.on('close', (code) => {
+      if (code !== 0) {
+        resolve({ success: false, error: `FFmpeg exited with code ${code}. ${stderr.slice(-200)}` })
+        return
+      }
+      resolve({ success: true, path: outputPath, cached: false })
+    })
+  })
+})
+
+// Extracts one JPEG frame at `tcSec` and writes it to `outputPath`. The
+// `-ss` before `-i` uses keyframe fast-seek which is 10–100x faster than
+// precise seek; good enough for thumbnails. Caller owns the output path
+// so we don't need to know the project layout here.
+ipcMain.handle('analysis:extractThumbnail', async (event, options) => {
+  if (!ffmpegPath) return { success: false, error: 'FFmpeg binary not available.' }
+  const { videoPath, tcSec, outputPath, width = 480 } = options || {}
+  if (!videoPath || !outputPath || !Number.isFinite(tcSec)) {
+    return { success: false, error: 'videoPath, tcSec, and outputPath are required.' }
+  }
+
+  try {
+    await fs.mkdir(path.dirname(outputPath), { recursive: true })
+  } catch (err) {
+    return { success: false, error: `Cannot create output dir: ${err.message}` }
+  }
+
+  return await new Promise((resolve) => {
+    const args = [
+      '-hide_banner',
+      '-nostats',
+      '-ss', String(Math.max(0, tcSec)),
+      '-i', videoPath,
+      '-vframes', '1',
+      '-q:v', '3',
+      '-vf', `scale=${width}:-2`,
+      '-y',
+      outputPath,
+    ]
+
+    const proc = spawn(ffmpegPath, args, { windowsHide: true })
+    let stderr = ''
+
+    proc.stderr.on('data', (data) => { stderr += data.toString() })
+    proc.on('error', (err) => resolve({ success: false, error: err.message }))
+    proc.on('close', (code) => {
+      if (code !== 0) {
+        resolve({ success: false, error: `FFmpeg exited with code ${code}. ${stderr.slice(-200)}` })
+        return
+      }
+      resolve({ success: true, path: outputPath })
     })
   })
 })

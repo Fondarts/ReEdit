@@ -238,10 +238,20 @@ contextBridge.exposeInMainWorld('electronAPI', {
   
   /**
    * Get a URL for a local file (using comfystudio:// protocol)
-   * @param {string} filePath 
+   * @param {string} filePath
    * @returns {Promise<string>}
    */
   getFileUrl: (filePath) => ipcRenderer.invoke('media:getFileUrl', filePath),
+
+  /**
+   * Read a local file as a base64 data URL. Needed by renderer code that
+   * has to feed image bytes into multimodal APIs (fetch() can't read the
+   * comfystudio:// protocol).
+   * @param {string} filePath
+   * @param {string} [mimeType]
+   * @returns {Promise<{success: boolean, dataUrl?: string, bytes?: number, error?: string}>}
+   */
+  readFileAsDataUrl: (filePath, mimeType) => ipcRenderer.invoke('media:readFileAsDataUrl', filePath, mimeType),
   
   /**
    * Get video stream info via ffprobe (Electron only)
@@ -249,6 +259,33 @@ contextBridge.exposeInMainWorld('electronAPI', {
    * @returns {Promise<{success: boolean, fps?: number, hasAudio?: boolean, videoCodec?: string, audioCodec?: string, error?: string}>}
    */
   getVideoFps: (filePath) => ipcRenderer.invoke('media:getVideoFps', filePath),
+
+  // ============================================
+  // project:re-edit — analysis pipeline
+  // ============================================
+
+  /**
+   * Detect scene boundaries via FFmpeg's scene filter.
+   * @param {string} videoPath
+   * @param {{ threshold?: number, minSceneDurSec?: number, totalDurationSec?: number }} options
+   * @returns {Promise<{success: boolean, scenes?: Array<{id, index, tcIn, tcOut, duration}>, error?: string}>}
+   */
+  detectScenes: (videoPath, options) => ipcRenderer.invoke('analysis:detectScenes', videoPath, options),
+
+  /**
+   * Extract a single JPEG frame at tcSec and write it to outputPath.
+   * @param {{ videoPath: string, tcSec: number, outputPath: string, width?: number }} options
+   * @returns {Promise<{success: boolean, path?: string, error?: string}>}
+   */
+  extractThumbnail: (options) => ipcRenderer.invoke('analysis:extractThumbnail', options),
+
+  /**
+   * Extract a contiguous sub-clip (tcIn..tcOut) of the source video to
+   * its own MP4. Stream-copy (fast, keyframe-aligned).
+   * @param {{ videoPath: string, tcIn: number, tcOut: number, outputPath: string }} options
+   * @returns {Promise<{success: boolean, path?: string, cached?: boolean, error?: string}>}
+   */
+  extractSceneClip: (options) => ipcRenderer.invoke('analysis:extractSceneClip', options),
 
   /**
    * Extract audio waveform peaks via ffmpeg (Electron only)

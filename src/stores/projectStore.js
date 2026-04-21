@@ -417,6 +417,16 @@ export const useProjectStore = create(
             timelines: [defaultTimeline], // Array of timelines
             currentTimelineId: defaultTimeline.id,
             assets: [],
+            // project:re-edit pipeline state. null until the user imports a
+            // commercial in ImportVideoView; analysis + proposal fill in
+            // later as the user moves through the pipeline. Keeping these
+            // as top-level keys (rather than nested under an object) makes
+            // the save-merge in saveProject() behave naturally: we can
+            // update one field without clobbering the others.
+            reeditVersion: '0.1',
+            sourceVideo: null,
+            analysis: null,
+            proposal: null,
           }
           
           // Save project file
