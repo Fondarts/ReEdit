@@ -1,5 +1,5 @@
 import { useRef, useState } from 'react'
-import { FileText, Loader2, AlertCircle, PlayCircle, RotateCcw, Sparkles, StopCircle } from 'lucide-react'
+import { FileText, Loader2, AlertCircle, PlayCircle, RotateCcw, Sparkles, StopCircle, Eye, EyeOff } from 'lucide-react'
 import useProjectStore from '../../stores/projectStore'
 import { captionScenes, pickVisionModelId } from '../../services/reeditCaptioner'
 
@@ -46,6 +46,15 @@ function Chip({ children, tone = 'neutral' }) {
   )
 }
 
+// Per-row thumbnail footprint. We keep the HEIGHT constant across
+// aspects so vertical videos don't blow up row heights; the WIDTH
+// shrinks for vertical content. A 9:16 source ends up ~56px × 100,
+// a 16:9 source ~178px × 100 — both read clearly at a glance.
+const THUMB_HEIGHT = 100
+// Hover preview caps the long edge at this many px so a 16:9 thumb
+// doesn't cover half the screen and a 9:16 thumb stays readable.
+const PREVIEW_LONG_EDGE = 420
+
 function AnalysisView() {
   const currentProject = useProjectStore((s) => s.currentProject)
   const currentProjectHandle = useProjectStore((s) => s.currentProjectHandle)
@@ -54,6 +63,12 @@ function AnalysisView() {
   const sourceVideo = currentProject?.sourceVideo
   const analysis = currentProject?.analysis
   const scenes = analysis?.scenes || []
+
+  // Hovered scene state for the fixed-position preview overlay. We
+  // track the cursor-anchored rect so the preview can dodge off
+  // either edge of the viewport without the DOM-reflow cost of
+  // absolute-positioning inside the scrolling table.
+  const [hover, setHover] = useState(null) // { url, rect, previewW, previewH }
 
   const [running, setRunning] = useState(false)
   const [progressMsg, setProgressMsg] = useState('')
@@ -70,6 +85,18 @@ function AnalysisView() {
   if (!sourceVideo) return <ImportPrompt />
 
   const projectDir = typeof currentProjectHandle === 'string' ? currentProjectHandle : null
+
+  // Derive display dimensions from the source video's real aspect so
+  // vertical 9:16 content gets a narrow tall thumb instead of being
+  // letterboxed inside a fixed 16:9 cell. Fallback to 16:9 if we
+  // somehow lost the dims (old projects, failed probe).
+  const aspectRatio = (sourceVideo.width && sourceVideo.height)
+    ? sourceVideo.width / sourceVideo.height
+    : 16 / 9
+  const isVertical = aspectRatio < 1
+  const thumbW = Math.max(40, Math.round(THUMB_HEIGHT * aspectRatio))
+  const previewH = isVertical ? PREVIEW_LONG_EDGE : Math.round(PREVIEW_LONG_EDGE / aspectRatio)
+  const previewW = isVertical ? Math.round(PREVIEW_LONG_EDGE * aspectRatio) : PREVIEW_LONG_EDGE
 
   const runAnalysis = async () => {
     if (running) return
@@ -195,7 +222,22 @@ function AnalysisView() {
     if (abortRef.current) abortRef.current.aborted = true
   }
 
+  // Toggle a scene out of the pipeline without deleting it. Excluded
+  // scenes stay visible in the shot log (so the user can compare / un-
+  // exclude later) but are skipped by captioning, the proposal LLM,
+  // and the Apply-to-timeline populator.
+  const toggleSceneExcluded = async (sceneId) => {
+    const nextScenes = scenes.map((s) => (
+      s.id === sceneId ? { ...s, excluded: !s.excluded } : s
+    ))
+    await saveProject({
+      analysis: { ...(analysis || {}), scenes: nextScenes },
+    })
+  }
+
   const hasCaptions = scenes.some((s) => s.caption || s.structured)
+  const includedCount = scenes.filter((s) => !s.excluded).length
+  const excludedCount = scenes.length - includedCount
 
   return (
     <div className="flex-1 flex flex-col bg-sf-dark-950 text-sf-text-primary overflow-hidden">
@@ -211,6 +253,11 @@ function AnalysisView() {
               {sourceVideo.name} · {sourceVideo.width}×{sourceVideo.height}
               {sourceVideo.fps ? ` · ${(sourceVideo.fps.toFixed?.(2) ?? sourceVideo.fps)} fps` : ''}
               {sourceVideo.duration ? ` · ${sourceVideo.duration.toFixed(1)}s` : ''}
+              {excludedCount > 0 && (
+                <span className="ml-2 text-amber-300/80">
+                  · {includedCount} included / {excludedCount} excluded
+                </span>
+              )}
             </p>
           </div>
         </div>
@@ -311,8 +358,9 @@ function AnalysisView() {
           <table className="w-full text-xs">
             <thead className="sticky top-0 bg-sf-dark-900 text-sf-text-muted uppercase tracking-wider z-10">
               <tr>
+                <th className="text-left px-3 py-2 font-medium w-8">Use</th>
                 <th className="text-left px-3 py-2 font-medium w-10">#</th>
-                <th className="text-left px-3 py-2 font-medium w-[200px]">Thumbnail</th>
+                <th className="text-left px-3 py-2 font-medium" style={{ width: thumbW + 24 }}>Thumbnail</th>
                 <th className="text-left px-3 py-2 font-medium w-[72px]">In</th>
                 <th className="text-left px-3 py-2 font-medium w-[72px]">Out</th>
                 <th className="text-left px-3 py-2 font-medium w-[60px]">Dur</th>
@@ -327,11 +375,37 @@ function AnalysisView() {
               {scenes.map((scene) => {
                 const thumbUrl = toComfyUrl(scene.thumbnail)
                 const s = scene.structured || {}
+                const excluded = Boolean(scene.excluded)
                 return (
-                  <tr key={scene.id} className="border-t border-sf-dark-800 hover:bg-sf-dark-900/60 align-top">
+                  <tr
+                    key={scene.id}
+                    className={`border-t border-sf-dark-800 hover:bg-sf-dark-900/60 align-top transition-opacity ${excluded ? 'opacity-40' : ''}`}
+                  >
+                    <td className="px-3 py-2">
+                      <button
+                        type="button"
+                        onClick={() => toggleSceneExcluded(scene.id)}
+                        title={excluded ? 'Include scene (currently excluded)' : 'Exclude scene from captioning + proposal'}
+                        className={`p-1 rounded transition-colors
+                          ${excluded
+                            ? 'text-sf-text-muted hover:bg-sf-dark-700 hover:text-sf-text-primary'
+                            : 'text-sf-accent hover:bg-sf-accent/20'}`}
+                      >
+                        {excluded ? <EyeOff className="w-3.5 h-3.5" /> : <Eye className="w-3.5 h-3.5" />}
+                      </button>
+                    </td>
                     <td className="px-3 py-2 text-sf-text-muted tabular-nums">{scene.index}</td>
                     <td className="px-3 py-2">
-                      <div className="w-[180px] aspect-video rounded bg-sf-dark-800 overflow-hidden">
+                      <div
+                        className="rounded bg-sf-dark-800 overflow-hidden cursor-zoom-in"
+                        style={{ width: thumbW, height: THUMB_HEIGHT }}
+                        onMouseEnter={(e) => {
+                          if (!thumbUrl) return
+                          const rect = e.currentTarget.getBoundingClientRect()
+                          setHover({ url: thumbUrl, rect, previewW, previewH })
+                        }}
+                        onMouseLeave={() => setHover(null)}
+                      >
                         {thumbUrl ? (
                           <img src={thumbUrl} alt="" className="w-full h-full object-cover" loading="lazy" />
                         ) : (
@@ -361,6 +435,29 @@ function AnalysisView() {
           </table>
         )}
       </div>
+
+      {/* Hover preview — fixed-positioned so it escapes the scrollable
+          table. Positioned to the right of the thumb by default, but
+          flips left if the preview would run off the viewport; clamped
+          vertically so tall 9:16 previews don't clip off the top/bottom. */}
+      {hover && (() => {
+        const MARGIN = 12
+        const vw = typeof window !== 'undefined' ? window.innerWidth : 1920
+        const vh = typeof window !== 'undefined' ? window.innerHeight : 1080
+        const rightSpace = vw - hover.rect.right
+        const placeLeft = rightSpace < hover.previewW + MARGIN && hover.rect.left > hover.previewW + MARGIN
+        const left = placeLeft ? hover.rect.left - hover.previewW - MARGIN : hover.rect.right + MARGIN
+        let top = hover.rect.top + (hover.rect.height - hover.previewH) / 2
+        top = Math.max(MARGIN, Math.min(top, vh - hover.previewH - MARGIN))
+        return (
+          <div
+            className="fixed z-[1000] pointer-events-none rounded-lg overflow-hidden shadow-2xl shadow-black/70 border border-sf-dark-600 bg-sf-dark-900"
+            style={{ top, left, width: hover.previewW, height: hover.previewH }}
+          >
+            <img src={hover.url} alt="" className="w-full h-full object-cover" />
+          </div>
+        )
+      })()}
     </div>
   )
 }

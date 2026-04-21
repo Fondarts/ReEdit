@@ -11,6 +11,7 @@ export const REEDIT_MODE = true
 // Tabs visible in the TitleBar under REEDIT_MODE, in display order.
 // Ids must match the branches in App.jsx's render switch.
 export const REEDIT_TABS = [
+  { id: 'projects', label: 'Projects' },
   { id: 'import', label: 'Import' },
   { id: 'analysis', label: 'Analysis' },
   { id: 'proposal', label: 'Proposal' },
@@ -21,7 +22,7 @@ export const REEDIT_TABS = [
 // Tab ids that render a single full-screen workspace (no left panel /
 // inspector / timeline docked around them). The editor tab keeps the
 // Resolve-style layout; the other re-edit tabs are single-panel.
-export const REEDIT_FULLSCREEN_TABS = new Set(['import', 'analysis', 'proposal'])
+export const REEDIT_FULLSCREEN_TABS = new Set(['projects', 'import', 'analysis', 'proposal'])
 
 // Decide the initial tab when a project is opened or created.
 // - No sourceVideo yet → Import.

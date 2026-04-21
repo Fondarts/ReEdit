@@ -25,6 +25,7 @@ import { REEDIT_MODE, REEDIT_FULLSCREEN_TABS, pickInitialReeditTab } from './con
 import ImportVideoView from './components/reedit/ImportVideoView'
 import AnalysisView from './components/reedit/AnalysisView'
 import ProposalView from './components/reedit/ProposalView'
+import ProjectsView from './components/reedit/ProjectsView'
 import {
   COMFY_CONNECTION_CHANGED_EVENT,
   getLocalComfyHttpBaseSync,
@@ -399,7 +400,9 @@ function App() {
             </WorkspaceErrorBoundary>
           </div>
         )}
-        {mainTab === 'import' ? (
+        {mainTab === 'projects' ? (
+          <ProjectsView />
+        ) : mainTab === 'import' ? (
           <ImportVideoView onVideoImported={() => setMainTab('analysis')} />
         ) : mainTab === 'analysis' ? (
           <AnalysisView />

@@ -1,7 +1,7 @@
 import { useState, useEffect, useRef } from 'react'
 import { FolderOpen, Plus, Film, AlertCircle, Loader2, Trash2, KeyRound, CheckCircle2, Compass, LayoutGrid, List, Minus, Square, Copy, X } from 'lucide-react'
 import useProjectStore from '../stores/projectStore'
-import NewProjectDialog from './NewProjectDialog'
+import NewReeditProjectDialog from './reedit/NewReeditProjectDialog'
 import ComfyLauncherChip from './ComfyLauncherChip'
 import CreditsChip from './CreditsChip'
 import GettingStartedModal from './GettingStartedModal'
@@ -848,7 +848,7 @@ function WelcomeScreen() {
       </div>
       
       {/* New Project Dialog */}
-      <NewProjectDialog
+      <NewReeditProjectDialog
         isOpen={showNewProjectDialog}
         onClose={() => setShowNewProjectDialog(false)}
       />

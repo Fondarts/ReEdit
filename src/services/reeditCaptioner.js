@@ -167,7 +167,11 @@ export async function captionScene(scene, { modelId, temperature = 0.2, maxToken
  * every scene with { index, total, scene, captioned, error? }.
  */
 export async function captionScenes(scenes, { modelId, onProgress, signal } = {}) {
-  const model = modelId || await pickVisionModelId()
+  // Defer picking the model until we know at least one scene actually
+  // needs a caption — avoids a spurious "no vision model" error when
+  // the user has marked every scene excluded and just wants to keep
+  // existing captions intact.
+  let model = modelId || null
   const results = []
   for (let i = 0; i < scenes.length; i++) {
     if (signal?.aborted) {
@@ -176,6 +180,15 @@ export async function captionScenes(scenes, { modelId, onProgress, signal } = {}
       throw err
     }
     const scene = scenes[i]
+    // Skip excluded scenes — the user has flagged them out of the
+    // pipeline, so re-captioning would just waste model tokens and
+    // overwrite whatever they had before toggling it off.
+    if (scene?.excluded) {
+      results.push(scene)
+      onProgress?.({ index: i, total: scenes.length, scene, skipped: true })
+      continue
+    }
+    if (!model) model = await pickVisionModelId()
     try {
       const captioned = await captionScene(scene, { modelId: model })
       results.push({ ...scene, caption: captioned.visual, structured: captioned })

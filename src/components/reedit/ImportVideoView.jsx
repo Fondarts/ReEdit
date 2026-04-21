@@ -1,6 +1,7 @@
 import { useState } from 'react'
 import { Upload, Loader2, CheckCircle2, AlertCircle } from 'lucide-react'
 import useProjectStore from '../../stores/projectStore'
+import useTimelineStore from '../../stores/timelineStore'
 import { resetReeditProjectState } from '../../services/reeditEdlToTimeline'
 
 // Renderer-side metadata check via the HTML5 <video> element. This runs
@@ -87,7 +88,43 @@ function ImportVideoView({ onVideoImported }) {
       // a minute of re-captioning; the cost of silently-stale state
       // is invisible bugs, so we favor the former.
       resetReeditProjectState()
-      await saveProject({ sourceVideo, analysis: null, proposal: null })
+
+      // Overwrite project.settings with the video's real dimensions
+      // and fps. ComfyStudio's New-Project dialog asks for these
+      // up-front (it was built as an animatic tool where you pick
+      // canvas size before dragging stills in), but in the re-edit
+      // flow we don't know any of it until the user imports. Making
+      // import authoritative means the canvas, timeline fps, and
+      // aspect ratio all track the source clip automatically.
+      const latestProject = useProjectStore.getState().currentProject
+      const resolvedFps = Number.isFinite(sourceVideo.fps) && sourceVideo.fps > 0
+        ? sourceVideo.fps
+        : (latestProject?.settings?.fps || 24)
+      const projectSettings = {
+        ...(latestProject?.settings || {}),
+        width: sourceVideo.width || latestProject?.settings?.width,
+        height: sourceVideo.height || latestProject?.settings?.height,
+        fps: resolvedFps,
+        aspectRatio: (sourceVideo.width && sourceVideo.height)
+          ? `${sourceVideo.width}:${sourceVideo.height}`
+          : (latestProject?.settings?.aspectRatio || '16:9'),
+      }
+
+      await saveProject({
+        sourceVideo,
+        analysis: null,
+        proposal: null,
+        settings: projectSettings,
+      })
+
+      // The timeline store caches fps separately (used for frame-aligned
+      // snapping when placing clips); nudge it to match so the editor's
+      // frame ruler and any future clip placements speak the same fps
+      // as the source video.
+      try {
+        useTimelineStore.getState().setTimelineFps?.(resolvedFps)
+      } catch (_) { /* non-fatal */ }
+
       onVideoImported?.()
     } catch (err) {
       console.error('[reedit] import failed:', err)

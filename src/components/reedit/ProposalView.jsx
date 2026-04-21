@@ -1,11 +1,15 @@
 import { useMemo, useState } from 'react'
 import {
   Sparkles, Loader2, AlertCircle, Save, RotateCcw,
-  ArrowUp, ArrowDown, Trash2, CheckCircle2, Film,
+  ArrowUp, ArrowDown, Trash2, CheckCircle2, Film, Wand2, Eye, EyeOff,
+  Pencil, Plus,
 } from 'lucide-react'
 import useProjectStore from '../../stores/projectStore'
-import { generateProposal, PROPOSAL_METRICS } from '../../services/reeditProposer'
+import { generateProposal } from '../../services/reeditProposer'
 import { applyEdlToTimeline } from '../../services/reeditEdlToTimeline'
+import { generateFillForPlaceholder } from '../../services/reeditGenerate'
+import { useReeditPresets } from '../../hooks/useReeditPresets'
+import PresetEditorModal from './PresetEditorModal'
 
 function formatTc(seconds) {
   if (!Number.isFinite(seconds)) return '—'
@@ -53,11 +57,22 @@ function KindBadge({ kind }) {
 function ProposalView({ onNavigate }) {
   const currentProject = useProjectStore((s) => s.currentProject)
   const saveProject = useProjectStore((s) => s.saveProject)
+  const {
+    presets,
+    updatePreset,
+    createPreset,
+    deletePreset,
+    resetPreset,
+    isBuiltinDefault,
+  } = useReeditPresets()
 
   const sourceVideo = currentProject?.sourceVideo
   const analysis = currentProject?.analysis
   const scenes = analysis?.scenes || []
   const savedProposal = currentProject?.proposal || null
+
+  // Preset editor modal state: null = closed, { mode: 'edit' | 'create', id? }
+  const [presetEditor, setPresetEditor] = useState(null)
 
   // Local draft copy. Includes the whole proposal envelope (rationale,
   // edl, metric, model). Inputs (brandBrief, metric) reflect the
@@ -72,6 +87,9 @@ function ProposalView({ onNavigate }) {
   const [applying, setApplying] = useState(false)
   const [applyProgress, setApplyProgress] = useState({ current: 0, total: 0 })
   const [applyResult, setApplyResult] = useState(null)
+
+  // Per-row generation state: { [rowIndex]: { running, stage, progress, error } }
+  const [genState, setGenState] = useState({})
 
   const sceneById = useMemo(() => {
     const map = new Map()
@@ -96,10 +114,15 @@ function ProposalView({ onNavigate }) {
     setError(null)
     setApplyResult(null)
     try {
+      // Pass criteria from the presets layer (which may be a
+      // user-edited or custom preset) rather than letting the proposer
+      // fall back to the factory PROPOSAL_METRICS copy.
+      const selected = presets.find((p) => p.id === metric) || presets[0]
       const proposal = await generateProposal({
         scenes,
         brandBrief,
-        metric,
+        metric: selected?.label || metric,
+        criteria: selected?.criteria || '',
         totalDurationSec: sourceVideo.duration || null,
       })
       setDraft(proposal)
@@ -109,6 +132,36 @@ function ProposalView({ onNavigate }) {
     } finally {
       setGenerating(false)
     }
+  }
+
+  // Preset editor handlers. All three mutate via the hook, which
+  // persists to localStorage; the modal closes after each action.
+  const handleOpenEditPreset = (preset) => setPresetEditor({ mode: 'edit', id: preset.id })
+  const handleOpenCreatePreset = () => setPresetEditor({ mode: 'create' })
+  const closePresetEditor = () => setPresetEditor(null)
+  const handleSavePreset = (patch) => {
+    if (!presetEditor) return
+    if (presetEditor.mode === 'create') {
+      const created = createPreset(patch)
+      setMetric(created.id)
+    } else {
+      updatePreset(presetEditor.id, patch)
+    }
+    closePresetEditor()
+  }
+  const handleDeletePreset = () => {
+    if (!presetEditor?.id) return
+    // If the currently-selected metric is about to vanish, fall back
+    // to the first preset so the user isn't left with an orphan id.
+    const fallback = presets.find((p) => p.id !== presetEditor.id)
+    if (metric === presetEditor.id && fallback) setMetric(fallback.id)
+    deletePreset(presetEditor.id)
+    closePresetEditor()
+  }
+  const handleResetPreset = () => {
+    if (!presetEditor?.id) return
+    resetPreset(presetEditor.id)
+    closePresetEditor()
   }
 
   const mutateDraftEdl = (updater) => {
@@ -144,6 +197,19 @@ function ProposalView({ onNavigate }) {
       const next = [...(prev.edl || [])]
       if (!next[i]) return prev
       next[i] = { ...next[i], note }
+      return { ...prev, edl: next }
+    })
+  }
+  // Toggle a row out of the Apply-to-timeline pass without deleting
+  // it. Lets the user A/B different subsets without re-generating
+  // the whole proposal. Exclusion doesn't shift timecodes — that
+  // happens when Apply packs the included rows flush from zero.
+  const toggleRowExcluded = (i) => {
+    setDraft((prev) => {
+      if (!prev) return prev
+      const next = [...(prev.edl || [])]
+      if (!next[i]) return prev
+      next[i] = { ...next[i], excluded: !next[i].excluded }
       return { ...prev, edl: next }
     })
   }
@@ -200,11 +266,49 @@ function ProposalView({ onNavigate }) {
     }
   }
 
-  const selectedMetric = PROPOSAL_METRICS.find((m) => m.id === metric) || PROPOSAL_METRICS[0]
+  const generateFill = async (i) => {
+    if (!draft || genState[i]?.running) return
+    setGenState((prev) => ({ ...prev, [i]: { running: true, stage: 'starting', error: null } }))
+    try {
+      const result = await generateFillForPlaceholder({
+        row: draft.edl[i],
+        rowIndex: i,
+        edl: draft.edl,
+        scenes,
+        sourceVideo,
+        onProgress: (info) => {
+          setGenState((prev) => ({ ...prev, [i]: { running: true, ...info } }))
+        },
+      })
+      // Fold the result into the row's genSpec so the populator can
+      // swap it in on the next Apply, and persist immediately so a
+      // crash doesn't throw away an expensive generation.
+      const nextDraft = {
+        ...draft,
+        edl: draft.edl.map((r, idx) => (
+          idx === i
+            ? { ...r, genSpec: { ...(r.genSpec || {}), ...result } }
+            : r
+        )),
+      }
+      setDraft(nextDraft)
+      await saveProject({ proposal: { ...nextDraft, status: 'draft' } })
+      setGenState((prev) => ({ ...prev, [i]: { running: false, done: true } }))
+    } catch (err) {
+      console.error('[reedit] generate fill failed:', err)
+      setGenState((prev) => ({ ...prev, [i]: { running: false, error: err?.message || 'Generation failed.' } }))
+    }
+  }
+
+  const selectedMetric = presets.find((m) => m.id === metric) || presets[0]
+  const presetBeingEdited = presetEditor?.mode === 'edit'
+    ? presets.find((p) => p.id === presetEditor.id)
+    : null
   const isDirty = draft && draft !== savedProposal
   const edl = draft?.edl || []
   const placeholderCount = edl.filter((r) => r.kind === 'placeholder').length
   const originalCount = edl.length - placeholderCount
+  const excludedRowCount = edl.filter((r) => r.excluded).length
 
   return (
     <div className="flex-1 flex flex-col bg-sf-dark-950 text-sf-text-primary overflow-hidden">
@@ -218,7 +322,14 @@ function ProposalView({ onNavigate }) {
             <h1 className="text-base font-semibold">Proposal</h1>
             <p className="text-xs text-sf-text-muted">
               {draft
-                ? `${edl.length} edits (${originalCount} original · ${placeholderCount} new) · optimized for ${draft.metric} · ${draft.model}`
+                ? (
+                  <>
+                    {edl.length} edits ({originalCount} original · {placeholderCount} new) · optimized for {draft.metric} · {draft.model}
+                    {excludedRowCount > 0 && (
+                      <span className="ml-2 text-amber-300/80">· {excludedRowCount} excluded</span>
+                    )}
+                  </>
+                )
                 : 'Draft an improvement proposal from the shot log.'}
             </p>
           </div>
@@ -276,21 +387,39 @@ function ProposalView({ onNavigate }) {
         <div className="px-6 py-5 border-b border-sf-dark-800 bg-sf-dark-950">
           <div className="max-w-4xl">
             <label className="block text-xs font-medium text-sf-text-muted uppercase tracking-wider mb-2">Optimize for</label>
-            <div className="grid grid-cols-2 md:grid-cols-4 gap-2 mb-5">
-              {PROPOSAL_METRICS.map((m) => (
-                <button
-                  key={m.id}
-                  type="button"
-                  onClick={() => setMetric(m.id)}
-                  className={`text-left p-3 rounded-lg border transition-colors
-                    ${metric === m.id
-                      ? 'border-sf-accent bg-sf-accent/10 text-sf-text-primary'
-                      : 'border-sf-dark-700 bg-sf-dark-900 text-sf-text-muted hover:border-sf-dark-500 hover:text-sf-text-primary'}`}
-                >
-                  <div className="text-sm font-medium">{m.label}</div>
-                  <div className="text-[10px] leading-snug mt-1 opacity-80">{m.blurb}</div>
-                </button>
+            <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-5 gap-2 mb-5">
+              {presets.map((m) => (
+                <div key={m.id} className="relative group/preset">
+                  <button
+                    type="button"
+                    onClick={() => setMetric(m.id)}
+                    className={`w-full h-full text-left p-3 rounded-lg border transition-colors
+                      ${metric === m.id
+                        ? 'border-sf-accent bg-sf-accent/10 text-sf-text-primary'
+                        : 'border-sf-dark-700 bg-sf-dark-900 text-sf-text-muted hover:border-sf-dark-500 hover:text-sf-text-primary'}`}
+                  >
+                    <div className="text-sm font-medium pr-6">{m.label}</div>
+                    <div className="text-[10px] leading-snug mt-1 opacity-80">{m.blurb || 'No description.'}</div>
+                  </button>
+                  <button
+                    type="button"
+                    onClick={(e) => { e.stopPropagation(); handleOpenEditPreset(m) }}
+                    title="Edit preset"
+                    className="absolute top-1.5 right-1.5 p-1 rounded bg-sf-dark-800/80 hover:bg-sf-dark-700 text-sf-text-muted hover:text-sf-text-primary opacity-0 group-hover/preset:opacity-100 focus:opacity-100 transition-opacity"
+                  >
+                    <Pencil className="w-3 h-3" />
+                  </button>
+                </div>
               ))}
+              <button
+                type="button"
+                onClick={handleOpenCreatePreset}
+                className="text-left p-3 rounded-lg border border-dashed border-sf-dark-700 bg-sf-dark-950 hover:border-sf-accent hover:bg-sf-accent/5 text-sf-text-muted hover:text-sf-text-primary transition-colors flex flex-col items-center justify-center gap-1"
+                title="Create a new preset"
+              >
+                <Plus className="w-4 h-4" />
+                <span className="text-[11px]">New preset</span>
+              </button>
             </div>
 
             <label className="block text-xs font-medium text-sf-text-muted uppercase tracking-wider mb-2">Brand brief (optional)</label>
@@ -315,7 +444,7 @@ function ProposalView({ onNavigate }) {
                 {generating ? <Loader2 className="w-4 h-4 animate-spin" /> : <Sparkles className="w-4 h-4" />}
                 {generating ? 'Generating…' : draft ? 'Re-generate proposal' : 'Generate proposal'}
               </button>
-              <span className="text-[11px] text-sf-text-muted">{selectedMetric.blurb}</span>
+              <span className="text-[11px] text-sf-text-muted">{selectedMetric?.blurb || ''}</span>
             </div>
           </div>
         </div>
@@ -373,8 +502,12 @@ function ProposalView({ onNavigate }) {
                   {edl.map((row, i) => {
                     const dur = (row.newTcOut || 0) - (row.newTcIn || 0)
                     const sourceScene = row.sourceSceneId ? sceneById.get(row.sourceSceneId) : null
+                    const rowExcluded = Boolean(row.excluded)
                     return (
-                      <tr key={`${row.index}-${i}`} className="border-t border-sf-dark-800 align-top">
+                      <tr
+                        key={`${row.index}-${i}`}
+                        className={`border-t border-sf-dark-800 align-top transition-opacity ${rowExcluded ? 'opacity-40' : ''}`}
+                      >
                         <td className="px-3 py-2 text-sf-text-muted tabular-nums">{row.index}</td>
                         <td className="px-3 py-2"><KindBadge kind={row.kind} /></td>
                         <td className="px-3 py-2 text-sf-text-secondary">
@@ -401,6 +534,17 @@ function ProposalView({ onNavigate }) {
                           <div className="flex items-center gap-1">
                             <button
                               type="button"
+                              onClick={() => toggleRowExcluded(i)}
+                              title={rowExcluded ? 'Include row (currently excluded)' : 'Exclude from Apply + Generate'}
+                              className={`p-1 rounded transition-colors
+                                ${rowExcluded
+                                  ? 'text-sf-text-muted hover:bg-sf-dark-700 hover:text-sf-text-primary'
+                                  : 'text-sf-accent hover:bg-sf-accent/20'}`}
+                            >
+                              {rowExcluded ? <EyeOff className="w-3.5 h-3.5" /> : <Eye className="w-3.5 h-3.5" />}
+                            </button>
+                            <button
+                              type="button"
                               onClick={() => moveUp(i)}
                               disabled={i === 0}
                               title="Move up"
@@ -425,7 +569,50 @@ function ProposalView({ onNavigate }) {
                             >
                               <Trash2 className="w-3.5 h-3.5" />
                             </button>
+                            {row.kind === 'placeholder' && (
+                              <button
+                                type="button"
+                                onClick={() => generateFill(i)}
+                                disabled={genState[i]?.running}
+                                title={row.genSpec?.generatedPath ? 'Re-generate fill' : 'Generate fill (LTX 2.3 i2v)'}
+                                className={`p-1 rounded transition-colors
+                                  ${genState[i]?.running
+                                    ? 'text-sf-text-muted cursor-wait'
+                                    : row.genSpec?.generatedPath
+                                      ? 'text-emerald-400 hover:bg-emerald-500/20'
+                                      : 'text-amber-400 hover:bg-amber-500/20'}`}
+                              >
+                                {genState[i]?.running
+                                  ? <Loader2 className="w-3.5 h-3.5 animate-spin" />
+                                  : row.genSpec?.generatedPath
+                                    ? <CheckCircle2 className="w-3.5 h-3.5" />
+                                    : <Wand2 className="w-3.5 h-3.5" />}
+                              </button>
+                            )}
                           </div>
+                          {row.kind === 'placeholder' && genState[i] && (
+                            <div className="mt-1 text-[10px] leading-snug">
+                              {genState[i].running && (
+                                <span className="text-sf-text-muted">
+                                  {genState[i].stage === 'upload_ref' && 'Uploading ref…'}
+                                  {genState[i].stage === 'queue_workflow' && 'Queuing workflow…'}
+                                  {genState[i].stage === 'generating' && (
+                                    genState[i].step != null && genState[i].maxSteps
+                                      ? `Generating ${genState[i].step}/${genState[i].maxSteps}…`
+                                      : 'Generating…'
+                                  )}
+                                  {genState[i].stage === 'executing' && 'Running graph…'}
+                                  {genState[i].stage === 'download' && 'Downloading…'}
+                                </span>
+                              )}
+                              {!genState[i].running && genState[i].error && (
+                                <span className="text-sf-error">{genState[i].error}</span>
+                              )}
+                              {!genState[i].running && genState[i].done && (
+                                <span className="text-emerald-400">Ready — re-Apply to see on timeline.</span>
+                              )}
+                            </div>
+                          )}
                         </td>
                       </tr>
                     )
@@ -448,6 +635,17 @@ function ProposalView({ onNavigate }) {
           </div>
         )}
       </div>
+
+      <PresetEditorModal
+        isOpen={Boolean(presetEditor)}
+        mode={presetEditor?.mode || 'edit'}
+        preset={presetBeingEdited}
+        isBuiltinDefault={isBuiltinDefault}
+        onClose={closePresetEditor}
+        onSave={handleSavePreset}
+        onDelete={handleDeletePreset}
+        onReset={handleResetPreset}
+      />
     </div>
   )
 }

@@ -76,25 +76,50 @@ function wrapLines(text, maxChars = 34, maxLines = 5) {
   return lines
 }
 
+// Build the "GENERATION NEEDED" card as an SVG data URL sized to the
+// source video's aspect. The sizing rule that matters: every font size
+// is scaled off `min(w, h)` instead of `h`, otherwise a 1080×1920
+// vertical source ends up with title text ~2900px wide trying to fit
+// into a 1080-wide canvas and everything gets sliced off on the sides.
+// Wrap width for the note also tightens on vertical aspects so the
+// sentence fits within the visible column.
 function buildPlaceholderSvgDataUrl({ note, index, width, height }) {
   const w = Math.max(480, width || 1920)
   const h = Math.max(270, height || 1080)
-  const lines = wrapLines(note)
-  const noteFontSize = Math.round(h * 0.045)
-  const lineStep = Math.round(noteFontSize * 1.25)
-  const noteStartY = Math.round(h * 0.52)
+  const isVertical = h > w
+  // `base` is the smaller dimension — i.e. the "narrowest" axis. Sizing
+  // fonts off it gives a consistent visual size across 16:9 landscape,
+  // 1:1 square, and 9:16 vertical without any branching. Horizontal
+  // sources look identical to before; vertical sources stop exploding.
+  const base = Math.min(w, h)
+
+  const maxChars = isVertical ? 22 : 34
+  const maxLines = isVertical ? 8 : 5
+  const lines = wrapLines(note, maxChars, maxLines)
+
+  const titleSize = Math.round(base * 0.07)
+  const subtitleSize = Math.round(base * 0.032)
+  const noteFontSize = Math.round(base * 0.04)
+  const lineStep = Math.round(noteFontSize * 1.3)
+  const topBarH = Math.max(6, Math.round(base * 0.012))
+
+  const titleY = Math.round(h * 0.28)
+  const subtitleY = Math.round(h * 0.38)
+  const noteStartY = Math.round(h * 0.50)
+
   const tspans = lines.map((line, i) => (
     `<tspan x="50%" dy="${i === 0 ? 0 : lineStep}">${escapeXml(line)}</tspan>`
   )).join('')
-  const svg = `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 ${w} ${h}" preserveAspectRatio="xMidYMid slice">
+
+  const svg = `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 ${w} ${h}" preserveAspectRatio="xMidYMid meet">
     <rect width="100%" height="100%" fill="#0b0b0e"/>
-    <rect x="0" y="0" width="100%" height="${Math.max(6, Math.round(h * 0.012))}" fill="#f59e0b"/>
-    <text x="50%" y="${Math.round(h * 0.28)}" fill="#f59e0b"
+    <rect x="0" y="0" width="100%" height="${topBarH}" fill="#f59e0b"/>
+    <text x="50%" y="${titleY}" fill="#f59e0b"
           font-family="Inter, system-ui, sans-serif" font-weight="700"
-          font-size="${Math.round(h * 0.085)}" text-anchor="middle">GENERATION NEEDED</text>
-    <text x="50%" y="${Math.round(h * 0.40)}" fill="#9ca3af"
+          font-size="${titleSize}" text-anchor="middle">GENERATION NEEDED</text>
+    <text x="50%" y="${subtitleY}" fill="#9ca3af"
           font-family="Inter, system-ui, sans-serif"
-          font-size="${Math.round(h * 0.035)}" text-anchor="middle">shot ${index}</text>
+          font-size="${subtitleSize}" text-anchor="middle">shot ${index}</text>
     <text y="${noteStartY}" fill="#e5e7eb"
           font-family="Inter, system-ui, sans-serif"
           font-size="${noteFontSize}" text-anchor="middle">${tspans}</text>
@@ -150,6 +175,39 @@ async function registerSceneAsset(sourceVideo, scene, projectDir) {
   })
 }
 
+// Register a generated MP4 (from reeditGenerate.js) as a scene-like
+// video asset. Mirrors registerSceneAsset's shape but with a distinct
+// tag so cleanupStaleReeditAssets sweeps both on re-apply.
+function registerGeneratedAsset(sourceVideo, row, generatedPath) {
+  const assetsStore = useAssetsStore.getState()
+  const gen = row.genSpec || {}
+  const duration = Math.max(0.1, Number(gen.durationSec) || (Number(row.newTcOut) - Number(row.newTcIn)) || 1.5)
+  return assetsStore.addAsset({
+    name: `GEN ${row.index}: ${(row.note || 'new shot').slice(0, 40)}`,
+    url: toFileUrl(generatedPath),
+    path: generatedPath,
+    absolutePath: generatedPath,
+    type: 'video',
+    duration,
+    fps: gen.fps || sourceVideo?.fps || null,
+    width: gen.width || sourceVideo?.width,
+    height: gen.height || sourceVideo?.height,
+    hasAudio: false,
+    audioEnabled: false,
+    isImported: true,
+    settings: {
+      duration,
+      fps: gen.fps || sourceVideo?.fps || null,
+      width: gen.width || sourceVideo?.width,
+      height: gen.height || sourceVideo?.height,
+      reeditGeneratedRowIndex: row.index,
+      reeditGeneratedModel: gen.model || null,
+      reeditGeneratedPrompt: gen.prompt || row.note || '',
+      reeditGeneratedAt: gen.generatedAt || null,
+    },
+  })
+}
+
 function registerPlaceholderAsset(sourceVideo, row, durationSec) {
   const assetsStore = useAssetsStore.getState()
   const url = buildPlaceholderSvgDataUrl({
@@ -188,6 +246,7 @@ function cleanupStaleReeditAssets() {
   const stale = (assetsStore.assets || []).filter((a) => (
     a?.settings?.reeditSceneId
     || a?.settings?.reeditPlaceholder
+    || a?.settings?.reeditGeneratedRowIndex != null
   ))
   for (const asset of stale) {
     try { assetsStore.removeAsset(asset.id) } catch (_) { /* ignore */ }
@@ -274,18 +333,44 @@ export async function applyEdlToTimeline({ edl, scenes, sourceVideo, onProgress 
     const row = edl[i]
     onProgress?.({ index: i, total, row })
 
+    // Honor per-row exclusion — the user has said "don't put this on
+    // the timeline" without deleting the row from the EDL. Nothing
+    // lands, cursor doesn't advance.
+    if (row?.excluded) {
+      continue
+    }
+
     if (row.kind === 'placeholder') {
       const declaredGap = (Number(row.newTcOut) || 0) - (Number(row.newTcIn) || 0)
       const gapDur = Math.max(0.5, declaredGap || 1.5)
-      const asset = registerPlaceholderAsset(sourceVideo, row, gapDur)
-      timelineStore.addClip(videoTrack.id, asset, cursor, null, {
-        duration: gapDur,
-        trimStart: 0,
-        trimEnd: gapDur,
-        saveHistory: false,
-        selectAfterAdd: false,
-      })
-      cursor += gapDur
+      const generatedPath = row.genSpec?.generatedPath
+
+      if (generatedPath) {
+        // Generation already produced an MP4 — drop it in as a real
+        // video clip. The generated duration may differ slightly from
+        // the EDL row's declared gap; we honor the clip's actual
+        // length via trimEnd so playback doesn't try to read past EOF.
+        const actualDur = Math.max(0.1, Number(row.genSpec?.durationSec) || gapDur)
+        const asset = registerGeneratedAsset(sourceVideo, row, generatedPath)
+        timelineStore.addClip(videoTrack.id, asset, cursor, null, {
+          duration: actualDur,
+          trimStart: 0,
+          trimEnd: actualDur,
+          saveHistory: false,
+          selectAfterAdd: false,
+        })
+        cursor += actualDur
+      } else {
+        const asset = registerPlaceholderAsset(sourceVideo, row, gapDur)
+        timelineStore.addClip(videoTrack.id, asset, cursor, null, {
+          duration: gapDur,
+          trimStart: 0,
+          trimEnd: gapDur,
+          saveHistory: false,
+          selectAfterAdd: false,
+        })
+        cursor += gapDur
+      }
       placeholdersPlaced++
       continue
     }
