@@ -252,6 +252,22 @@ contextBridge.exposeInMainWorld('electronAPI', {
    * @returns {Promise<{success: boolean, dataUrl?: string, bytes?: number, error?: string}>}
    */
   readFileAsDataUrl: (filePath, mimeType) => ipcRenderer.invoke('media:readFileAsDataUrl', filePath, mimeType),
+
+  /**
+   * Write text to the OS clipboard via the main-process clipboard.
+   * More reliable than navigator.clipboard.writeText when we're about
+   * to openExternal and steal focus in the same turn.
+   * @param {string} text
+   * @returns {Promise<{success: boolean, error?: string}>}
+   */
+  writeTextToClipboard: (text) => ipcRenderer.invoke('clipboard:writeText', text),
+
+  /**
+   * Reveal a file in the OS file manager (selected/highlighted).
+   * @param {string} filePath absolute path
+   * @returns {Promise<{success: boolean, error?: string}>}
+   */
+  showItemInFolder: (filePath) => ipcRenderer.invoke('shell:showItemInFolder', filePath),
   
   /**
    * Get video stream info via ffprobe (Electron only)
@@ -286,6 +302,30 @@ contextBridge.exposeInMainWorld('electronAPI', {
    * @returns {Promise<{success: boolean, path?: string, cached?: boolean, error?: string}>}
    */
   extractSceneClip: (options) => ipcRenderer.invoke('analysis:extractSceneClip', options),
+
+  /**
+   * Remove on-screen graphics from a shot's cached clip using Wan VACE
+   * in ComfyUI. End-to-end: mask generation → upload → queue → poll →
+   * copy back into the project. Progress stream arrives via
+   * `onOptimizeFootageProgress`.
+   * @param {{ scene: object, projectDir: string, comfyUrl?: string }} options
+   * @returns {Promise<{success: boolean, promptId?: string, outputPath?: string, inProjectDir?: boolean, error?: string}>}
+   */
+  optimizeFootage: (options) => ipcRenderer.invoke('analysis:optimizeFootage', options),
+
+  /**
+   * Preview-only mask pass: runs make_mask.py and returns paths to the
+   * generated mask / blank videos, skipping ComfyUI + composite. Use to
+   * iterate on ROI / threshold / persistence cheaply.
+   * @param {{ scene: object, projectDir: string }} options
+   * @returns {Promise<{success: boolean, maskPath?: string, blankPath?: string, argsUsed?: string[], scriptStdout?: string, scriptStderr?: string, error?: string}>}
+   */
+  previewMask: (options) => ipcRenderer.invoke('analysis:previewMask', options),
+  onOptimizeFootageProgress: (cb) => {
+    const handler = (_, payload) => cb(payload)
+    ipcRenderer.on('analysis:optimizeFootage:progress', handler)
+    return () => ipcRenderer.removeListener('analysis:optimizeFootage:progress', handler)
+  },
 
   /**
    * Extract audio waveform peaks via ffmpeg (Electron only)

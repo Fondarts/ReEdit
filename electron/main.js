@@ -1,4 +1,4 @@
-const { app, BrowserWindow, ipcMain, dialog, protocol, net } = require('electron')
+const { app, BrowserWindow, ipcMain, dialog, protocol, net, clipboard, shell } = require('electron')
 const crypto = require('crypto')
 const path = require('path')
 const fs = require('fs').promises
@@ -19,6 +19,30 @@ const {
 } = require('./comfyLauncher')
 
 const isDev = !app.isPackaged
+
+// Register `comfystudio://` as a privileged scheme BEFORE `app.ready`.
+// Without this the scheme only works for `<img>` (resource loader) —
+// `<video>`, `<audio>`, and renderer `fetch()` need the privileges
+// below. `stream: true` specifically enables byte-range requests that
+// `<video>` issues under the hood. We deliberately DO NOT set
+// `standard: true` here: the standard-URL parser normalises the path
+// (lowercases, reorders, treats percent-encoded backslashes as host
+// delimiters) and breaks the handler below, which was written around
+// `request.url.replace('comfystudio://', '')`. A non-standard scheme
+// keeps the raw encoded path intact on the way in. `corsEnabled`
+// requires `standard:true`, so we skip it too — same-origin playback
+// doesn't need CORS anyway.
+protocol.registerSchemesAsPrivileged([
+  {
+    scheme: 'comfystudio',
+    privileges: {
+      secure: true,
+      supportFetchAPI: true,
+      stream: true,
+      bypassCSP: true,
+    },
+  },
+])
 
 // App icon (build/icon.png) – used for window and taskbar/dock
 const iconPath = path.join(__dirname, '..', 'build', 'icon.png')
@@ -1043,14 +1067,30 @@ ipcMain.handle('window:toggleFullScreen', () => {
 // Register custom protocol for serving local files
 function registerFileProtocol() {
   protocol.handle('comfystudio', async (request) => {
-    const url = request.url.replace('comfystudio://', '')
+    // Strip any query string / fragment before turning the URL into a
+    // file path. Callers use `?v=<analysis.createdAt>` as a
+    // cache-buster (so <img> tags re-fetch when a scene's thumbnail
+    // is regenerated on a new analysis pass) — without this,
+    // decodeURIComponent would include the `?v=...` bit in the file
+    // path and the lookup 404s.
+    let url = request.url.replace('comfystudio://', '')
+    const queryIdx = url.search(/[?#]/)
+    if (queryIdx >= 0) url = url.slice(0, queryIdx)
     const filePath = decodeURIComponent(url)
-    
+
     try {
-      // Security: Only allow access to files within user's documents or app paths
       const normalizedPath = path.normalize(filePath)
-      
-      return net.fetch(`file://${normalizedPath}`)
+      const res = await net.fetch(`file://${normalizedPath}`)
+      // Tell Chromium not to heuristically cache this response. The
+      // files these URLs point at (scene thumbnails, generated clips)
+      // routinely get overwritten in place between analysis /
+      // generation runs, so caching served stale frames and made it
+      // look like new analyses were producing the wrong thumbnails.
+      const headers = new Headers(res.headers)
+      headers.set('Cache-Control', 'no-cache, no-store, must-revalidate')
+      headers.set('Pragma', 'no-cache')
+      headers.set('Expires', '0')
+      return new Response(res.body, { status: res.status, statusText: res.statusText, headers })
     } catch (err) {
       console.error('Protocol error:', err)
       return new Response('File not found', { status: 404 })
@@ -1530,6 +1570,37 @@ ipcMain.handle('media:getFileUrl', (event, filePath) => {
   return `comfystudio://${encodedPath}`
 })
 
+// Writes arbitrary text to the OS clipboard via Electron's main-
+// process clipboard module. Using navigator.clipboard.writeText from
+// the renderer fails silently on focus changes (e.g. when we
+// openExternal a ComfyUI URL right after copying — the browser
+// steals focus before the async write resolves) and the user ends
+// up with whatever the previous clipboard contents were.
+ipcMain.handle('clipboard:writeText', async (event, text) => {
+  try {
+    clipboard.writeText(String(text ?? ''))
+    return { success: true }
+  } catch (err) {
+    return { success: false, error: err?.message || String(err) }
+  }
+})
+
+// Reveals a file in the user's OS file manager with the target
+// selected. Used by the "Show in folder" button in the Send-to-
+// ComfyUI modal so the user can drag the saved workflow JSON
+// directly onto ComfyUI's canvas — that's the reliable way to load
+// a workflow (clipboard paste in ComfyUI only handles its internal
+// node-copy format, not arbitrary workflow JSON).
+ipcMain.handle('shell:showItemInFolder', async (event, filePath) => {
+  try {
+    if (!filePath) return { success: false, error: 'filePath is required.' }
+    shell.showItemInFolder(String(filePath))
+    return { success: true }
+  } catch (err) {
+    return { success: false, error: err?.message || String(err) }
+  }
+})
+
 // Reads a local file and returns it as a data URL (base64). Needed for
 // renderer code that has to feed a file into a multimodal API — the
 // renderer can't `fetch('comfystudio://...')` because the protocol is
@@ -1703,6 +1774,34 @@ ipcMain.handle('analysis:detectScenes', async (event, videoPath, options = {}) =
 // one GOP (typically <1s in web-delivered ads). That's usually fine for
 // the re-edit workflow; we can swap to re-encode here later if a pilot
 // complains about imprecise first frames.
+// Scene clips feed two consumers that are both sensitive to frame-
+// accurate boundaries: (1) the hover preview in AnalysisView, where a
+// clip that bleeds into the next shot reads as "wrong scene"; (2) the
+// Gemini video analyzer, which describes whatever frames it sees — a
+// bleed of half a second from the neighbouring shot is enough to make
+// the output describe the wrong subject. Stream-copy (`-c copy`) can't
+// start on an arbitrary frame; it snaps to the prior keyframe, which
+// is why earlier clips contained more than one plano. We re-encode
+// with libx264 veryfast so cuts land exactly on `tcIn`.
+function ffprobeDurationSec(filePath) {
+  return new Promise((resolve) => {
+    if (!ffprobeStaticPath) return resolve(null)
+    const p = spawn(ffprobeStaticPath, [
+      '-v', 'error',
+      '-show_entries', 'format=duration',
+      '-of', 'default=noprint_wrappers=1:nokey=1',
+      filePath,
+    ], { windowsHide: true })
+    let out = ''
+    p.stdout.on('data', (d) => { out += d.toString() })
+    p.on('error', () => resolve(null))
+    p.on('close', () => {
+      const n = parseFloat(String(out).trim())
+      resolve(Number.isFinite(n) ? n : null)
+    })
+  })
+}
+
 ipcMain.handle('analysis:extractSceneClip', async (event, options) => {
   if (!ffmpegPath) return { success: false, error: 'FFmpeg binary not available.' }
   const { videoPath, tcIn, tcOut, outputPath } = options || {}
@@ -1716,13 +1815,23 @@ ipcMain.handle('analysis:extractSceneClip', async (event, options) => {
     return { success: false, error: `Cannot create output dir: ${err.message}` }
   }
 
-  // Skip re-extraction if the file is already there and non-empty.
-  // Scene boundaries are deterministic per project, so a cached clip
-  // stays valid until the user changes the analysis.
+  // Cache validation: accept the file only if its duration is within
+  // ~0.15 s of the requested window. Clips extracted by the old
+  // stream-copy path routinely run long (they start at the previous
+  // keyframe, inflating duration by up to the GOP length) and that
+  // mismatch is the tell. Regenerate whenever the tolerance is missed
+  // so the bug heals itself without forcing users to wipe .reedit/clips.
+  const expectedDuration = Math.max(tcIn + 0.05, tcOut) - Math.max(0, tcIn)
+  const CACHE_TOLERANCE_SEC = 0.15
   try {
     const stat = await fs.stat(outputPath)
     if (stat?.size > 1024) {
-      return { success: true, path: outputPath, cached: true }
+      const cachedDuration = await ffprobeDurationSec(outputPath)
+      if (cachedDuration != null && Math.abs(cachedDuration - expectedDuration) <= CACHE_TOLERANCE_SEC) {
+        return { success: true, path: outputPath, cached: true }
+      }
+      // duration disagreed (or ffprobe failed) — fall through to
+      // re-extract. The new file overwrites the old one via `-y`.
     }
   } catch (_) { /* missing file — proceed */ }
 
@@ -1733,7 +1842,19 @@ ipcMain.handle('analysis:extractSceneClip', async (event, options) => {
       '-ss', String(Math.max(0, tcIn)),
       '-to', String(Math.max(tcIn + 0.05, tcOut)),
       '-i', videoPath,
-      '-c', 'copy',
+      // Re-encode for frame-accurate trim. `veryfast` + CRF 20 is the
+      // sweet spot here: per-shot clips are short (<5 s typically), so
+      // encoding cost is negligible compared to the Gemini round trip,
+      // and the output stays visually lossless for previews + model
+      // input. Audio re-encoded to AAC so the container matches what
+      // the original video used (simplest way to avoid mux warnings).
+      '-c:v', 'libx264',
+      '-preset', 'veryfast',
+      '-crf', '20',
+      '-pix_fmt', 'yuv420p',
+      '-c:a', 'aac',
+      '-b:a', '128k',
+      '-movflags', '+faststart',
       '-avoid_negative_ts', 'make_zero',
       '-y',
       outputPath,
@@ -1750,6 +1871,754 @@ ipcMain.handle('analysis:extractSceneClip', async (event, options) => {
       resolve({ success: true, path: outputPath, cached: false })
     })
   })
+})
+
+// ============================================
+// Optimize footage — remove graphics from a shot with Wan VACE
+// ============================================
+//
+// Triggered from the Analysis view's per-shot "Optimize" button. The
+// pipeline is: (1) use the Gemini `removal_hint` to derive make_mask.py
+// args; (2) generate a mask + pre-blanked source video next to the
+// cached shot clip; (3) copy the three files (source, mask, blank) to
+// ComfyUI's input dir with a project-scoped prefix so runs don't
+// collide; (4) submit a Wan VACE workflow identical to the SUPER02
+// one, parameterised by the shot's native resolution and fps, with
+// RealESRGAN upscale + Lanczos resize back to native 1920×... at the
+// end; (5) poll /history until done and emit progress events the
+// renderer displays per-row.
+
+// Map the Gemini color_family names to conservative OpenCV HSV ranges.
+// These are wider than a typical Photoshop pick because mask_strategy
+// 'color' has to catch the graphic across every frame and the model's
+// hsv_range_hint is frequently off by ±10 H — we'd rather cover too
+// much than too little, then let make_mask.py's dilate kernel clean up
+// the edges.
+const COLOR_HSV_RANGES = {
+  yellow:  { lower: [20, 120, 120], upper: [35, 255, 255] },
+  orange:  { lower: [10, 150, 120], upper: [20, 255, 255] },
+  red:     { lower: [0, 120, 100], upper: [10, 255, 255] },  // low-red band; see dualRed
+  magenta: { lower: [140, 80, 100], upper: [170, 255, 255] },
+  pink:    { lower: [145, 60, 150], upper: [170, 255, 255] },
+  purple:  { lower: [125, 80, 80], upper: [145, 255, 255] },
+  blue:    { lower: [90, 80, 80], upper: [130, 255, 255] },
+  cyan:    { lower: [80, 80, 120], upper: [100, 255, 255] },
+  green:   { lower: [35, 80, 100], upper: [85, 255, 255] },
+}
+
+// Dilate kernel size used by make_mask.py. 25 keeps the mask tight
+// around the graphic itself; the composite feather (σ=15) now does
+// most of the work softening the patch edge, so we can afford to stop
+// over-expanding the mask into background pixels.
+const MASK_DILATE_KERNEL = '25'
+
+// Max per-blob area as a percent of the frame. Above this, a connected
+// component is treated as background (sky / wall / specular) instead
+// of text. We picked 12%: a 1920×1080 frame is ~2.07M pixels, 12% is
+// ~248k pixels — more than any single letter or even a full-width
+// chyron needs, so real text always survives.
+const MASK_MAX_BLOB_AREA_PCT = '12'
+
+// Fraction of frames a pixel must be "detected" in to count as a
+// persistent overlay. 0.50 = pixel lit in half the frames survives.
+// We started at 0.60 (bias toward killing false positives) but that
+// cut real overlays that only appear for part of the shot — legal
+// disclaimers that fade in at the end, dynamic chyrons, etc. 0.50 is
+// the compromise: captions on screen for half the run still pass,
+// and transient highlights / panning skies still fail because their
+// per-pixel occupancy is much lower.
+const MASK_PERSISTENCE_THRESHOLD = '0.50'
+
+// Position values we recognise as ROI constraints. Anything outside
+// this set (or missing) falls through to "no ROI" in make_mask.py.
+const KNOWN_ROI_POSITIONS = new Set([
+  'top', 'bottom', 'center',
+  'lower_third', 'upper_third',
+  'corner_top_left', 'corner_top_right',
+  'corner_bottom_left', 'corner_bottom_right',
+  'full_frame', 'scattered',
+])
+
+// Pick a stable, valid bbox list from the two places Gemini may emit
+// it: `graphics.bboxes` (the canonical spot per our prompt) or
+// `graphics.removal_hint.bboxes` (where the model sometimes puts it
+// because it's reasoning about "how to remove" this shot). Returns []
+// if neither is present or valid.
+function extractBboxes(graphics) {
+  if (!graphics || typeof graphics !== 'object') return []
+  const direct = Array.isArray(graphics.bboxes) ? graphics.bboxes : null
+  const nested = Array.isArray(graphics.removal_hint?.bboxes) ? graphics.removal_hint.bboxes : null
+  const source = (direct && direct.length) ? direct : (nested && nested.length) ? nested : []
+  const out = []
+  for (const b of source) {
+    if (!b) continue
+    const box = Array.isArray(b) ? b : b.box_2d
+    if (!Array.isArray(box) || box.length !== 4) continue
+    const nums = box.map((n) => Number(n))
+    if (nums.some((n) => !Number.isFinite(n))) continue
+    const ymin = Math.min(nums[0], nums[2])
+    const xmin = Math.min(nums[1], nums[3])
+    const ymax = Math.max(nums[0], nums[2])
+    const xmax = Math.max(nums[1], nums[3])
+    // Reject degenerate or near-frame-sized boxes (model occasionally
+    // emits [0, 0, 1000, 1000] when it can't localise — that would
+    // erase the whole shot).
+    if (ymax - ymin < 5 || xmax - xmin < 5) continue
+    if ((ymax - ymin) * (xmax - xmin) > 900000) continue  // >90% of frame
+    out.push({ box_2d: [ymin, xmin, ymax, xmax], role: b.role || null, label: b.label || null })
+  }
+  return out
+}
+
+function pickMaskArgsFromHint(hint, graphics) {
+  // Preferred path: Gemini-provided bounding boxes. When present and
+  // non-degenerate, we bypass threshold heuristics entirely — the model
+  // has already decided what counts as a graphic. We return the JSON
+  // in `bboxesJson` so the caller can dump it to a tempfile and pass
+  // `--bboxes-file` — avoids Windows' CLI length cap on long arg lists.
+  const bboxes = extractBboxes(graphics)
+  if (bboxes.length > 0) {
+    return {
+      mode: 'boxes',
+      bboxesJson: JSON.stringify(bboxes),
+      args: [
+        '--mode', 'boxes',
+        '--dilate-kernel', MASK_DILATE_KERNEL,
+      ],
+    }
+  }
+
+  // Fallback path: classical luma / color thresholds with ROI +
+  // persistence refinement, used when bboxes aren't available (shot
+  // captioned before we added the schema, or model chose not to
+  // emit them).
+  const refine = [
+    '--dilate-kernel', MASK_DILATE_KERNEL,
+    '--max-blob-area-pct', MASK_MAX_BLOB_AREA_PCT,
+    '--persistence-threshold', MASK_PERSISTENCE_THRESHOLD,
+  ]
+  const position = String(hint?.position || '').toLowerCase()
+  if (position && KNOWN_ROI_POSITIONS.has(position)) {
+    refine.push('--roi', position)
+  }
+
+  if (!hint || typeof hint !== 'object') {
+    return { mode: 'luma', args: ['--mode', 'luma', ...refine] }
+  }
+  const strategy = String(hint.mask_strategy || '').toLowerCase()
+  if (strategy === 'color') {
+    const hsv = hint.hsv_range_hint
+    let lower, upper
+    if (hsv && Array.isArray(hsv.lower) && Array.isArray(hsv.upper)) {
+      lower = hsv.lower.map((n) => String(Math.round(n)))
+      upper = hsv.upper.map((n) => String(Math.round(n)))
+    } else {
+      const family = String(hint.text_color_family || '').toLowerCase()
+      const range = COLOR_HSV_RANGES[family]
+      if (!range) {
+        // Unknown color family — fall back to luma so we at least try.
+        return { mode: 'luma', args: ['--mode', 'luma', '--luma-threshold', '195', ...refine] }
+      }
+      lower = range.lower.map(String)
+      upper = range.upper.map(String)
+    }
+    return {
+      mode: 'color',
+      args: ['--mode', 'color', '--hsv-lower', ...lower, '--hsv-upper', ...upper, ...refine],
+    }
+  }
+  if (strategy === 'luma_dark') {
+    // make_mask.py only implements bright-luma currently. Dark text is
+    // rare enough in ads that we fall back to bright with a warning in
+    // the logs rather than extending the script right now.
+    const threshold = Number.isFinite(hint.luma_threshold_hint) ? String(hint.luma_threshold_hint) : '60'
+    return { mode: 'luma', args: ['--mode', 'luma', '--luma-threshold', threshold, ...refine], warn: 'mask_strategy=luma_dark requested but make_mask.py only supports luma_bright; result may be inverted.' }
+  }
+  // luma_bright (default) + unsure + mixed all fall here. Default
+  // threshold dropped from 195 → 170 so grey legal disclaimers
+  // (typical luma 180-210 — lighter than body text but not pure
+  // white) survive the per-frame detection pass. The persistence
+  // gate still kills skies / highlights that briefly clear 170.
+  const threshold = Number.isFinite(hint.luma_threshold_hint)
+    ? String(Math.round(hint.luma_threshold_hint))
+    : '170'
+  return { mode: 'luma', args: ['--mode', 'luma', '--luma-threshold', threshold, ...refine] }
+}
+
+function resolvePythonExe() {
+  // Prefer an explicit env override (user can pin to a venv). Fall back
+  // to plain `python` which Windows resolves via the launcher.
+  return process.env.REEDIT_PYTHON || process.env.PYTHON || 'python'
+}
+
+// Read ComfyUI's `--input-directory` argv by hitting /system_stats.
+// The script-copied source/mask/blank files need to sit somewhere
+// ComfyUI's VHS_LoadVideo node can find them by relative name.
+async function resolveComfyInputDir(comfyUrl) {
+  try {
+    const res = await net.fetch(`${comfyUrl}/system_stats`)
+    if (!res.ok) return null
+    const data = await res.json()
+    const argv = Array.isArray(data?.system?.argv) ? data.system.argv : []
+    const idx = argv.indexOf('--input-directory')
+    if (idx >= 0 && idx + 1 < argv.length) return argv[idx + 1]
+    // Fall back to `<base-directory>/input` if ComfyUI was launched
+    // without an explicit input dir.
+    const bdIdx = argv.indexOf('--base-directory')
+    if (bdIdx >= 0 && bdIdx + 1 < argv.length) return path.join(argv[bdIdx + 1], 'input')
+    return null
+  } catch {
+    return null
+  }
+}
+
+function buildWanVaceWorkflow({
+  sourceName, maskName, prefix, genW, genH, targetW, targetH, numFrames, fps, positive, negative,
+}) {
+  // Mirrors vace_inpaint_super02.py, with the upscale tail we verified
+  // (node 15 batched upscale + node 16 scale to target resolution) and
+  // the per-shot parameters wired in instead of hardcoded SUPER02
+  // values. Seed stays at 42 to keep runs reproducible across retries;
+  // callers that want variation can override via a seed arg later.
+  return {
+    '1': { class_type: 'WanVideoModelLoader', inputs: { model: 'wan2.1_vace_1.3B_fp16.safetensors', base_precision: 'fp16', quantization: 'disabled', load_device: 'main_device' } },
+    '2': { class_type: 'WanVideoVAELoader', inputs: { model_name: 'wan_2.1_vae.safetensors', precision: 'bf16' } },
+    '3': { class_type: 'WanVideoTextEncodeCached', inputs: { model_name: 'umt5_xxl_fp16.safetensors', precision: 'bf16', positive_prompt: positive, negative_prompt: negative, quantization: 'disabled', use_disk_cache: false, device: 'gpu' } },
+    '4': { class_type: 'VHS_LoadVideo', inputs: { video: sourceName, force_rate: 0, custom_width: 0, custom_height: 0, frame_load_cap: 0, skip_first_frames: 0, select_every_nth: 1, format: 'AnimateDiff' } },
+    '5': { class_type: 'VHS_LoadVideo', inputs: { video: maskName, force_rate: 0, custom_width: 0, custom_height: 0, frame_load_cap: 0, skip_first_frames: 0, select_every_nth: 1, format: 'AnimateDiff' } },
+    '6': { class_type: 'WanVideoImageResizeToClosest', inputs: { image: ['4', 0], generation_width: genW, generation_height: genH, aspect_ratio_preservation: 'crop_to_new' } },
+    '7': { class_type: 'WanVideoImageResizeToClosest', inputs: { image: ['5', 0], generation_width: genW, generation_height: genH, aspect_ratio_preservation: 'crop_to_new' } },
+    '8': { class_type: 'ImageToMask', inputs: { image: ['7', 0], channel: 'red' } },
+    '9': { class_type: 'WanVideoVACEEncode', inputs: { vae: ['2', 0], width: genW, height: genH, num_frames: numFrames, strength: 1, vace_start_percent: 0, vace_end_percent: 1, input_frames: ['6', 0], input_masks: ['8', 0], tiled_vae: false } },
+    '10': { class_type: 'WanVideoSchedulerv2', inputs: { scheduler: 'unipc', steps: 25, shift: 5, start_step: 0, end_step: -1 } },
+    '11': { class_type: 'WanVideoSamplerv2', inputs: { model: ['1', 0], image_embeds: ['9', 0], text_embeds: ['3', 0], cfg: 5, seed: 42, force_offload: true, scheduler: ['10', 0] } },
+    '12': { class_type: 'WanVideoDecode', inputs: { vae: ['2', 0], samples: ['11', 0], enable_vae_tiling: false, tile_x: 272, tile_y: 272, tile_stride_x: 144, tile_stride_y: 144 } },
+    '13': { class_type: 'VHS_VideoCombine', inputs: { images: ['16', 0], frame_rate: fps, loop_count: 0, filename_prefix: prefix, format: 'video/h264-mp4', pingpong: false, save_output: true } },
+    '14': { class_type: 'UpscaleModelLoader', inputs: { model_name: 'RealESRGAN_x4plus.pth' } },
+    '15': { class_type: 'ImageUpscaleWithModelBatched', inputs: { upscale_model: ['14', 0], images: ['12', 0], per_batch: 4, downscale_ratio: 1, downscale_method: 'lanczos', precision: 'float16' } },
+    '16': { class_type: 'ImageScale', inputs: { image: ['15', 0], upscale_method: 'lanczos', width: targetW, height: targetH, crop: 'disabled' } },
+  }
+}
+
+// Negative prompt re-used across all optimize runs. Targets the usual
+// VACE failure modes (ghost text, duplicate frames, inpainting
+// artifacts) and the specific things we're trying to remove.
+const OPTIMIZE_NEGATIVE_PROMPT = (
+  'text, watermark, overlay, title, caption, letters, typography, logo, ' +
+  'chyron, lower third, subtitle, legal disclaimer, url, ' +
+  'duplicate frames, blur, distortion, deformed, low quality, artifacts, ' +
+  'ghosting, color banding.'
+)
+
+function probeVideoMeta(filePath) {
+  // Returns { width, height, fps, duration, nbFrames } via ffprobe.
+  // Every one of these feeds directly into the workflow (gen res + fps
+  // + num_frames) so failing the probe has to short-circuit the
+  // optimize; we return null and let the caller surface the error.
+  return new Promise((resolve) => {
+    if (!ffprobeStaticPath) return resolve(null)
+    const p = spawn(ffprobeStaticPath, [
+      '-v', 'error',
+      '-select_streams', 'v:0',
+      '-show_entries', 'stream=width,height,r_frame_rate,nb_frames,duration',
+      '-of', 'json',
+      filePath,
+    ], { windowsHide: true })
+    let out = ''
+    p.stdout.on('data', (d) => { out += d.toString() })
+    p.on('error', () => resolve(null))
+    p.on('close', () => {
+      try {
+        const data = JSON.parse(out)
+        const s = data?.streams?.[0]
+        if (!s) return resolve(null)
+        const [num, den] = String(s.r_frame_rate || '').split('/').map(Number)
+        const fps = (Number.isFinite(num) && Number.isFinite(den) && den > 0) ? num / den : null
+        resolve({
+          width: Number(s.width) || null,
+          height: Number(s.height) || null,
+          fps,
+          duration: parseFloat(s.duration) || null,
+          nbFrames: parseInt(s.nb_frames, 10) || null,
+        })
+      } catch {
+        resolve(null)
+      }
+    })
+  })
+}
+
+// Clamp Wan's gen dimensions to the shot's aspect ratio, keeping the
+// total pixel count close to 768×432 (the 16:9 sweet-spot we verified
+// on SUPER02). The training resolution for Wan 2.1 VACE 1.3B is
+// 832×480, so we stay in that neighbourhood rather than scaling up.
+function pickGenDims(width, height) {
+  if (!Number.isFinite(width) || !Number.isFinite(height) || height === 0) {
+    return { genW: 832, genH: 480 }
+  }
+  const aspect = width / height
+  // Snap to multiples of 16 (VAE downsample stride) on both axes. 432
+  // isn't /16 but Wan tolerates it; 480 is /16 and matches the training
+  // resolution, so prefer 480-height whenever aspect is close to 16:9.
+  if (Math.abs(aspect - 16 / 9) < 0.02) return { genW: 768, genH: 432 }
+  if (Math.abs(aspect - 9 / 16) < 0.02) return { genW: 432, genH: 768 }
+  if (Math.abs(aspect - 1) < 0.02) return { genW: 512, genH: 512 }
+  // Non-standard aspect: start from height=480 and round width.
+  const w = Math.round((480 * aspect) / 16) * 16
+  return { genW: Math.max(256, w), genH: 480 }
+}
+
+function sanitizeForFilename(s, maxLen = 40) {
+  return String(s || '').replace(/[^a-zA-Z0-9._-]/g, '_').slice(0, maxLen)
+}
+
+async function copyFileOverwrite(src, dst) {
+  // fs.copyFile with explicit fallback: on Windows a stale read handle
+  // from ComfyUI (loaded the previous run's mask) will ENOENT the copy
+  // until we drop it. Two retries with a short gap clears that 99% of
+  // the time without asking the user to close anything.
+  for (let i = 0; i < 3; i++) {
+    try {
+      await fs.copyFile(src, dst)
+      return
+    } catch (err) {
+      if (i === 2) throw err
+      await new Promise((r) => setTimeout(r, 250))
+    }
+  }
+}
+
+// Composite the VACE output onto the original clip using the
+// generated binary mask as a matte. The goal here is to keep every
+// pixel that wasn't masked pixel-identical to the source: Wan VACE
+// subtly re-renders the whole frame (colour shifts, micro jitter) and
+// the user only wants the "patches" where graphics were, not a full
+// re-render.
+//
+// Filter graph:
+//   [mask]  → gray, gblur(sigma=feather)       → feathered alpha
+//   [vace]  + [alpha]   → alphamerge           → vace with per-pixel alpha
+//   [orig]  + [vace α]  → overlay              → composite
+//
+// `eof_action=pass` on overlay lets the original run to its full length
+// even if VACE produced one frame less (we snap to (N-1)%4==0 for Wan).
+// `shortest=1` would truncate to the shorter stream, which would drop
+// the trailing frames from the source; we want the opposite.
+function compositeWithOriginalMask({ originalPath, vacePath, maskPath, outputPath, feather = 3, expectedFrames = null }) {
+  return new Promise((resolve) => {
+    if (!ffmpegPath) return resolve({ success: false, error: 'FFmpeg binary not available.' })
+    const sigma = Math.max(0.5, Number(feather) || 3)
+    const filter = [
+      // Mask → grayscale, slight gaussian feather. `setsar=1` keeps the
+      // pixel aspect in sync with the video layers so alphamerge doesn't
+      // complain about SAR mismatch.
+      `[2:v]format=gray,setsar=1,gblur=sigma=${sigma}[mblur]`,
+      // VACE output needs an RGBA surface for alphamerge to write into.
+      `[1:v]format=rgba,setsar=1[vace_rgba]`,
+      `[vace_rgba][mblur]alphamerge[vace_alpha]`,
+      // Original gets set to the target pixel format and SAR too.
+      `[0:v]format=yuv420p,setsar=1[bg]`,
+      // eof_action=endall: the moment ANY of (bg, vace, mask) runs out
+      // of frames, the overlay stops. That's critical because Wan VACE
+      // occasionally returns one frame more than the original — without
+      // this, the extra VACE frame would land on the composite with no
+      // mask and the un-removed graphic would show through on the last
+      // frame. The `-frames:v` cap below is a belt-and-suspenders in
+      // case the duration-based stop lets a partial frame leak.
+      `[bg][vace_alpha]overlay=format=auto:eof_action=endall[vout]`,
+    ].join(';')
+
+    const args = [
+      '-hide_banner',
+      '-nostats',
+      '-i', originalPath,
+      '-i', vacePath,
+      '-i', maskPath,
+      '-filter_complex', filter,
+      '-map', '[vout]',
+      // Best-effort keep the original's audio if it has any; `?` makes
+      // the map optional so silent clips don't fail.
+      '-map', '0:a?',
+      '-c:v', 'libx264',
+      '-preset', 'medium',
+      // CRF 18 is visually lossless for 1080p H.264; we re-encode here
+      // because the filter graph changes the pixel data. The overlayed
+      // region is actually new content, but the bulk of the frame is
+      // the source so we don't want to compress that aggressively.
+      '-crf', '18',
+      '-pix_fmt', 'yuv420p',
+      '-c:a', 'aac',
+      '-b:a', '192k',
+      '-movflags', '+faststart',
+      // Hard cap at the original frame count. Redundant with
+      // eof_action=endall but cheap and kills any off-by-one that
+      // slips through the filter graph.
+      ...(Number.isFinite(expectedFrames) && expectedFrames > 0
+        ? ['-frames:v', String(expectedFrames)]
+        : []),
+      '-y',
+      outputPath,
+    ]
+    const proc = spawn(ffmpegPath, args, { windowsHide: true })
+    let stderr = ''
+    proc.stderr.on('data', (d) => { stderr += d.toString() })
+    proc.on('error', (err) => resolve({ success: false, error: err.message, stderr }))
+    proc.on('close', (code) => {
+      if (code !== 0) {
+        return resolve({ success: false, error: `ffmpeg composite exited with code ${code}. Tail: ${stderr.slice(-400)}`, stderr })
+      }
+      resolve({ success: true, outputPath, stderr })
+    })
+  })
+}
+
+function runPython(scriptPath, args, { onStderr } = {}) {
+  return new Promise((resolve) => {
+    const python = resolvePythonExe()
+    const proc = spawn(python, [scriptPath, ...args], { windowsHide: true })
+    let stderr = ''
+    let stdout = ''
+    proc.stdout.on('data', (d) => { stdout += d.toString() })
+    proc.stderr.on('data', (d) => {
+      const chunk = d.toString()
+      stderr += chunk
+      onStderr?.(chunk)
+    })
+    proc.on('error', (err) => resolve({ success: false, error: err.message, stdout, stderr }))
+    proc.on('close', (code) => {
+      resolve({ success: code === 0, code, stdout, stderr })
+    })
+  })
+}
+
+// Preview-only mask run: same make_mask.py invocation the optimize
+// pipeline uses, but stops after generating `{sceneId}_mask.mp4` +
+// `{sceneId}_blank.mp4`. Skips ComfyUI, upscaling and composite so the
+// user can iterate on ROI / threshold / persistence without burning
+// 12 minutes of VACE time per try.
+ipcMain.handle('analysis:previewMask', async (event, options) => {
+  const { scene, projectDir } = options || {}
+  if (!scene?.id) return { success: false, error: 'scene.id required.' }
+  if (!projectDir) return { success: false, error: 'projectDir required.' }
+  const sceneId = scene.id
+
+  const projectDirFwd = projectDir.replace(/\\/g, '/')
+  const sourceClipPath = path.join(projectDirFwd, '.reedit', 'clips', `${sceneId}.mp4`)
+  try {
+    const st = await fs.stat(sourceClipPath)
+    if (!st || st.size < 1024) throw new Error('empty')
+  } catch {
+    return { success: false, error: `Shot clip not found at ${sourceClipPath}. Run Caption all first.` }
+  }
+
+  const graphics = scene.videoAnalysis?.graphics || null
+  const hint = graphics?.removal_hint || null
+  const maskArgs = pickMaskArgsFromHint(hint, graphics)
+
+  const maskScriptPath = path.resolve(__dirname, '..', '..', 'make_mask.py')
+  try { await fs.access(maskScriptPath) } catch {
+    return { success: false, error: `make_mask.py not found at ${maskScriptPath}.` }
+  }
+
+  // If boxes mode, stage the JSON in a per-scene scratch file so we
+  // don't hit Windows' ~8 KB command-line cap on long bbox lists.
+  const finalScriptArgs = ['--src', sourceClipPath, ...maskArgs.args]
+  if (maskArgs.bboxesJson) {
+    const bboxesPath = path.join(path.dirname(sourceClipPath), `${sceneId}_bboxes.json`)
+    try { await fs.writeFile(bboxesPath, maskArgs.bboxesJson, 'utf-8') } catch (err) {
+      return { success: false, error: `Could not write bboxes file: ${err.message}` }
+    }
+    finalScriptArgs.push('--bboxes-file', bboxesPath)
+  }
+
+  const runRes = await runPython(maskScriptPath, finalScriptArgs)
+  if (!runRes.success) {
+    return { success: false, error: `make_mask.py failed (code ${runRes.code}). Tail: ${(runRes.stderr || '').slice(-300)}` }
+  }
+
+  const clipsDir = path.dirname(sourceClipPath)
+  const maskPath = path.join(clipsDir, `${sceneId}_mask.mp4`)
+  const blankPath = path.join(clipsDir, `${sceneId}_blank.mp4`)
+  try {
+    await fs.access(maskPath)
+    await fs.access(blankPath)
+  } catch {
+    return { success: false, error: 'Mask / blank files missing after make_mask.py reported success.' }
+  }
+  return {
+    success: true,
+    maskPath,
+    blankPath,
+    argsUsed: maskArgs.args,
+    scriptStdout: (runRes.stdout || '').slice(-1500),
+    scriptStderr: (runRes.stderr || '').slice(-500),
+  }
+})
+
+ipcMain.handle('analysis:optimizeFootage', async (event, options) => {
+  const { scene, projectDir, comfyUrl: comfyUrlOpt } = options || {}
+  if (!scene?.id) return { success: false, error: 'scene.id required.' }
+  if (!projectDir) return { success: false, error: 'projectDir required.' }
+  const sceneId = scene.id
+  const comfyUrl = comfyUrlOpt || 'http://localhost:8000'
+
+  const emit = (stage, extra = {}) => {
+    try { event.sender.send('analysis:optimizeFootage:progress', { sceneId, stage, ...extra }) } catch (_) { /* renderer may be closed */ }
+  }
+
+  emit('starting')
+
+  // 1. Locate or extract the source clip — we reuse the frame-accurate
+  //    sub-clip that the video analyzer already caches, so the
+  //    optimize pass matches exactly what Gemini saw.
+  const projectDirFwd = projectDir.replace(/\\/g, '/')
+  const sourceClipPath = path.join(projectDirFwd, '.reedit', 'clips', `${sceneId}.mp4`)
+  try {
+    const st = await fs.stat(sourceClipPath)
+    if (!st || st.size < 1024) throw new Error('empty')
+  } catch {
+    return { success: false, error: `Shot clip not found at ${sourceClipPath}. Re-run Caption all with Gemini to generate it.` }
+  }
+
+  // 2. Probe the clip to derive Wan gen dims + output target size.
+  const meta = await probeVideoMeta(sourceClipPath)
+  if (!meta?.width || !meta?.height || !meta?.fps || !meta?.nbFrames) {
+    return { success: false, error: 'ffprobe failed to read clip metadata.' }
+  }
+  const { genW, genH } = pickGenDims(meta.width, meta.height)
+  const numFrames = meta.nbFrames
+  // Wan VACE requires (N-1) % 4 === 0. Snap down if the shot doesn't
+  // already comply — most ad shots are short enough that one frame
+  // either way is imperceptible.
+  const wanFrames = Math.max(5, numFrames - ((numFrames - 1) % 4))
+  if (wanFrames !== numFrames) emit('note', { message: `Clamped num_frames ${numFrames} → ${wanFrames} to satisfy (N-1)%%4==0.` })
+
+  emit('generating_mask', { meta, genW, genH, numFrames: wanFrames })
+
+  // 3. Generate mask + blank with make_mask.py using the hint.
+  const graphics = scene.videoAnalysis?.graphics || null
+  const hint = graphics?.removal_hint || null
+  const maskArgs = pickMaskArgsFromHint(hint, graphics)
+  if (maskArgs.warn) emit('note', { message: maskArgs.warn })
+  emit('note', { message: `Mask mode: ${maskArgs.mode}${maskArgs.mode === 'boxes' ? ` (${extractBboxes(graphics).length} box${extractBboxes(graphics).length === 1 ? '' : 'es'})` : ''}.` })
+
+  // Derived file names live next to the source clip so `.reedit/clips`
+  // becomes the canonical staging area for everything the optimize
+  // pipeline produces per scene.
+  const clipsDir = path.dirname(sourceClipPath)
+  const maskPath = path.join(clipsDir, `${sceneId}_mask.mp4`)
+  const blankPath = path.join(clipsDir, `${sceneId}_blank.mp4`)
+  // make_mask.py decides the output paths based on `<src>_mask.mp4` /
+  // `<src>_blank.mp4`, which is exactly what we want.
+  // Locate make_mask.py one level above the reedit package (project
+  // root has `make_mask.py` next to the other standalone helpers).
+  const maskScriptPath = path.resolve(__dirname, '..', '..', 'make_mask.py')
+  try {
+    await fs.access(maskScriptPath)
+  } catch {
+    return { success: false, error: `make_mask.py not found at ${maskScriptPath}.` }
+  }
+
+  const finalMaskArgs = ['--src', sourceClipPath, ...maskArgs.args]
+  if (maskArgs.bboxesJson) {
+    const bboxesPath = path.join(clipsDir, `${sceneId}_bboxes.json`)
+    try { await fs.writeFile(bboxesPath, maskArgs.bboxesJson, 'utf-8') } catch (err) {
+      return { success: false, error: `Could not write bboxes file: ${err.message}` }
+    }
+    finalMaskArgs.push('--bboxes-file', bboxesPath)
+  }
+
+  const maskRes = await runPython(maskScriptPath, finalMaskArgs, {
+    onStderr: (chunk) => emit('mask_log', { chunk }),
+  })
+  if (!maskRes.success) {
+    return { success: false, error: `make_mask.py failed (code ${maskRes.code}). Is Python + opencv-python installed? Tail: ${(maskRes.stderr || '').slice(-200)}` }
+  }
+  // Verify the outputs landed where we expect.
+  try {
+    await fs.access(maskPath)
+    await fs.access(blankPath)
+  } catch {
+    return { success: false, error: 'make_mask.py reported success but mask/blank files are missing.' }
+  }
+
+  emit('uploading')
+
+  // 4. Copy (source / mask / blank) into ComfyUI's input dir with a
+  //    project-prefixed filename so two re-edit projects optimizing the
+  //    same scene id don't stomp each other's inputs.
+  const comfyInputDir = await resolveComfyInputDir(comfyUrl)
+  if (!comfyInputDir) {
+    return { success: false, error: `Could not determine ComfyUI input dir from ${comfyUrl}/system_stats — is ComfyUI running?` }
+  }
+  const prefix = `reedit_${sanitizeForFilename(path.basename(projectDir))}_${sanitizeForFilename(sceneId)}`
+  const comfySrcName = `${prefix}_blank.mp4`
+  const comfyMaskName = `${prefix}_mask.mp4`
+  const comfySrcFullPath = path.join(comfyInputDir, comfySrcName)
+  const comfyMaskFullPath = path.join(comfyInputDir, comfyMaskName)
+  try {
+    await copyFileOverwrite(blankPath, comfySrcFullPath)
+    await copyFileOverwrite(maskPath, comfyMaskFullPath)
+  } catch (err) {
+    return { success: false, error: `Failed to copy inputs into ComfyUI input dir: ${err.message}` }
+  }
+
+  // 5. Build + submit the workflow. Prompt from the Gemini analysis;
+  //    negative is a shared overlay-removal negative.
+  const positive = scene.videoAnalysis?.visual
+    || scene.caption
+    || 'A high-quality cinematic shot, natural lighting, crisp detail, no text or overlays.'
+  const outputPrefix = `reedit_optimized/${sanitizeForFilename(path.basename(projectDir))}_${sanitizeForFilename(sceneId)}`
+  const workflow = buildWanVaceWorkflow({
+    sourceName: comfySrcName,
+    maskName: comfyMaskName,
+    prefix: outputPrefix,
+    genW, genH,
+    targetW: meta.width,
+    targetH: meta.height,
+    numFrames: wanFrames,
+    fps: meta.fps,
+    positive,
+    negative: OPTIMIZE_NEGATIVE_PROMPT,
+  })
+
+  emit('queued_submit')
+
+  let promptId
+  try {
+    const submitRes = await net.fetch(`${comfyUrl}/prompt`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ prompt: workflow }),
+    })
+    if (!submitRes.ok) {
+      const body = await submitRes.text().catch(() => '')
+      return { success: false, error: `ComfyUI rejected the workflow (${submitRes.status}): ${body.slice(0, 400)}` }
+    }
+    const submitJson = await submitRes.json()
+    promptId = submitJson?.prompt_id
+    if (!promptId) return { success: false, error: 'ComfyUI returned no prompt_id.' }
+  } catch (err) {
+    return { success: false, error: `Could not reach ComfyUI at ${comfyUrl}: ${err.message}` }
+  }
+
+  emit('queued', { promptId })
+
+  // 6. Poll /history until the job finishes. 10-minute hard cap — Wan
+  //    VACE 1.3B at 768×432 + upscale runs ~12 min in our tests, so the
+  //    cap is generous for shots up to ~90 frames. Bigger jobs should
+  //    raise it in the renderer.
+  const MAX_POLL_MS = 20 * 60 * 1000
+  const POLL_EVERY_MS = 4000
+  const startedAt = Date.now()
+  let result
+  while (true) {
+    if (Date.now() - startedAt > MAX_POLL_MS) {
+      return { success: false, error: `Timed out waiting for ${promptId} after ${MAX_POLL_MS / 60000} min.` }
+    }
+    try {
+      const histRes = await net.fetch(`${comfyUrl}/history/${promptId}`)
+      if (histRes.ok) {
+        const hist = await histRes.json()
+        const entry = hist?.[promptId]
+        if (entry?.status?.completed) {
+          result = entry
+          break
+        }
+        if (entry?.status?.status_str === 'error') {
+          const msgs = (entry.status.messages || []).map((m) => JSON.stringify(m)).join(' | ')
+          return { success: false, error: `ComfyUI reported workflow error: ${msgs.slice(0, 600)}` }
+        }
+      }
+    } catch (err) {
+      emit('poll_warn', { message: err.message })
+    }
+    emit('running', { elapsedSec: Math.round((Date.now() - startedAt) / 1000) })
+    await new Promise((r) => setTimeout(r, POLL_EVERY_MS))
+  }
+
+  // 7. Extract the output filename from the history entry and copy the
+  //    finished video back into the project's `.reedit/optimized` dir
+  //    so it travels with the project and shows up in the UI.
+  let outputFile = null
+  for (const out of Object.values(result.outputs || {})) {
+    const gifs = Array.isArray(out?.gifs) ? out.gifs : []
+    for (const g of gifs) {
+      if (g?.fullpath) { outputFile = g.fullpath; break }
+    }
+    if (outputFile) break
+  }
+  if (!outputFile) {
+    return { success: false, error: 'Workflow completed but no video output was reported in history.' }
+  }
+
+  const projectOptimizedDir = path.join(projectDirFwd, '.reedit', 'optimized')
+  try { await fs.mkdir(projectOptimizedDir, { recursive: true }) } catch (_) { /* ignore */ }
+
+  // Version the output so re-runs don't clobber previous attempts —
+  // the user wants to A/B across mask / feather / prompt tweaks. We
+  // scan the optimized dir for existing files matching `<sceneId>_VNN`
+  // and pick the next integer. Padding to two digits keeps the names
+  // sortable in a file manager ("_V02" lists before "_V10").
+  const existing = await fs.readdir(projectOptimizedDir).catch(() => [])
+  const versionRe = new RegExp(`^${sceneId.replace(/[.*+?^${}()|[\\]\\\\]/g, '\\$&')}_V(\\d{2,})(?:[_.]|$)`)
+  let nextVersion = 1
+  for (const name of existing) {
+    const m = name.match(versionRe)
+    if (m) {
+      const n = parseInt(m[1], 10)
+      if (Number.isFinite(n) && n >= nextVersion) nextVersion = n + 1
+    }
+  }
+  const versionTag = `V${String(nextVersion).padStart(2, '0')}`
+  emit('note', { message: `Writing version ${versionTag}.` })
+
+  // Stage the raw VACE output under a distinct name so it stays
+  // available for A/B compare. The "final" path the UI links to is the
+  // composite below, which merges VACE into the original using the
+  // mask as a matte.
+  const vaceRawPath = path.join(projectOptimizedDir, `${sceneId}_${versionTag}_vace_raw.mp4`)
+  try {
+    await copyFileOverwrite(outputFile, vaceRawPath)
+  } catch (err) {
+    // Non-fatal: leave the file at the ComfyUI output location and
+    // skip the composite step. Return the ComfyUI path so the UI can
+    // still link to it.
+    emit('note', { message: `Could not copy VACE output to project dir (${err.message}); using ComfyUI output path.` })
+    return { success: true, promptId, outputPath: outputFile, inProjectDir: false, composited: false, version: versionTag }
+  }
+
+  // 8. Composite the VACE output onto the original using the generated
+  //    mask as a feathered matte. Everything outside the mask stays
+  //    pixel-identical to the source; only the "patch" pixels adopt
+  //    VACE's re-rendered content. This avoids the overall colour /
+  //    detail drift VACE introduces on non-masked regions.
+  emit('compositing')
+  const finalPath = path.join(projectOptimizedDir, `${sceneId}_${versionTag}.mp4`)
+  const localMaskPath = path.join(clipsDir, `${sceneId}_mask.mp4`)
+  const compRes = await compositeWithOriginalMask({
+    originalPath: sourceClipPath,
+    vacePath: vaceRawPath,
+    maskPath: localMaskPath,
+    outputPath: finalPath,
+    feather: 15,
+    // Force the composite length to the original clip's frame count.
+    // Wan VACE sometimes returns +1 frame on shots where our wanFrames
+    // snap differs from numFrames; without this cap that trailing
+    // frame shows the original graphic un-masked because the mask
+    // video ended earlier.
+    expectedFrames: meta.nbFrames,
+  })
+  if (!compRes.success) {
+    // Composite failed — fall back to exposing the raw VACE output so
+    // the user still has something usable, and surface the error.
+    emit('note', { message: `Composite step failed: ${compRes.error}. Returning raw VACE output.` })
+    emit('done', { promptId, outputPath: vaceRawPath, version: versionTag })
+    return { success: true, promptId, outputPath: vaceRawPath, inProjectDir: true, composited: false, compositeError: compRes.error, version: versionTag }
+  }
+
+  emit('done', { promptId, outputPath: finalPath, version: versionTag })
+  return { success: true, promptId, outputPath: finalPath, inProjectDir: true, composited: true, vaceRawPath, version: versionTag }
 })
 
 // Extracts one JPEG frame at `tcSec` and writes it to `outputPath`. The

@@ -19,6 +19,7 @@
  */
 
 import lmstudio from './lmstudio'
+import { chatCompletion, loadLlmSettings, LLM_BACKENDS } from './reeditLlmClient'
 
 const SYSTEM_PROMPT = `You annotate single frames from advertisements for a shot log. You return ONLY a JSON object, no commentary, no markdown fences.`
 
@@ -108,6 +109,31 @@ function isChatCandidate(m) {
 
 export async function pickVisionModelId(explicit) {
   if (explicit) return explicit
+
+  // When the dispatcher will route to Claude, we don't need to pre-
+  // pick a model — the Anthropic backend knows which model to call
+  // from the LLM settings. Returning a synthetic "anthropic" label
+  // here lets the progress UI show something meaningful without
+  // forcing the LM Studio model list call (which errors out when
+  // LM Studio is closed).
+  const settings = loadLlmSettings()
+  if (settings.backend === LLM_BACKENDS.ANTHROPIC) {
+    if (!settings.anthropicApiKey) {
+      throw new Error('Claude API is selected but no API key is set. Open LLM Settings to paste one.')
+    }
+    return settings.anthropicModel || 'claude-sonnet-4-6'
+  }
+  if (settings.backend === LLM_BACKENDS.GEMINI) {
+    // Same synthetic-label trick as the Anthropic branch: we don't
+    // need to round-trip LM Studio's /models endpoint (it may not even
+    // be running) when Gemini will handle the call from its own
+    // settings-driven model id.
+    if (!settings.geminiApiKey) {
+      throw new Error('Gemini API is selected but no API key is set. Open LLM Settings to paste one.')
+    }
+    return settings.geminiModel || 'gemini-2.5-flash'
+  }
+
   const models = await lmstudio.listModels()
   const chatCapable = models.filter(isChatCandidate)
   const loaded = chatCapable.filter(isLoaded)
@@ -140,9 +166,16 @@ export async function captionScene(scene, { modelId, temperature = 0.2, maxToken
     },
   ]
 
-  const response = await lmstudio.chatCompletion(model, messages, {
+  // Route through the unified dispatcher (LM Studio OR Claude) using
+  // the same LLM settings the Proposal view edits. preferVision
+  // nudges the LM Studio path toward a loaded VL model when multiple
+  // chat models are available; no effect on the Anthropic path where
+  // Sonnet/Opus/Haiku all accept image content natively.
+  const response = await chatCompletion({
+    messages,
     temperature,
-    max_tokens: maxTokens,
+    maxTokens,
+    preferVision: true,
   })
 
   const rawText = response?.choices?.[0]?.message?.content || ''
@@ -156,7 +189,7 @@ export async function captionScene(scene, { modelId, temperature = 0.2, maxToken
     movement: parsed?.movement || null,
     audio: null,
     rawText,
-    model,
+    model: response?.model || model,
   }
 }
 
@@ -165,8 +198,80 @@ export async function captionScene(scene, { modelId, temperature = 0.2, maxToken
  * Studio runs a single model instance, so parallel requests just queue
  * behind each other and add HTTP overhead. `onProgress` fires after
  * every scene with { index, total, scene, captioned, error? }.
+ *
+ * When the Gemini backend is active, this function delegates to the
+ * native-video analyzer (reeditVideoAnalyzer.analyzeScenesVideo) so the
+ * shot log ends up with real motion / audio fields instead of a frame-
+ * only read. The view layer stays unchanged — `structured` still holds
+ * the captioner-shape fields that the table chips render from; the
+ * richer analyzer output is attached as `videoAnalysis` for any future
+ * consumer (proposer, retrieval, brief matching) that wants it.
+ *
+ * `sourceVideoPath` and `projectDir` are only required for the Gemini
+ * path — LM Studio / Claude still read the per-scene thumbnail and
+ * don't care about the source file.
  */
-export async function captionScenes(scenes, { modelId, onProgress, signal } = {}) {
+export async function captionScenes(scenes, {
+  modelId,
+  onProgress,
+  signal,
+  sourceVideoPath,
+  projectDir,
+} = {}) {
+  const settings = loadLlmSettings()
+  if (settings.backend === LLM_BACKENDS.GEMINI) {
+    // Dynamic import keeps the Gemini code out of the LM-Studio-only
+    // startup path, and also breaks what would otherwise be a cycle
+    // between reeditCaptioner and reeditVideoAnalyzer (the analyzer
+    // imports extractJson from here).
+    const { analyzeScenesVideo } = await import('./reeditVideoAnalyzer')
+    if (!sourceVideoPath || !projectDir) {
+      throw new Error(
+        'Gemini video analysis needs sourceVideoPath + projectDir. Re-run captioning from the Analysis view, which passes them in.'
+      )
+    }
+    const model = modelId || settings.geminiModel || 'gemini-2.5-flash'
+    const { scenes: analyzedScenes } = await analyzeScenesVideo(scenes, {
+      sourceVideoPath,
+      projectDir,
+      modelOverride: model,
+      signal,
+      onProgress: ({ index, total, scene, analyzed, error, skipped }) => {
+        // Adapt the analyzer's progress shape to captionScenes' shape
+        // so the existing AnalysisView progress UI keeps working.
+        onProgress?.({
+          index,
+          total,
+          scene,
+          captioned: analyzed ? toCaptionerShape(analyzed, model) : null,
+          skipped,
+          error,
+        })
+      },
+    })
+    // Remap each scene to the captioner-compatible shape that the rest
+    // of the app (AnalysisView chips, proposer prompt builder) reads.
+    // Expose videoAnalysisError as captionError too so the shot log
+    // can distinguish "never ran" (no caption, no error) from "ran and
+    // failed" (error message available for the tooltip).
+    const results = analyzedScenes.map((s) => {
+      if (!s?.videoAnalysis) {
+        if (s?.videoAnalysisError) {
+          return { ...s, captionError: s.videoAnalysisError }
+        }
+        return s
+      }
+      const compat = toCaptionerShape(s.videoAnalysis, model)
+      return {
+        ...s,
+        caption: s.videoAnalysis.visual || s.caption || null,
+        structured: compat,
+        captionError: null,
+      }
+    })
+    return { model, scenes: results }
+  }
+
   // Defer picking the model until we know at least one scene actually
   // needs a caption — avoids a spurious "no vision model" error when
   // the user has marked every scene excluded and just wants to keep
@@ -199,4 +304,25 @@ export async function captionScenes(scenes, { modelId, onProgress, signal } = {}
     }
   }
   return { model, scenes: results }
+}
+
+// Map the richer video-analysis schema back to the five fields
+// AnalysisView's chip row renders. The extra fields (camera_movement,
+// audio, tempo_cue, etc.) are still available on scene.videoAnalysis
+// for any consumer that wants them — the proposer prompt builder is
+// the obvious next user.
+function toCaptionerShape(a, model) {
+  if (!a) return null
+  return {
+    visual: a.visual || null,
+    brand: a.brand || null,
+    emotion: a.emotion || null,
+    framing: a.framing || null,
+    movement: a.movement || null,
+    // Audio is no longer null when Gemini ran — pass through whatever
+    // the analyzer returned so the proposer can read VO/music later.
+    audio: a.audio ?? null,
+    rawText: a.rawText || '',
+    model: a.model || model,
+  }
 }

@@ -1,14 +1,23 @@
-import { useRef, useState } from 'react'
-import { FileText, Loader2, AlertCircle, PlayCircle, RotateCcw, Sparkles, StopCircle, Eye, EyeOff } from 'lucide-react'
+import { useEffect, useRef, useState } from 'react'
+import { FileText, Loader2, AlertCircle, PlayCircle, RotateCcw, Sparkles, StopCircle, Eye, EyeOff, Cpu, KeyRound, Wand2, CheckCircle2 } from 'lucide-react'
 import useProjectStore from '../../stores/projectStore'
 import { captionScenes, pickVisionModelId } from '../../services/reeditCaptioner'
+import { useLlmSettings } from '../../hooks/useLlmSettings'
+import { LLM_BACKENDS, BACKEND_LABELS, ANTHROPIC_MODELS, GEMINI_MODELS } from '../../services/reeditLlmClient'
+import LlmSettingsModal from './LlmSettingsModal'
 
-// Build the comfystudio:// URL on the renderer. This mirrors what
-// `media:getFileUrl` does in main.js (`encodeURIComponent(path)`), so we
-// can avoid a per-thumbnail IPC round trip when rendering the shot log.
-function toComfyUrl(filePath) {
+// Build the comfystudio:// URL on the renderer. Mirrors what
+// `media:getFileUrl` does in main.js (`encodeURIComponent(path)`), so
+// we avoid a per-thumbnail IPC round trip when rendering the shot log.
+// `version` is appended as `?v=<timestamp>` so re-running analysis
+// (which overwrites `.reedit/scenes/scene-NNN.jpg` in place) produces
+// a fresh URL and Chromium refetches instead of serving the previous
+// run's cached bytes. The main-process handler strips the `?v=` part
+// before opening the file, so the lookup still resolves cleanly.
+function toComfyUrl(filePath, version) {
   if (!filePath) return null
-  return `comfystudio://${encodeURIComponent(filePath)}`
+  const base = `comfystudio://${encodeURIComponent(filePath)}`
+  return version ? `${base}?v=${encodeURIComponent(version)}` : base
 }
 
 function formatTc(seconds) {
@@ -55,6 +64,238 @@ const THUMB_HEIGHT = 100
 // doesn't cover half the screen and a 9:16 thumb stays readable.
 const PREVIEW_LONG_EDGE = 420
 
+// Renders the Description column: a rich visual description, then an
+// Audio block (music + SFX + VO transcript), then a Graphics block
+// (on-screen text, logos, overlays). Falls back to the single-line
+// caption when the richer schema isn't available (e.g. the project was
+// captioned with LM Studio / Claude before Gemini was wired up, or the
+// Gemini run failed on this shot).
+function DescriptionCell({ scene }) {
+  const va = scene.videoAnalysis || null
+  const struct = scene.structured || {}
+  const visual = va?.visual || struct.visual || scene.caption || null
+
+  // Audio comes from the analyzer directly or the adapted captioner
+  // shape (toCaptionerShape in reeditCaptioner.js copies audio through).
+  const audio = va?.audio ?? struct.audio ?? null
+  const graphics = va?.graphics ?? null
+
+  if (!visual && !audio && !graphics) {
+    return <span className="text-sf-text-muted italic">— (Run Caption all)</span>
+  }
+
+  const sfxText = Array.isArray(audio?.sfx) && audio.sfx.length
+    ? audio.sfx.join(', ')
+    : null
+  const audioHasAnything = audio && (audio.music || sfxText || audio.voiceover_transcript || audio.ambient)
+  const graphicsHasAnything = graphics && (
+    graphics.text_content || graphics.logo_description || graphics.other_graphics
+  )
+
+  return (
+    <div className="space-y-2">
+      {visual && (
+        <div className="text-sf-text-primary leading-snug">{visual}</div>
+      )}
+
+      {audioHasAnything && (
+        <div className="border-l-2 border-emerald-500/30 pl-2 space-y-0.5">
+          <div className="text-[9px] uppercase tracking-wider text-emerald-300/80 font-medium">Audio</div>
+          {audio.music && (
+            <div className="text-[11px] text-sf-text-secondary leading-snug">
+              <span className="text-sf-text-muted">Music · </span>{audio.music}
+            </div>
+          )}
+          {sfxText && (
+            <div className="text-[11px] text-sf-text-secondary leading-snug">
+              <span className="text-sf-text-muted">SFX · </span>{sfxText}
+            </div>
+          )}
+          {audio.voiceover_transcript && (
+            <div className="text-[11px] text-sf-text-secondary leading-snug italic">
+              <span className="text-sf-text-muted not-italic">VO · </span>&ldquo;{audio.voiceover_transcript}&rdquo;
+            </div>
+          )}
+          {audio.ambient && !audio.music && (
+            <div className="text-[11px] text-sf-text-secondary leading-snug">
+              <span className="text-sf-text-muted">Ambient · </span>{audio.ambient}
+            </div>
+          )}
+        </div>
+      )}
+
+      {graphicsHasAnything && (
+        <div className="border-l-2 border-amber-500/30 pl-2 space-y-0.5">
+          <div className="text-[9px] uppercase tracking-wider text-amber-300/80 font-medium">Graphics</div>
+          {graphics.text_content && (
+            <div className="text-[11px] text-sf-text-secondary leading-snug">
+              <span className="text-sf-text-muted">Text{graphics.text_role && graphics.text_role !== 'none' ? ` (${graphics.text_role})` : ''} · </span>
+              <span className="whitespace-pre-wrap">&ldquo;{graphics.text_content}&rdquo;</span>
+            </div>
+          )}
+          {graphics.logo_description && (
+            <div className="text-[11px] text-sf-text-secondary leading-snug">
+              <span className="text-sf-text-muted">Logo · </span>{graphics.logo_description}
+            </div>
+          )}
+          {graphics.other_graphics && (
+            <div className="text-[11px] text-sf-text-secondary leading-snug">
+              <span className="text-sf-text-muted">Overlay · </span>{graphics.other_graphics}
+            </div>
+          )}
+        </div>
+      )}
+    </div>
+  )
+}
+
+// Decides whether a shot has graphics worth removing. We treat
+// `graphics: null` as "Gemini said nothing overlayed" — hide the
+// button. Anything with text, a logo, or "other_graphics" gets the
+// action. The hint object alone isn't enough to show the button: a
+// row with hint but no text/logo would mean Gemini hallucinated
+// removal metadata for a shot that doesn't need it.
+function shotHasGraphics(scene) {
+  const g = scene.videoAnalysis?.graphics
+  if (!g) return false
+  if (g.has_text_on_screen || g.text_content) return true
+  if (g.has_logo || g.logo_description) return true
+  if (g.other_graphics) return true
+  return false
+}
+
+// Human-readable labels for the progress stages emitted by main.js.
+// Keep these short — the cell is narrow (170 px) and the user already
+// knows the scene id from the row.
+const OPTIMIZE_STAGE_LABEL = {
+  starting: 'Starting…',
+  generating_mask: 'Masking…',
+  mask_log: 'Masking…',
+  uploading: 'Uploading…',
+  queued_submit: 'Submitting…',
+  queued: 'Queued',
+  running: 'Generating…',
+  poll_warn: 'Generating…',
+  compositing: 'Compositing…',
+  note: null,
+  done: 'Done',
+  error: 'Failed',
+}
+
+function OptimizeFootageCell({ scene, state, onRun, disabled, previewState, onPreview }) {
+  if (!shotHasGraphics(scene)) {
+    return <span className="text-sf-text-muted text-[10px] italic">—</span>
+  }
+
+  const stage = state?.stage
+  const running = stage && !['done', 'error'].includes(stage)
+  const label = OPTIMIZE_STAGE_LABEL[stage] || (stage ? stage : 'Optimize')
+  const previewRunning = previewState?.stage === 'running'
+
+  // Preview button is always present — fast feedback loop for
+  // mask iteration. Disabled while either action is in flight.
+  const previewButton = (
+    <button
+      type="button"
+      onClick={onPreview}
+      disabled={disabled || previewRunning || running}
+      className={`text-[10px] text-left
+        ${(disabled || previewRunning || running)
+          ? 'text-sf-text-muted/60 cursor-not-allowed'
+          : 'text-sf-accent hover:underline'}`}
+      title="Run make_mask.py only — no VACE, no composite. Opens the generated mask folder."
+    >
+      {previewRunning ? 'Previewing mask…' : 'Preview mask'}
+    </button>
+  )
+
+  if (stage === 'done') {
+    return (
+      <div className="flex flex-col gap-1">
+        <div className="inline-flex items-center gap-1.5 text-[11px] text-emerald-300">
+          <CheckCircle2 className="w-3.5 h-3.5" />
+          <span>Done{state?.version ? ` · ${state.version}` : ''}</span>
+        </div>
+        {state?.outputPath && (
+          <button
+            type="button"
+            onClick={() => window.electronAPI?.showItemInFolder?.(state.outputPath)}
+            className="text-[10px] text-sf-accent hover:underline text-left truncate"
+            title={state.outputPath}
+          >
+            Reveal output
+          </button>
+        )}
+        <button
+          type="button"
+          onClick={onRun}
+          className="text-[10px] text-sf-text-muted hover:text-sf-text-primary text-left"
+        >
+          Re-run
+        </button>
+        {previewButton}
+      </div>
+    )
+  }
+
+  if (stage === 'error') {
+    return (
+      <div className="flex flex-col gap-1">
+        <div className="inline-flex items-center gap-1.5 text-[11px] text-sf-error" title={state?.error}>
+          <AlertCircle className="w-3.5 h-3.5" />
+          <span className="truncate">Failed</span>
+        </div>
+        {state?.error && (
+          <div className="text-[10px] text-sf-error/80 leading-snug break-words">{state.error}</div>
+        )}
+        <button
+          type="button"
+          onClick={onRun}
+          className="text-[10px] text-sf-accent hover:underline text-left"
+        >
+          Retry
+        </button>
+        {previewButton}
+      </div>
+    )
+  }
+
+  if (running) {
+    const elapsed = state?.elapsedSec
+    return (
+      <div className="flex flex-col gap-1">
+        <div className="inline-flex items-center gap-1.5 text-[11px] text-sf-text-secondary">
+          <Loader2 className="w-3.5 h-3.5 animate-spin" />
+          <span>{label}{elapsed ? ` · ${elapsed}s` : ''}</span>
+        </div>
+        {previewButton}
+      </div>
+    )
+  }
+
+  return (
+    <div className="flex flex-col gap-1">
+      <button
+        type="button"
+        onClick={onRun}
+        disabled={disabled}
+        className={`inline-flex items-center gap-1.5 px-2 py-1 rounded-md text-[11px] border transition-colors
+          ${disabled
+            ? 'border-sf-dark-700 bg-sf-dark-900 text-sf-text-muted/60 cursor-not-allowed'
+            : 'border-sf-dark-700 bg-sf-dark-900 hover:bg-sf-dark-800 text-sf-text-primary hover:border-sf-accent/60'}`}
+        title="Remove on-screen text / logos with Wan VACE"
+      >
+        <Wand2 className="w-3.5 h-3.5" />
+        Optimize
+      </button>
+      {previewButton}
+      {previewState?.stage === 'error' && previewState.error && (
+        <div className="text-[10px] text-sf-error/80 leading-snug break-words">{previewState.error}</div>
+      )}
+    </div>
+  )
+}
+
 function AnalysisView() {
   const currentProject = useProjectStore((s) => s.currentProject)
   const currentProjectHandle = useProjectStore((s) => s.currentProjectHandle)
@@ -69,6 +310,8 @@ function AnalysisView() {
   // either edge of the viewport without the DOM-reflow cost of
   // absolute-positioning inside the scrolling table.
   const [hover, setHover] = useState(null) // { url, rect, previewW, previewH }
+  const [llmModalOpen, setLlmModalOpen] = useState(false)
+  const { settings: llmSettings, update: updateLlmSettings } = useLlmSettings()
 
   const [running, setRunning] = useState(false)
   const [progressMsg, setProgressMsg] = useState('')
@@ -81,6 +324,23 @@ function AnalysisView() {
   const [captionProgress, setCaptionProgress] = useState({ current: 0, total: 0, model: '' })
   const [captionError, setCaptionError] = useState(null)
   const abortRef = useRef(null)
+
+  // Per-scene optimize state — keyed by sceneId, tracks the full
+  // lifecycle of the VACE re-inpaint job (starting / generating_mask /
+  // uploading / queued / running / done / error). The ComfyUI server
+  // runs the jobs sequentially, but the UI allows multiple rows to be
+  // queued; main.js emits progress events we fan out into this map.
+  const [optimizeState, setOptimizeState] = useState({}) // { [sceneId]: { stage, ...details, outputPath?, error? } }
+  useEffect(() => {
+    const unsub = window.electronAPI?.onOptimizeFootageProgress?.((payload) => {
+      if (!payload?.sceneId) return
+      setOptimizeState((prev) => ({
+        ...prev,
+        [payload.sceneId]: { ...(prev[payload.sceneId] || {}), ...payload },
+      }))
+    })
+    return () => { try { unsub?.() } catch (_) { /* ignore */ } }
+  }, [])
 
   if (!sourceVideo) return <ImportPrompt />
 
@@ -183,9 +443,18 @@ function AnalysisView() {
       const modelId = await pickVisionModelId()
       setCaptionProgress({ current: 0, total: scenes.length, model: modelId })
 
+      // Passed down to the captioner so the Gemini branch can extract
+      // sub-clips from the source video for native-video analysis.
+      // LM Studio / Claude ignore them (they still read the per-scene
+      // thumbnail), so it's safe to always pass them.
+      const projectDir = typeof currentProjectHandle === 'string' ? currentProjectHandle : null
+      const sourceVideoPath = sourceVideo?.path || null
+
       const { scenes: updatedScenes } = await captionScenes(scenes, {
         modelId,
         signal: abortCtrl,
+        sourceVideoPath,
+        projectDir,
         onProgress: ({ index, total, error: perSceneErr }) => {
           setCaptionProgress({ current: index + 1, total, model: modelId })
           if (perSceneErr) {
@@ -210,7 +479,17 @@ function AnalysisView() {
         console.info('[reedit] captioning aborted by user.')
       } else {
         console.error('[reedit] captioning failed:', err)
-        setCaptionError(err?.message || 'Captioning failed. Is LM Studio running with a vision model loaded?')
+        // Backend-specific hint: LM Studio needs a model loaded, the
+        // cloud backends need an API key. The error surface in the
+        // view is otherwise identical, so a short conditional covers it.
+        const backendHint = llmSettings?.backend === LLM_BACKENDS.LM_STUDIO
+          ? ' Is LM Studio running with a vision model loaded?'
+          : llmSettings?.backend === LLM_BACKENDS.ANTHROPIC
+            ? ' Check that the Claude API key is valid in Settings → LLM.'
+            : llmSettings?.backend === LLM_BACKENDS.GEMINI
+              ? ' Check that the Gemini API key is valid and that the project has quota for gemini-2.5-flash video input.'
+              : ''
+        setCaptionError((err?.message || 'Captioning failed.') + backendHint)
       }
     } finally {
       setCaptioning(false)
@@ -220,6 +499,55 @@ function AnalysisView() {
 
   const cancelCaptioning = () => {
     if (abortRef.current) abortRef.current.aborted = true
+  }
+
+  const runOptimizeFootage = async (scene) => {
+    if (!projectDir) return
+    const current = optimizeState[scene.id]
+    // Re-click on an in-flight job is a no-op; re-click on a done/errored
+    // run is allowed so the user can re-generate (new mask / seed / etc).
+    if (current?.stage && !['done', 'error'].includes(current.stage)) return
+    setOptimizeState((prev) => ({ ...prev, [scene.id]: { stage: 'starting' } }))
+    try {
+      const res = await window.electronAPI.optimizeFootage({
+        scene: { id: scene.id, videoAnalysis: scene.videoAnalysis, caption: scene.caption },
+        projectDir,
+      })
+      if (!res?.success) {
+        setOptimizeState((prev) => ({ ...prev, [scene.id]: { stage: 'error', error: res?.error || 'Unknown error.' } }))
+        return
+      }
+      setOptimizeState((prev) => ({ ...prev, [scene.id]: { stage: 'done', outputPath: res.outputPath, inProjectDir: res.inProjectDir, version: res.version } }))
+    } catch (err) {
+      setOptimizeState((prev) => ({ ...prev, [scene.id]: { stage: 'error', error: err?.message || String(err) } }))
+    }
+  }
+
+  // Per-scene preview state: separate from optimizeState because the
+  // two actions can run independently (preview while a previous
+  // optimize is done, etc.). { stage: 'running' | 'done' | 'error', maskPath?, error? }
+  const [previewState, setPreviewState] = useState({})
+  const runPreviewMask = async (scene) => {
+    if (!projectDir) return
+    const current = previewState[scene.id]
+    if (current?.stage === 'running') return
+    setPreviewState((prev) => ({ ...prev, [scene.id]: { stage: 'running' } }))
+    try {
+      const res = await window.electronAPI.previewMask({
+        scene: { id: scene.id, videoAnalysis: scene.videoAnalysis },
+        projectDir,
+      })
+      if (!res?.success) {
+        setPreviewState((prev) => ({ ...prev, [scene.id]: { stage: 'error', error: res?.error || 'Unknown error.' } }))
+        return
+      }
+      setPreviewState((prev) => ({ ...prev, [scene.id]: { stage: 'done', maskPath: res.maskPath, blankPath: res.blankPath } }))
+      // Reveal the mask in the OS file manager so the user can open it
+      // in VLC / QuickTime without hunting through `.reedit/clips`.
+      try { await window.electronAPI.showItemInFolder?.(res.maskPath) } catch (_) { /* ignore */ }
+    } catch (err) {
+      setPreviewState((prev) => ({ ...prev, [scene.id]: { stage: 'error', error: err?.message || String(err) } }))
+    }
   }
 
   // Toggle a scene out of the pipeline without deleting it. Excluded
@@ -314,6 +642,38 @@ function AnalysisView() {
               Stop
             </button>
           )}
+
+          {/* Engine chip — same unified dispatcher as Proposal. Shows
+              the active backend and pops the LLM settings modal on
+              click. Turns amber when a cloud backend is selected but
+              no API key is set so the "Caption all" button isn't going
+              to lead to a surprise error. */}
+          {(() => {
+            const backend = llmSettings.backend
+            const missingAnthropicKey = backend === LLM_BACKENDS.ANTHROPIC && !llmSettings.anthropicApiKey
+            const missingGeminiKey = backend === LLM_BACKENDS.GEMINI && !llmSettings.geminiApiKey
+            const missingKey = missingAnthropicKey || missingGeminiKey
+            const label = backend === LLM_BACKENDS.ANTHROPIC
+              ? (ANTHROPIC_MODELS.find((m) => m.id === llmSettings.anthropicModel)?.label || 'Claude')
+              : backend === LLM_BACKENDS.GEMINI
+                ? (GEMINI_MODELS.find((m) => m.id === llmSettings.geminiModel)?.label || 'Gemini')
+                : BACKEND_LABELS[LLM_BACKENDS.LM_STUDIO]
+            return (
+              <button
+                type="button"
+                onClick={() => setLlmModalOpen(true)}
+                className={`inline-flex items-center gap-1.5 px-2.5 py-1.5 rounded-md text-[11px] border transition-colors
+                  ${missingKey
+                    ? 'border-amber-500/40 bg-amber-500/10 text-amber-200'
+                    : 'border-sf-dark-700 bg-sf-dark-900 hover:bg-sf-dark-800 text-sf-text-muted hover:text-sf-text-primary'}`}
+                title="Switch engine, pick model, set API key"
+              >
+                {missingKey ? <KeyRound className="w-3.5 h-3.5" /> : <Cpu className="w-3.5 h-3.5" />}
+                {label}
+                {missingKey && <span className="text-[10px] opacity-80">· no key</span>}
+              </button>
+            )
+          })()}
         </div>
       </div>
 
@@ -364,16 +724,17 @@ function AnalysisView() {
                 <th className="text-left px-3 py-2 font-medium w-[72px]">In</th>
                 <th className="text-left px-3 py-2 font-medium w-[72px]">Out</th>
                 <th className="text-left px-3 py-2 font-medium w-[60px]">Dur</th>
-                <th className="text-left px-3 py-2 font-medium">Visual</th>
+                <th className="text-left px-3 py-2 font-medium">Description</th>
                 <th className="text-left px-3 py-2 font-medium w-[140px]">Brand</th>
                 <th className="text-left px-3 py-2 font-medium w-[110px]">Emotion</th>
                 <th className="text-left px-3 py-2 font-medium w-[90px]">Framing</th>
                 <th className="text-left px-3 py-2 font-medium w-[90px]">Motion</th>
+                <th className="text-left px-3 py-2 font-medium w-[170px]">Optimize</th>
               </tr>
             </thead>
             <tbody>
               {scenes.map((scene) => {
-                const thumbUrl = toComfyUrl(scene.thumbnail)
+                const thumbUrl = toComfyUrl(scene.thumbnail, analysis?.createdAt)
                 const s = scene.structured || {}
                 const excluded = Boolean(scene.excluded)
                 return (
@@ -402,7 +763,14 @@ function AnalysisView() {
                         onMouseEnter={(e) => {
                           if (!thumbUrl) return
                           const rect = e.currentTarget.getBoundingClientRect()
-                          setHover({ url: thumbUrl, rect, previewW, previewH })
+                          // Prefer the cached shot clip (written by the
+                          // Gemini video analyzer) for a playing preview.
+                          // Falls back to the static thumbnail when the
+                          // clip isn't materialised yet (captioning never
+                          // ran, or ran on a non-video backend).
+                          const clipPath = scene.videoAnalysis?.clipPath
+                          const videoUrl = clipPath ? toComfyUrl(clipPath, analysis?.captionedAt || analysis?.createdAt) : null
+                          setHover({ url: thumbUrl, videoUrl, rect, previewW, previewH })
                         }}
                         onMouseLeave={() => setHover(null)}
                       >
@@ -417,9 +785,7 @@ function AnalysisView() {
                     <td className="px-3 py-2 tabular-nums text-sf-text-secondary">{formatTc(scene.tcOut)}</td>
                     <td className="px-3 py-2 tabular-nums text-sf-text-secondary">{scene.duration?.toFixed?.(1) ?? '—'}s</td>
                     <td className="px-3 py-2 text-sf-text-primary leading-snug">
-                      {scene.caption || s.visual || (
-                        <span className="text-sf-text-muted italic">— (Run Caption all)</span>
-                      )}
+                      <DescriptionCell scene={scene} />
                       {scene.captionError && (
                         <div className="mt-1 text-[10px] text-sf-error">Caption failed: {scene.captionError}</div>
                       )}
@@ -428,6 +794,16 @@ function AnalysisView() {
                     <td className="px-3 py-2"><Chip tone="emotion">{s.emotion}</Chip></td>
                     <td className="px-3 py-2"><Chip tone="framing">{s.framing}</Chip></td>
                     <td className="px-3 py-2"><Chip tone="movement">{s.movement}</Chip></td>
+                    <td className="px-3 py-2">
+                      <OptimizeFootageCell
+                        scene={scene}
+                        state={optimizeState[scene.id]}
+                        onRun={() => runOptimizeFootage(scene)}
+                        previewState={previewState[scene.id]}
+                        onPreview={() => runPreviewMask(scene)}
+                        disabled={!projectDir}
+                      />
+                    </td>
                   </tr>
                 )
               })}
@@ -454,10 +830,38 @@ function AnalysisView() {
             className="fixed z-[1000] pointer-events-none rounded-lg overflow-hidden shadow-2xl shadow-black/70 border border-sf-dark-600 bg-sf-dark-900"
             style={{ top, left, width: hover.previewW, height: hover.previewH }}
           >
-            <img src={hover.url} alt="" className="w-full h-full object-cover" />
+            {hover.videoUrl ? (
+              // autoPlay + muted is the only combo browsers allow without
+              // a user gesture. Loop so the shot replays as long as the
+              // cursor stays over the thumbnail; the thumbnail image is
+              // the poster so the preview doesn't flash black while the
+              // first frame decodes.
+              <video
+                src={hover.videoUrl}
+                poster={hover.url}
+                autoPlay
+                muted
+                loop
+                playsInline
+                preload="auto"
+                className="w-full h-full object-cover"
+              />
+            ) : (
+              <img src={hover.url} alt="" className="w-full h-full object-cover" />
+            )}
           </div>
         )
       })()}
+
+      <LlmSettingsModal
+        isOpen={llmModalOpen}
+        settings={llmSettings}
+        onClose={() => setLlmModalOpen(false)}
+        onSave={(patch) => {
+          updateLlmSettings(patch)
+          setLlmModalOpen(false)
+        }}
+      />
     </div>
   )
 }
