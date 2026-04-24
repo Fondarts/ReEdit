@@ -69,11 +69,11 @@ Optional integrations:
 - Pexels API key for the `Stock` tab
 - Comfy account API key for paid partner-node workflows
 - LM Studio for local prompt assistance in the `LLM` tab
-- Python 3.10+ on PATH for the re-edit mask generation (`make_mask.py`) and audio stem separation (`separate_stems.py`) scripts
+- Python 3.10+ on PATH for the re-edit mask generation (`scripts/make_mask.py`) and audio stem separation (`scripts/separate_stems.py`)
 
 ## Audio stem separation (Demucs)
 
-The **Import** tab has a `Separate stems` action that splits the source video's audio into two WAVs — one for the voiceover (vocals) and one for the music bed (drums + bass + other mixed). It runs Demucs locally from `separate_stems.py`.
+The **Import** tab has a `Separate stems` action that splits the source video's audio into two WAVs — one for the voiceover (vocals) and one for the music bed (drums + bass + other mixed). It runs Demucs locally from `scripts/separate_stems.py`.
 
 Requirements:
 

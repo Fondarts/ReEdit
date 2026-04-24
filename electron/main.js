@@ -2315,7 +2315,7 @@ ipcMain.handle('analysis:previewMask', async (event, options) => {
   const hint = graphics?.removal_hint || null
   const maskArgs = pickMaskArgsFromHint(hint, graphics)
 
-  const maskScriptPath = path.resolve(__dirname, '..', '..', 'make_mask.py')
+  const maskScriptPath = path.resolve(__dirname, '..', 'scripts', 'make_mask.py')
   try { await fs.access(maskScriptPath) } catch {
     return { success: false, error: `make_mask.py not found at ${maskScriptPath}.` }
   }
@@ -2410,9 +2410,9 @@ ipcMain.handle('analysis:optimizeFootage', async (event, options) => {
   const blankPath = path.join(clipsDir, `${sceneId}_blank.mp4`)
   // make_mask.py decides the output paths based on `<src>_mask.mp4` /
   // `<src>_blank.mp4`, which is exactly what we want.
-  // Locate make_mask.py one level above the reedit package (project
-  // root has `make_mask.py` next to the other standalone helpers).
-  const maskScriptPath = path.resolve(__dirname, '..', '..', 'make_mask.py')
+  // make_mask.py lives in reedit/scripts/ next to the other helpers
+  // (build-workflow-starter-pack.mjs, docker-build-linux.sh, …).
+  const maskScriptPath = path.resolve(__dirname, '..', 'scripts', 'make_mask.py')
   try {
     await fs.access(maskScriptPath)
   } catch {
@@ -2625,8 +2625,8 @@ ipcMain.handle('analysis:optimizeFootage', async (event, options) => {
 // Audio stem separation (VO + Music via Demucs)
 // ============================================
 //
-// Wraps `separate_stems.py` (sibling of `make_mask.py` at the repo
-// root). The script does the heavy lifting: extract audio, run demucs
+// Wraps `separate_stems.py` (sibling of `make_mask.py` under
+// reedit/scripts/). The script does the heavy lifting: extract audio, run demucs
 // with `--two-stems vocals`, rename + move the outputs into the
 // project's `.reedit/stems/` folder. We emit progress events so the
 // Import view can show the current stage; the renderer persists the
@@ -2675,7 +2675,7 @@ ipcMain.handle('analysis:separateStems', async (event, options) => {
     }
   } catch (_) { /* proceed with regen */ }
 
-  const scriptPath = path.resolve(__dirname, '..', '..', 'separate_stems.py')
+  const scriptPath = path.resolve(__dirname, '..', 'scripts', 'separate_stems.py')
   try { await fs.access(scriptPath) } catch {
     return { success: false, error: `separate_stems.py not found at ${scriptPath}.` }
   }
