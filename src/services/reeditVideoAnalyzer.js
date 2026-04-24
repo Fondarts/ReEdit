@@ -30,7 +30,7 @@ import {
   geminiEmbedMedia,
   INLINE_BYTE_LIMIT,
 } from './geminiClient'
-import { loadLlmSettings, LLM_BACKENDS } from './reeditLlmClient'
+import { loadLlmSettings, LLM_BACKENDS, LLM_TASKS, resolveGeminiModelForTask } from './reeditLlmClient'
 import { extractJson } from './reeditCaptioner'
 
 const SYSTEM_PROMPT = `You are a shot analyst for ad re-edit pipelines. You watch one short video clip (a single shot or cut) and return ONLY a JSON object with the fields the user asks for. No prose, no markdown fences, no preamble.`
@@ -162,7 +162,7 @@ export async function analyzeSceneVideo(scene, {
   if (!projectDir) throw new Error('analyzeSceneVideo: missing projectDir')
 
   const settings = requireGeminiKey()
-  const model = modelOverride || settings.geminiModel || 'gemini-2.5-flash'
+  const model = modelOverride || resolveGeminiModelForTask(settings, LLM_TASKS.ANALYSIS)
 
   const clipPath = await ensureSceneClip({ sourceVideoPath, projectDir, scene })
   const { dataUrl, bytes } = await clipToDataUrl(clipPath)

@@ -212,10 +212,20 @@ export async function geminiChatCompletion({
   // prompt hint — the field below makes the model refuse to emit prose
   // around the object, which the captioner/analyzer paths rely on.
   if (responseMimeType) body.generationConfig.responseMimeType = responseMimeType
-  // thinkingConfig is only honoured by 2.5 models but harmless on older
-  // ones. Passing thinkingBudget=0 is the canonical way to disable.
+  // thinkingConfig on 2.5 / 3.x models: Flash accepts budget=0
+  // (disabled); Pro and Ultra reject it with "Budget 0 is invalid.
+  // This model only works in thinking mode." Detect thinking-only
+  // models and drop the thinkingConfig entirely so the API picks its
+  // default dynamic budget. Anything non-zero is honoured as-is for
+  // every model.
+  const isThinkingOnlyModel = /\b(pro|ultra)\b/i.test(model)
   if (thinkingBudget !== undefined) {
-    body.generationConfig.thinkingConfig = { thinkingBudget }
+    if (isThinkingOnlyModel && thinkingBudget === 0) {
+      // Skip thinkingConfig entirely — Pro / Ultra default to dynamic
+      // thinking, which is the only mode they support.
+    } else {
+      body.generationConfig.thinkingConfig = { thinkingBudget }
+    }
   }
 
   const url = `${GEMINI_BASE}/models/${encodeURIComponent(model)}:generateContent?key=${encodeURIComponent(apiKey)}`
@@ -357,14 +367,20 @@ export async function geminiUploadFile({ apiKey, bytes, mimeType, displayName })
 
 export { INLINE_BYTE_LIMIT }
 
-// Updated alongside the Anthropic list. Gemini 2.5 Flash is the
-// default workhorse for per-shot video analysis (strong on motion,
-// cheap); Pro for the creative reasoning step that mixes brief + shots.
+// Updated alongside the Anthropic list. 2.5 Flash is the default
+// workhorse for per-shot video analysis (cheap, native video);
+// 2.5 Pro for creative reasoning that mixes brief + shots. 3.0 Pro
+// and 3.0 Ultra are the latest generation — use them when the proposal
+// quality matters more than cost. If an id isn't enabled on your
+// project the API returns a clear 404; switch to a lower-tier model
+// in Settings until Google enables it.
 // Embedding 2 is preview-only as of March 2026 — kept separate because
 // it's only used by the embedding calls, never by chatCompletion.
 export const GEMINI_MODELS = [
   { id: 'gemini-2.5-flash', label: 'Gemini 2.5 Flash', blurb: 'Default for per-shot video analysis. Fast + native video.' },
-  { id: 'gemini-2.5-pro', label: 'Gemini 2.5 Pro', blurb: 'Strongest reasoning. Use for the brief ↔ footage matching pass.' },
+  { id: 'gemini-2.5-pro', label: 'Gemini 2.5 Pro', blurb: 'Strongest reasoning in the 2.5 line. Runs in thinking mode by default.' },
+  { id: 'gemini-3-pro', label: 'Gemini 3 Pro', blurb: 'Latest generation. Best narrative + creative reasoning. Requires project access.' },
+  { id: 'gemini-3-ultra', label: 'Gemini 3 Ultra', blurb: 'Top-tier. Use only when final-cut quality justifies the cost.' },
 ]
 
 export const GEMINI_EMBEDDING_MODELS = [

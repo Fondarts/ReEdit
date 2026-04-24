@@ -69,6 +69,19 @@ Optional integrations:
 - Pexels API key for the `Stock` tab
 - Comfy account API key for paid partner-node workflows
 - LM Studio for local prompt assistance in the `LLM` tab
+- Python 3.10+ on PATH for the re-edit mask generation (`make_mask.py`) and audio stem separation (`separate_stems.py`) scripts
+
+## Audio stem separation (Demucs)
+
+The **Import** tab has a `Separate stems` action that splits the source video's audio into two WAVs — one for the voiceover (vocals) and one for the music bed (drums + bass + other mixed). It runs Demucs locally from `separate_stems.py`.
+
+Requirements:
+
+- Python 3.10+ reachable as `python` on PATH (or pin a venv via the `REEDIT_PYTHON` env var)
+- `pip install demucs` in that environment
+- A CUDA GPU is strongly recommended: CPU works but takes ~10-15× the clip length. The first run downloads the `htdemucs` model (~180 MB) to `~/.cache/torch/hub/checkpoints/`.
+
+Outputs land in `{projectDir}/.reedit/stems/<source>_vocals.wav` and `{source}_music.wav`. The project file records the paths so re-opening the project doesn't re-run the separation.
 
 ## First Run
 

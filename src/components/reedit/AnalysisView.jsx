@@ -656,7 +656,7 @@ function AnalysisView() {
             const label = backend === LLM_BACKENDS.ANTHROPIC
               ? (ANTHROPIC_MODELS.find((m) => m.id === llmSettings.anthropicModel)?.label || 'Claude')
               : backend === LLM_BACKENDS.GEMINI
-                ? (GEMINI_MODELS.find((m) => m.id === llmSettings.geminiModel)?.label || 'Gemini')
+                ? (GEMINI_MODELS.find((m) => m.id === (llmSettings.geminiAnalysisModel || llmSettings.geminiModel))?.label || 'Gemini')
                 : BACKEND_LABELS[LLM_BACKENDS.LM_STUDIO]
             return (
               <button

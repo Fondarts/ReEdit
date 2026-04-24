@@ -1,5 +1,5 @@
-import { useState } from 'react'
-import { Upload, Loader2, CheckCircle2, AlertCircle } from 'lucide-react'
+import { useEffect, useState } from 'react'
+import { Upload, Loader2, CheckCircle2, AlertCircle, Mic, Music, ExternalLink, RotateCcw } from 'lucide-react'
 import useProjectStore from '../../stores/projectStore'
 import useTimelineStore from '../../stores/timelineStore'
 import { resetReeditProjectState } from '../../services/reeditEdlToTimeline'
@@ -251,9 +251,180 @@ function ImportVideoView({ onVideoImported }) {
             >
               Replace with another video
             </button>
+
+            <AudioStemsSection sourceVideo={existing} saveProject={saveProject} />
           </div>
         )}
       </div>
+    </div>
+  )
+}
+
+// Stage labels for the progress indicator. Keep them short — the
+// section is narrow. Unknown stages render verbatim so we don't lose
+// unexpected events emitted by the script.
+const STEM_STAGE_LABEL = {
+  starting: 'Starting…',
+  device: 'Selecting device…',
+  extracting: 'Extracting audio…',
+  separating: 'Separating (Demucs)…',
+  demucs: 'Separating (Demucs)…',
+  demucs_progress: 'Separating (Demucs)…',
+  finalizing: 'Finalising…',
+  done: 'Done',
+}
+
+function AudioStemsSection({ sourceVideo, saveProject }) {
+  const currentProjectHandle = useProjectStore((s) => s.currentProjectHandle)
+  const projectDir = typeof currentProjectHandle === 'string' ? currentProjectHandle : null
+
+  const stems = sourceVideo?.stems || null
+  const [stage, setStage] = useState(null)
+  const [stageMessage, setStageMessage] = useState('')
+  const [error, setError] = useState(null)
+
+  useEffect(() => {
+    const unsub = window.electronAPI?.onSeparateStemsProgress?.((payload) => {
+      if (!payload?.stage) return
+      setStage(payload.stage)
+      if (payload.message) setStageMessage(payload.message)
+    })
+    return () => { try { unsub?.() } catch (_) { /* ignore */ } }
+  }, [])
+
+  const running = stage && stage !== 'done' && stage !== 'error'
+
+  if (sourceVideo?.hasAudio === false) {
+    return (
+      <div className="mt-4 pt-3 border-t border-sf-dark-800 text-sf-text-muted">
+        Source has no audio — nothing to separate.
+      </div>
+    )
+  }
+
+  if (!projectDir) {
+    // Web builds / unsaved projects don't have a disk-backed handle to
+    // write stems into. Surface that instead of silently failing.
+    return (
+      <div className="mt-4 pt-3 border-t border-sf-dark-800 text-sf-text-muted">
+        Save the project first to enable audio stem separation.
+      </div>
+    )
+  }
+
+  const runSeparate = async () => {
+    if (running) return
+    setError(null)
+    setStage('starting')
+    setStageMessage('')
+    try {
+      const res = await window.electronAPI.separateStems({
+        sourceVideoPath: sourceVideo.path,
+        projectDir,
+      })
+      if (!res?.success) {
+        setStage('error')
+        setError(res?.error || 'Unknown error.')
+        return
+      }
+      setStage('done')
+      // Persist into the project so opening it later finds the stems
+      // without re-running the 5-20 min demucs pass.
+      const nextStems = {
+        vocalsPath: res.vocalsPath,
+        musicPath: res.musicPath,
+        model: res.model || 'htdemucs',
+        generatedAt: new Date().toISOString(),
+      }
+      await saveProject({ sourceVideo: { ...sourceVideo, stems: nextStems } })
+    } catch (err) {
+      setStage('error')
+      setError(err?.message || String(err))
+    }
+  }
+
+  const reveal = (p) => {
+    if (!p) return
+    try { window.electronAPI?.showItemInFolder?.(p) } catch (_) { /* ignore */ }
+  }
+
+  // Done state: show the two files + reveal + re-run.
+  if (stems && stage !== 'error') {
+    return (
+      <div className="mt-4 pt-3 border-t border-sf-dark-800 space-y-2">
+        <div className="flex items-center gap-1.5 text-sf-text-secondary uppercase tracking-wider text-[10px]">
+          <CheckCircle2 className="w-3 h-3 text-emerald-400" />
+          Audio stems ready
+          <span className="normal-case text-sf-text-muted ml-2">· {stems.model || 'htdemucs'}</span>
+        </div>
+        <StemRow icon={<Mic className="w-3 h-3" />} label="VO" path={stems.vocalsPath} onReveal={reveal} />
+        <StemRow icon={<Music className="w-3 h-3" />} label="Music" path={stems.musicPath} onReveal={reveal} />
+        <button
+          type="button"
+          onClick={runSeparate}
+          disabled={running}
+          className="inline-flex items-center gap-1 text-[10px] text-sf-text-muted hover:text-sf-text-primary mt-1"
+          title="Regenerate the stems (useful if the source audio changed)"
+        >
+          <RotateCcw className="w-3 h-3" />
+          {running ? (STEM_STAGE_LABEL[stage] || stage) : 'Re-run'}
+        </button>
+      </div>
+    )
+  }
+
+  // Running or idle state (no stems yet).
+  return (
+    <div className="mt-4 pt-3 border-t border-sf-dark-800 space-y-2">
+      <div className="text-sf-text-secondary uppercase tracking-wider text-[10px]">Audio stems</div>
+      {running ? (
+        <div className="inline-flex items-center gap-1.5 text-sf-text-secondary">
+          <Loader2 className="w-3.5 h-3.5 animate-spin" />
+          <span>{STEM_STAGE_LABEL[stage] || stage}</span>
+          {stageMessage && stage !== 'done' && (
+            <span className="text-sf-text-muted text-[10px] truncate max-w-[220px]" title={stageMessage}>
+              · {stageMessage}
+            </span>
+          )}
+        </div>
+      ) : (
+        <button
+          type="button"
+          onClick={runSeparate}
+          className="inline-flex items-center gap-1.5 px-2.5 py-1.5 rounded-md text-[11px] border border-sf-dark-700 bg-sf-dark-900 hover:bg-sf-dark-800 text-sf-text-primary hover:border-sf-accent/60 transition-colors"
+          title="Run Demucs locally to split the source audio into VO (vocals) and Music stems."
+        >
+          <Mic className="w-3.5 h-3.5" />
+          Separate stems (VO + Music)
+        </button>
+      )}
+      {stage === 'error' && error && (
+        <div className="flex items-start gap-1.5 text-sf-error">
+          <AlertCircle className="w-3 h-3 mt-0.5 flex-shrink-0" />
+          <span className="text-[10px] leading-snug break-words">{error}</span>
+        </div>
+      )}
+    </div>
+  )
+}
+
+function StemRow({ icon, label, path, onReveal }) {
+  if (!path) return null
+  const fname = path.split(/[\\/]/).pop()
+  return (
+    <div className="flex items-center gap-2">
+      <span className="text-sf-text-muted">{icon}</span>
+      <span className="text-sf-text-primary font-medium w-10">{label}</span>
+      <span className="text-sf-text-muted truncate flex-1" title={path}>{fname}</span>
+      <button
+        type="button"
+        onClick={() => onReveal(path)}
+        className="inline-flex items-center gap-0.5 text-sf-accent hover:underline text-[10px]"
+        title="Reveal in file manager"
+      >
+        <ExternalLink className="w-3 h-3" />
+        Reveal
+      </button>
     </div>
   )
 }

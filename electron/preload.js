@@ -328,6 +328,21 @@ contextBridge.exposeInMainWorld('electronAPI', {
   },
 
   /**
+   * Separate the source video's audio into VO (vocals) and Music
+   * (no_vocals) stems using Demucs. Long-running — proportional to
+   * clip length, and CUDA vs CPU matters a lot. Progress stream
+   * arrives via `onSeparateStemsProgress`.
+   * @param {{ sourceVideoPath: string, projectDir: string, model?: string, device?: string }} options
+   * @returns {Promise<{success: boolean, vocalsPath?: string, musicPath?: string, model?: string, cached?: boolean, error?: string}>}
+   */
+  separateStems: (options) => ipcRenderer.invoke('analysis:separateStems', options),
+  onSeparateStemsProgress: (cb) => {
+    const handler = (_, payload) => cb(payload)
+    ipcRenderer.on('analysis:separateStems:progress', handler)
+    return () => ipcRenderer.removeListener('analysis:separateStems:progress', handler)
+  },
+
+  /**
    * Extract audio waveform peaks via ffmpeg (Electron only)
    * @param {string} mediaInput - file:// URL, comfystudio:// URL, or absolute path
    * @param {object} options - { sampleCount?: number, sampleRate?: number }

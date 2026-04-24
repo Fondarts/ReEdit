@@ -1,15 +1,35 @@
-import { useMemo, useState } from 'react'
+import { useEffect, useMemo, useState } from 'react'
 import {
   Sparkles, Loader2, AlertCircle, Save, RotateCcw,
   ArrowUp, ArrowDown, Trash2, CheckCircle2, Film, Wand2, Eye, EyeOff,
-  Pencil, Plus,
+  Pencil, Plus, Cpu, KeyRound, ExternalLink, Video, Image as ImageIcon,
 } from 'lucide-react'
 import useProjectStore from '../../stores/projectStore'
 import { generateProposal } from '../../services/reeditProposer'
-import { applyEdlToTimeline } from '../../services/reeditEdlToTimeline'
-import { generateFillForPlaceholder } from '../../services/reeditGenerate'
+import { applyEdlToTimeline, buildPlaceholderSvgDataUrl } from '../../services/reeditEdlToTimeline'
+import { generateFillForPlaceholder, sendPlaceholderWorkflowToComfyUI } from '../../services/reeditGenerate'
 import { useReeditPresets } from '../../hooks/useReeditPresets'
+import { useLlmSettings } from '../../hooks/useLlmSettings'
+import { LLM_BACKENDS, BACKEND_LABELS, ANTHROPIC_MODELS } from '../../services/reeditLlmClient'
+import {
+  loadCapabilities as loadProposalCapabilities,
+  saveCapabilities as saveProposalCapabilities,
+  CAPABILITY_DEFINITIONS,
+} from '../../services/reeditProposalCapabilities'
 import PresetEditorModal from './PresetEditorModal'
+import LlmSettingsModal from './LlmSettingsModal'
+import SendToComfyModal from './SendToComfyModal'
+import PlaceholderDetailsModal from './PlaceholderDetailsModal'
+
+// Shared with AnalysisView: fixed row height, aspect-derived width.
+const THUMB_HEIGHT = 100
+const PREVIEW_LONG_EDGE = 420
+
+function toComfyUrl(filePath, version) {
+  if (!filePath) return null
+  const base = `comfystudio://${encodeURIComponent(filePath)}`
+  return version ? `${base}?v=${encodeURIComponent(version)}` : base
+}
 
 function formatTc(seconds) {
   if (!Number.isFinite(seconds)) return '—'
@@ -73,6 +93,56 @@ function ProposalView({ onNavigate }) {
 
   // Preset editor modal state: null = closed, { mode: 'edit' | 'create', id? }
   const [presetEditor, setPresetEditor] = useState(null)
+  const [llmModalOpen, setLlmModalOpen] = useState(false)
+  const { settings: llmSettings, update: updateLlmSettings } = useLlmSettings()
+
+  // After a successful "Send to ComfyUI" we pop this modal with
+  // step-by-step instructions — the Ctrl+V step was getting missed
+  // when it was just a one-line inline message.
+  const [comfyHandoff, setComfyHandoff] = useState(null)
+  // Index of the placeholder row the user opened for frame + video
+  // generation (the two-stage i2v workflow). null when closed.
+  const [placeholderDetails, setPlaceholderDetails] = useState(null)
+
+  // Hover preview state for EDL row thumbnails — mirrors AnalysisView.
+  const [hover, setHover] = useState(null) // { url, rect, previewW, previewH }
+
+  // Re-sync local draft state whenever the project's source video
+  // changes (user imported a different video) OR the saved proposal
+  // is cleared. Without this the React useState initializer runs only
+  // once — a stale draft from the previous video would otherwise
+  // render against the new analysis, and the scene-N lookups would
+  // resolve to whatever scene-N means in the CURRENT analysis (new
+  // thumbs + new captions) even though the draft's rationale + EDL
+  // structure is from the old video. Tying the reset to sourceVideo
+  // path + proposal createdAt covers both "new import" and "manual
+  // proposal clear" without clobbering in-progress edits during a
+  // single session.
+  const projectIdentity = (currentProject?.sourceVideo?.path || '') + '|' + (savedProposal?.createdAt || '')
+  useEffect(() => {
+    setDraft(savedProposal)
+    setBrandBrief(savedProposal?.brandBrief || '')
+    setExtraInstructions(savedProposal?.extraInstructions || '')
+    setMetric(savedProposal?.metric || 'Comprehension')
+    setTargetDurationSec(savedProposal?.targetDurationSec || sourceVideo?.duration || 30)
+    setUseGeneratedVideos(savedProposal?.useGeneratedVideos !== false)
+    setApplyResult(null)
+    setError(null)
+    setGenState({})
+    setHover(null)
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [projectIdentity])
+
+  // Source video aspect drives thumb width. When sourceVideo has no
+  // dimensions yet (first-run edge case), default to 16:9 so we still
+  // render something reasonable instead of a 0-width cell.
+  const aspectRatio = (sourceVideo?.width && sourceVideo?.height)
+    ? sourceVideo.width / sourceVideo.height
+    : 16 / 9
+  const isVertical = aspectRatio < 1
+  const thumbW = Math.max(40, Math.round(THUMB_HEIGHT * aspectRatio))
+  const previewH = isVertical ? PREVIEW_LONG_EDGE : Math.round(PREVIEW_LONG_EDGE / aspectRatio)
+  const previewW = isVertical ? Math.round(PREVIEW_LONG_EDGE * aspectRatio) : PREVIEW_LONG_EDGE
 
   // Local draft copy. Includes the whole proposal envelope (rationale,
   // edl, metric, model). Inputs (brandBrief, metric) reflect the
@@ -80,9 +150,39 @@ function ProposalView({ onNavigate }) {
   // choices from a previous session.
   const [draft, setDraft] = useState(savedProposal)
   const [brandBrief, setBrandBrief] = useState(savedProposal?.brandBrief || '')
+  const [extraInstructions, setExtraInstructions] = useState(savedProposal?.extraInstructions || '')
   const [metric, setMetric] = useState(savedProposal?.metric || 'Comprehension')
+  // Target duration for the re-edited video. Defaults to whatever was
+  // saved with the last proposal, falling back to the source video's
+  // own length so "leave it alone" is the no-op default.
+  const [targetDurationSec, setTargetDurationSec] = useState(
+    savedProposal?.targetDurationSec || sourceVideo?.duration || 30
+  )
+  // Master toggle: when off, the timeline populator skips any
+  // genSpec.generatedPath and falls back to the selected frame still
+  // for placeholder rows. Lets the user A/B the i2v output against
+  // the frame candidates without losing either. Default on so legacy
+  // proposals still apply unchanged.
+  const [useGeneratedVideos, setUseGeneratedVideos] = useState(
+    savedProposal?.useGeneratedVideos !== false
+  )
   const [generating, setGenerating] = useState(false)
   const [error, setError] = useState(null)
+
+  // Capability flags — global (localStorage), default all false per
+  // the design conversation. Kept in local state so toggling repaints
+  // instantly; the helper broadcasts changes so other mounted views
+  // can mirror without a reload.
+  const [capabilities, setCapabilities] = useState(() => loadProposalCapabilities())
+  useEffect(() => {
+    const onChange = (e) => setCapabilities(e.detail || loadProposalCapabilities())
+    window.addEventListener('reedit-proposal-capabilities-changed', onChange)
+    return () => window.removeEventListener('reedit-proposal-capabilities-changed', onChange)
+  }, [])
+  const toggleCapability = (id) => {
+    const next = saveProposalCapabilities({ [id]: !capabilities[id] })
+    setCapabilities(next)
+  }
 
   const [applying, setApplying] = useState(false)
   const [applyProgress, setApplyProgress] = useState({ current: 0, total: 0 })
@@ -121,9 +221,12 @@ function ProposalView({ onNavigate }) {
       const proposal = await generateProposal({
         scenes,
         brandBrief,
+        extraInstructions,
         metric: selected?.label || metric,
         criteria: selected?.criteria || '',
         totalDurationSec: sourceVideo.duration || null,
+        targetDurationSec,
+        capabilities,
       })
       setDraft(proposal)
     } catch (err) {
@@ -219,13 +322,15 @@ function ProposalView({ onNavigate }) {
 
   const saveDraft = async () => {
     if (!draft) return
-    await saveProject({ proposal: { ...draft, brandBrief, metric, status: 'draft' } })
+    await saveProject({ proposal: { ...draft, brandBrief, metric, useGeneratedVideos, status: 'draft' } })
   }
 
   const discardDraft = () => {
     setDraft(savedProposal)
     setBrandBrief(savedProposal?.brandBrief || '')
+    setExtraInstructions(savedProposal?.extraInstructions || '')
     setMetric(savedProposal?.metric || 'Comprehension')
+    setTargetDurationSec(savedProposal?.targetDurationSec || sourceVideo?.duration || 30)
     setError(null)
     setApplyResult(null)
   }
@@ -240,6 +345,12 @@ function ProposalView({ onNavigate }) {
         edl: draft.edl,
         scenes,
         sourceVideo,
+        useGeneratedVideos,
+        // Live capabilities from the toggles, not `draft.capabilities`
+        // frozen at generation time — the user may have toggled stems
+        // on/off after the proposal was drafted and we want Apply to
+        // honour the current intent, not the historical one.
+        capabilities,
         onProgress: ({ index, total }) => {
           setApplyProgress({ current: index, total })
         },
@@ -249,6 +360,7 @@ function ProposalView({ onNavigate }) {
           ...draft,
           brandBrief,
           metric,
+          useGeneratedVideos,
           status: 'approved',
           appliedAt: new Date().toISOString(),
         },
@@ -263,6 +375,35 @@ function ProposalView({ onNavigate }) {
       setError(err?.message || 'Apply failed.')
     } finally {
       setApplying(false)
+    }
+  }
+
+  // Build the LTX workflow for this placeholder (uploads ref frame
+   // and patches params, no queue) then copy to clipboard + save to
+   // disk + open ComfyUI. Lets the user inspect/tweak the graph
+   // before committing to a generation run.
+  const sendToComfy = async (i) => {
+    if (!draft || genState[i]?.running) return
+    setGenState((prev) => ({ ...prev, [i]: { running: true, stage: 'upload_ref', inspect: true, error: null } }))
+    try {
+      const result = await sendPlaceholderWorkflowToComfyUI({
+        row: draft.edl[i],
+        rowIndex: i,
+        edl: draft.edl,
+        scenes,
+        sourceVideo,
+        onProgress: (info) => {
+          setGenState((prev) => ({ ...prev, [i]: { running: true, inspect: true, ...info } }))
+        },
+      })
+      setComfyHandoff(result)
+      setGenState((prev) => ({
+        ...prev,
+        [i]: { running: false, inspectReady: true, message: 'Opened ComfyUI — see the dialog for the paste step.' },
+      }))
+    } catch (err) {
+      console.error('[reedit] send to comfy failed:', err)
+      setGenState((prev) => ({ ...prev, [i]: { running: false, error: err?.message || 'Send failed.' } }))
     }
   }
 
@@ -304,6 +445,35 @@ function ProposalView({ onNavigate }) {
   const presetBeingEdited = presetEditor?.mode === 'edit'
     ? presets.find((p) => p.id === presetEditor.id)
     : null
+
+  // Live duration estimate. Originals contribute their source scene's
+  // natural length (the populator ignores the LLM's `newTc*` values);
+  // placeholders contribute their declared gap, floored at 0.5s. Recomputed
+  // on every edit so exclusions / reorders / deletions update the header
+  // in real time. Excluded rows don't count — they're about to be
+  // skipped by the populator anyway.
+  const estimatedDuration = useMemo(() => {
+    const rows = draft?.edl || []
+    let total = 0
+    for (const row of rows) {
+      if (row.excluded) continue
+      if (row.kind === 'placeholder') {
+        const gap = (Number(row.newTcOut) || 0) - (Number(row.newTcIn) || 0)
+        total += Math.max(0.5, gap || 1.5)
+        continue
+      }
+      const scene = sceneById.get(row.sourceSceneId)
+      if (!scene) continue
+      total += Math.max(0.1, (Number(scene.tcOut) - Number(scene.tcIn)))
+    }
+    return total
+  }, [draft, sceneById])
+
+  const durationMatch = (
+    targetDurationSec > 0
+    && estimatedDuration > 0
+    && Math.abs(estimatedDuration - targetDurationSec) / targetDurationSec <= 0.15
+  )
   const isDirty = draft && draft !== savedProposal
   const edl = draft?.edl || []
   const placeholderCount = edl.filter((r) => r.kind === 'placeholder').length
@@ -327,6 +497,11 @@ function ProposalView({ onNavigate }) {
                     {edl.length} edits ({originalCount} original · {placeholderCount} new) · optimized for {draft.metric} · {draft.model}
                     {excludedRowCount > 0 && (
                       <span className="ml-2 text-amber-300/80">· {excludedRowCount} excluded</span>
+                    )}
+                    {draft.targetDurationSec && (
+                      <span className={`ml-2 ${durationMatch ? 'text-emerald-300/90' : 'text-amber-300/90'}`}>
+                        · ~{estimatedDuration.toFixed(1)}s of {draft.targetDurationSec.toFixed(1)}s target
+                      </span>
                     )}
                   </>
                 )
@@ -359,6 +534,25 @@ function ProposalView({ onNavigate }) {
                 <Save className="w-3.5 h-3.5" />
                 Save draft
               </button>
+              {/* Video/image toggle for generated fills. Click flips
+                  between "use i2v videos when available" and "use
+                  selected frame stills even if a video exists". Takes
+                  effect on the next Apply. */}
+              <button
+                type="button"
+                onClick={() => setUseGeneratedVideos((v) => !v)}
+                title={useGeneratedVideos
+                  ? 'Using generated i2v videos for placeholder rows. Click to use frame stills instead (reversible).'
+                  : 'Using frame stills for placeholder rows. Click to re-enable generated videos.'}
+                className={`inline-flex items-center gap-1.5 px-2.5 py-1.5 rounded-md text-[11px] border transition-colors
+                  ${useGeneratedVideos
+                    ? 'border-sf-dark-700 bg-sf-dark-900 hover:bg-sf-dark-800 text-sf-text-muted hover:text-sf-text-primary'
+                    : 'border-amber-500/40 bg-amber-500/10 text-amber-200'}`}
+              >
+                {useGeneratedVideos
+                  ? <><Video className="w-3.5 h-3.5" /> Videos on</>
+                  : <><ImageIcon className="w-3.5 h-3.5" /> Stills only</>}
+              </button>
               <button
                 type="button"
                 onClick={applyToTimeline}
@@ -387,7 +581,7 @@ function ProposalView({ onNavigate }) {
         <div className="px-6 py-5 border-b border-sf-dark-800 bg-sf-dark-950">
           <div className="max-w-4xl">
             <label className="block text-xs font-medium text-sf-text-muted uppercase tracking-wider mb-2">Optimize for</label>
-            <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-5 gap-2 mb-5">
+            <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-6 gap-2 mb-5">
               {presets.map((m) => (
                 <div key={m.id} className="relative group/preset">
                   <button
@@ -422,16 +616,116 @@ function ProposalView({ onNavigate }) {
               </button>
             </div>
 
-            <label className="block text-xs font-medium text-sf-text-muted uppercase tracking-wider mb-2">Brand brief (optional)</label>
-            <textarea
-              value={brandBrief}
-              onChange={(e) => setBrandBrief(e.target.value)}
-              placeholder="E.g. Nissan Armada, focus on brand presence in the first 5s, emphasize the Invisible Hood View as the hero feature, highlight towing capability and the 'most capable Armada ever' line."
-              rows={3}
-              className="w-full text-sm rounded-lg border border-sf-dark-700 bg-sf-dark-900 px-3 py-2 text-sf-text-primary placeholder:text-sf-text-muted/60 focus:outline-none focus:border-sf-accent resize-none"
-            />
+            <label className="block text-xs font-medium text-sf-text-muted uppercase tracking-wider mb-2">
+              Target duration
+              <span className="text-sf-text-muted/70 normal-case ml-2">
+                (the LLM picks a subset of scenes whose natural durations sum close to this)
+              </span>
+            </label>
+            <div className="mb-5 flex items-center flex-wrap gap-2">
+              <div className="inline-flex items-center rounded-lg border border-sf-dark-700 bg-sf-dark-900 overflow-hidden">
+                <input
+                  type="number"
+                  min={1}
+                  max={600}
+                  step={1}
+                  value={Math.round(targetDurationSec)}
+                  onChange={(e) => {
+                    const v = Number(e.target.value)
+                    if (Number.isFinite(v) && v > 0) setTargetDurationSec(v)
+                  }}
+                  className="w-20 bg-transparent px-3 py-1.5 text-sm text-sf-text-primary focus:outline-none tabular-nums"
+                />
+                <span className="pr-3 pl-1 text-xs text-sf-text-muted">seconds</span>
+              </div>
+              {sourceVideo?.duration && (
+                <button
+                  type="button"
+                  onClick={() => setTargetDurationSec(sourceVideo.duration)}
+                  className={`px-2.5 py-1 rounded text-[11px] border transition-colors
+                    ${Math.abs(targetDurationSec - sourceVideo.duration) < 0.5
+                      ? 'border-sf-accent bg-sf-accent/10 text-sf-text-primary'
+                      : 'border-sf-dark-700 bg-sf-dark-900 text-sf-text-muted hover:border-sf-dark-500 hover:text-sf-text-primary'}`}
+                >
+                  Original ({sourceVideo.duration.toFixed(1)}s)
+                </button>
+              )}
+              {[6, 15, 30, 60].map((n) => (
+                <button
+                  key={n}
+                  type="button"
+                  onClick={() => setTargetDurationSec(n)}
+                  className={`px-2.5 py-1 rounded text-[11px] border transition-colors
+                    ${Math.abs(targetDurationSec - n) < 0.5
+                      ? 'border-sf-accent bg-sf-accent/10 text-sf-text-primary'
+                      : 'border-sf-dark-700 bg-sf-dark-900 text-sf-text-muted hover:border-sf-dark-500 hover:text-sf-text-primary'}`}
+                >
+                  {n}s
+                </button>
+              ))}
+            </div>
 
-            <div className="mt-4 flex items-center gap-3">
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+              <div>
+                <label className="block text-xs font-medium text-sf-text-muted uppercase tracking-wider mb-2">Brand brief (optional)</label>
+                <textarea
+                  value={brandBrief}
+                  onChange={(e) => setBrandBrief(e.target.value)}
+                  placeholder="E.g. Nissan Armada, focus on brand presence in the first 5s, emphasize the Invisible Hood View as the hero feature, highlight towing capability and the 'most capable Armada ever' line."
+                  rows={4}
+                  className="w-full text-sm rounded-lg border border-sf-dark-700 bg-sf-dark-900 px-3 py-2 text-sf-text-primary placeholder:text-sf-text-muted/60 focus:outline-none focus:border-sf-accent resize-none"
+                />
+              </div>
+              <div>
+                <label className="block text-xs font-medium text-sf-text-muted uppercase tracking-wider mb-2">
+                  Extra instructions (optional)
+                  <span className="text-sf-text-muted/70 normal-case ml-2">injected into the LLM prompt</span>
+                </label>
+                <textarea
+                  value={extraInstructions}
+                  onChange={(e) => setExtraInstructions(e.target.value)}
+                  placeholder="E.g. never use scenes where the driver's face is visible, always end with the aerial shot, keep at least one shot of the interior, avoid placeholder shots for the first 5 seconds."
+                  rows={4}
+                  className="w-full text-sm rounded-lg border border-sf-dark-700 bg-sf-dark-900 px-3 py-2 text-sf-text-primary placeholder:text-sf-text-muted/60 focus:outline-none focus:border-sf-accent resize-none"
+                />
+              </div>
+            </div>
+
+            <div className="mt-4">
+              <div className="block text-xs font-medium text-sf-text-muted uppercase tracking-wider mb-2">
+                Capabilities
+                <span className="text-sf-text-muted/70 normal-case ml-2">what the proposer is allowed to do</span>
+              </div>
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-2">
+                {CAPABILITY_DEFINITIONS.map((cap) => {
+                  const enabled = Boolean(capabilities[cap.id])
+                  return (
+                    <label
+                      key={cap.id}
+                      className={`flex items-start gap-2.5 p-2.5 rounded-lg border cursor-pointer transition-colors
+                        ${enabled
+                          ? 'border-sf-accent bg-sf-accent/10'
+                          : 'border-sf-dark-700 bg-sf-dark-900 hover:border-sf-dark-500'}`}
+                    >
+                      <input
+                        type="checkbox"
+                        checked={enabled}
+                        onChange={() => toggleCapability(cap.id)}
+                        className="mt-0.5 accent-sf-accent"
+                      />
+                      <div className="flex-1 min-w-0">
+                        <div className={`text-sm font-medium ${enabled ? 'text-sf-text-primary' : 'text-sf-text-secondary'}`}>
+                          {cap.label}
+                        </div>
+                        <div className="text-[10px] leading-snug text-sf-text-muted mt-0.5">{cap.blurb}</div>
+                      </div>
+                    </label>
+                  )
+                })}
+              </div>
+            </div>
+
+            <div className="mt-4 flex items-center gap-3 flex-wrap">
               <button
                 type="button"
                 onClick={runGenerate}
@@ -444,6 +738,31 @@ function ProposalView({ onNavigate }) {
                 {generating ? <Loader2 className="w-4 h-4 animate-spin" /> : <Sparkles className="w-4 h-4" />}
                 {generating ? 'Generating…' : draft ? 'Re-generate proposal' : 'Generate proposal'}
               </button>
+
+              {/* Engine chip — shows which backend will run the
+                  proposal and surfaces the "set API key" state when
+                  Claude is selected but the key is missing. Opens the
+                  LLM settings modal on click. */}
+              <button
+                type="button"
+                onClick={() => setLlmModalOpen(true)}
+                className={`inline-flex items-center gap-1.5 px-2.5 py-1.5 rounded-md text-[11px] border transition-colors
+                  ${llmSettings.backend === LLM_BACKENDS.ANTHROPIC && !llmSettings.anthropicApiKey
+                    ? 'border-amber-500/40 bg-amber-500/10 text-amber-200'
+                    : 'border-sf-dark-700 bg-sf-dark-900 hover:bg-sf-dark-800 text-sf-text-muted hover:text-sf-text-primary'}`}
+                title="Switch engine, pick model, set API key"
+              >
+                {llmSettings.backend === LLM_BACKENDS.ANTHROPIC && !llmSettings.anthropicApiKey
+                  ? <KeyRound className="w-3.5 h-3.5" />
+                  : <Cpu className="w-3.5 h-3.5" />}
+                {llmSettings.backend === LLM_BACKENDS.ANTHROPIC
+                  ? (ANTHROPIC_MODELS.find((m) => m.id === llmSettings.anthropicModel)?.label || 'Claude')
+                  : BACKEND_LABELS[LLM_BACKENDS.LM_STUDIO]}
+                {llmSettings.backend === LLM_BACKENDS.ANTHROPIC && !llmSettings.anthropicApiKey && (
+                  <span className="text-[10px] opacity-80">· no key</span>
+                )}
+              </button>
+
               <span className="text-[11px] text-sf-text-muted">{selectedMetric?.blurb || ''}</span>
             </div>
           </div>
@@ -490,12 +809,13 @@ function ProposalView({ onNavigate }) {
                   <tr>
                     <th className="text-left px-3 py-2 font-medium w-10">#</th>
                     <th className="text-left px-3 py-2 font-medium w-[82px]">Kind</th>
+                    <th className="text-left px-3 py-2 font-medium" style={{ width: thumbW + 24 }}>Thumb</th>
                     <th className="text-left px-3 py-2 font-medium w-[100px]">Source</th>
                     <th className="text-left px-3 py-2 font-medium w-[72px]">In</th>
                     <th className="text-left px-3 py-2 font-medium w-[72px]">Out</th>
                     <th className="text-left px-3 py-2 font-medium w-[60px]">Dur</th>
                     <th className="text-left px-3 py-2 font-medium">Rationale</th>
-                    <th className="text-left px-3 py-2 font-medium w-[108px]">Actions</th>
+                    <th className="text-left px-3 py-2 font-medium w-[136px]">Actions</th>
                   </tr>
                 </thead>
                 <tbody>
@@ -503,6 +823,24 @@ function ProposalView({ onNavigate }) {
                     const dur = (row.newTcOut || 0) - (row.newTcIn || 0)
                     const sourceScene = row.sourceSceneId ? sceneById.get(row.sourceSceneId) : null
                     const rowExcluded = Boolean(row.excluded)
+                    // Resolve a thumb URL per row: originals show the
+                    // scene's analysis JPG (cache-busted with the
+                    // analysis.createdAt so a re-analysis refreshes
+                    // immediately), placeholders render the same
+                    // "GENERATION NEEDED" SVG the populator uses so
+                    // the row in Proposal matches what lands on the
+                    // timeline. ?v= keys the SVG to the row position
+                    // + note so edits live-update the preview.
+                    const thumbUrl = row.kind === 'placeholder'
+                      ? buildPlaceholderSvgDataUrl({
+                          note: row.note,
+                          index: row.index,
+                          width: sourceVideo?.width,
+                          height: sourceVideo?.height,
+                        })
+                      : (sourceScene?.thumbnail
+                        ? toComfyUrl(sourceScene.thumbnail, analysis?.createdAt)
+                        : null)
                     return (
                       <tr
                         key={`${row.index}-${i}`}
@@ -510,6 +848,24 @@ function ProposalView({ onNavigate }) {
                       >
                         <td className="px-3 py-2 text-sf-text-muted tabular-nums">{row.index}</td>
                         <td className="px-3 py-2"><KindBadge kind={row.kind} /></td>
+                        <td className="px-3 py-2">
+                          <div
+                            className="rounded bg-sf-dark-800 overflow-hidden cursor-zoom-in"
+                            style={{ width: thumbW, height: THUMB_HEIGHT }}
+                            onMouseEnter={(e) => {
+                              if (!thumbUrl) return
+                              const rect = e.currentTarget.getBoundingClientRect()
+                              setHover({ url: thumbUrl, rect, previewW, previewH })
+                            }}
+                            onMouseLeave={() => setHover(null)}
+                          >
+                            {thumbUrl ? (
+                              <img src={thumbUrl} alt="" className="w-full h-full object-cover" loading="lazy" />
+                            ) : (
+                              <div className="w-full h-full flex items-center justify-center text-[10px] text-sf-text-muted">—</div>
+                            )}
+                          </div>
+                        </td>
                         <td className="px-3 py-2 text-sf-text-secondary">
                           {row.sourceSceneId || <span className="italic text-sf-text-muted">—</span>}
                           {sourceScene && (
@@ -570,32 +926,48 @@ function ProposalView({ onNavigate }) {
                               <Trash2 className="w-3.5 h-3.5" />
                             </button>
                             {row.kind === 'placeholder' && (
-                              <button
-                                type="button"
-                                onClick={() => generateFill(i)}
-                                disabled={genState[i]?.running}
-                                title={row.genSpec?.generatedPath ? 'Re-generate fill' : 'Generate fill (LTX 2.3 i2v)'}
-                                className={`p-1 rounded transition-colors
-                                  ${genState[i]?.running
-                                    ? 'text-sf-text-muted cursor-wait'
-                                    : row.genSpec?.generatedPath
+                              <>
+                                <button
+                                  type="button"
+                                  onClick={() => sendToComfy(i)}
+                                  disabled={genState[i]?.running}
+                                  title="Send workflow to ComfyUI (inspect / edit before generating)"
+                                  className="p-1 rounded transition-colors text-sf-text-muted hover:bg-sf-dark-700 hover:text-sf-text-primary disabled:opacity-30 disabled:cursor-wait"
+                                >
+                                  <ExternalLink className="w-3.5 h-3.5" />
+                                </button>
+                                <button
+                                  type="button"
+                                  onClick={() => setPlaceholderDetails(i)}
+                                  title={
+                                    row.genSpec?.generatedPath
+                                      ? 'Open frame + video workspace (has video)'
+                                      : (row.genSpec?.frameCandidates?.length
+                                        ? 'Open frame + video workspace (candidates ready)'
+                                        : 'Generate frames + video (i2v workspace)')
+                                  }
+                                  className={`p-1 rounded transition-colors
+                                    ${row.genSpec?.generatedPath
                                       ? 'text-emerald-400 hover:bg-emerald-500/20'
-                                      : 'text-amber-400 hover:bg-amber-500/20'}`}
-                              >
-                                {genState[i]?.running
-                                  ? <Loader2 className="w-3.5 h-3.5 animate-spin" />
-                                  : row.genSpec?.generatedPath
+                                      : (row.genSpec?.frameCandidates?.length
+                                        ? 'text-sky-400 hover:bg-sky-500/20'
+                                        : 'text-amber-400 hover:bg-amber-500/20')}`}
+                                >
+                                  {row.genSpec?.generatedPath
                                     ? <CheckCircle2 className="w-3.5 h-3.5" />
                                     : <Wand2 className="w-3.5 h-3.5" />}
-                              </button>
+                                </button>
+                              </>
                             )}
                           </div>
                           {row.kind === 'placeholder' && genState[i] && (
                             <div className="mt-1 text-[10px] leading-snug">
                               {genState[i].running && (
                                 <span className="text-sf-text-muted">
-                                  {genState[i].stage === 'upload_ref' && 'Uploading ref…'}
-                                  {genState[i].stage === 'queue_workflow' && 'Queuing workflow…'}
+                                  {genState[i].inspect && genState[i].stage === 'upload_ref' && 'Uploading ref for ComfyUI…'}
+                                  {genState[i].inspect && genState[i].stage === 'queue_workflow' && 'Building workflow…'}
+                                  {!genState[i].inspect && genState[i].stage === 'upload_ref' && 'Uploading ref…'}
+                                  {!genState[i].inspect && genState[i].stage === 'queue_workflow' && 'Queuing workflow…'}
                                   {genState[i].stage === 'generating' && (
                                     genState[i].step != null && genState[i].maxSteps
                                       ? `Generating ${genState[i].step}/${genState[i].maxSteps}…`
@@ -610,6 +982,9 @@ function ProposalView({ onNavigate }) {
                               )}
                               {!genState[i].running && genState[i].done && (
                                 <span className="text-emerald-400">Ready — re-Apply to see on timeline.</span>
+                              )}
+                              {!genState[i].running && genState[i].inspectReady && (
+                                <span className="text-sky-300">{genState[i].message || 'Workflow sent to ComfyUI.'}</span>
                               )}
                             </div>
                           )}
@@ -646,6 +1021,69 @@ function ProposalView({ onNavigate }) {
         onDelete={handleDeletePreset}
         onReset={handleResetPreset}
       />
+
+      <LlmSettingsModal
+        isOpen={llmModalOpen}
+        settings={llmSettings}
+        onClose={() => setLlmModalOpen(false)}
+        onSave={(patch) => {
+          updateLlmSettings(patch)
+          setLlmModalOpen(false)
+        }}
+      />
+
+      <SendToComfyModal
+        isOpen={Boolean(comfyHandoff)}
+        payload={comfyHandoff}
+        onClose={() => setComfyHandoff(null)}
+      />
+
+      <PlaceholderDetailsModal
+        isOpen={placeholderDetails != null}
+        row={placeholderDetails != null ? draft?.edl?.[placeholderDetails] : null}
+        rowIndex={placeholderDetails ?? 0}
+        edl={draft?.edl || []}
+        scenes={scenes}
+        sourceVideo={sourceVideo}
+        onClose={() => setPlaceholderDetails(null)}
+        onChange={(nextGenSpec) => {
+          // Merge the new genSpec into the draft's row and persist
+          // immediately so an expensive frame / video generation
+          // isn't lost if the user closes the modal right after.
+          if (placeholderDetails == null || !draft) return
+          const nextDraft = {
+            ...draft,
+            edl: draft.edl.map((r, idx) => (
+              idx === placeholderDetails ? { ...r, genSpec: nextGenSpec } : r
+            )),
+          }
+          setDraft(nextDraft)
+          saveProject({ proposal: { ...nextDraft, status: 'draft' } })
+        }}
+      />
+
+      {/* Thumbnail hover preview — fixed-positioned so it escapes the
+          scrolling EDL table. Same pattern as AnalysisView: flip left
+          when the preview would run off the right edge; clamp vertical
+          so tall 9:16 previews don't clip off the top/bottom. */}
+      {hover && (() => {
+        const MARGIN = 12
+        const vw = typeof window !== 'undefined' ? window.innerWidth : 1920
+        const vh = typeof window !== 'undefined' ? window.innerHeight : 1080
+        const rightSpace = vw - hover.rect.right
+        const placeLeft = rightSpace < hover.previewW + MARGIN && hover.rect.left > hover.previewW + MARGIN
+        const left = placeLeft ? hover.rect.left - hover.previewW - MARGIN : hover.rect.right + MARGIN
+        let top = hover.rect.top + (hover.rect.height - hover.previewH) / 2
+        top = Math.max(MARGIN, Math.min(top, vh - hover.previewH - MARGIN))
+        return (
+          <div
+            className="fixed z-[1000] pointer-events-none rounded-lg overflow-hidden shadow-2xl shadow-black/70 border border-sf-dark-600 bg-sf-dark-900"
+            style={{ top, left, width: hover.previewW, height: hover.previewH }}
+          >
+            <img src={hover.url} alt="" className="w-full h-full object-cover" />
+          </div>
+        )
+      })()}
     </div>
   )
 }

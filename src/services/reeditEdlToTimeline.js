@@ -83,7 +83,7 @@ function wrapLines(text, maxChars = 34, maxLines = 5) {
 // into a 1080-wide canvas and everything gets sliced off on the sides.
 // Wrap width for the note also tightens on vertical aspects so the
 // sentence fits within the visible column.
-function buildPlaceholderSvgDataUrl({ note, index, width, height }) {
+export function buildPlaceholderSvgDataUrl({ note, index, width, height }) {
   const w = Math.max(480, width || 1920)
   const h = Math.max(270, height || 1080)
   const isVertical = h > w
@@ -111,7 +111,15 @@ function buildPlaceholderSvgDataUrl({ note, index, width, height }) {
     `<tspan x="50%" dy="${i === 0 ? 0 : lineStep}">${escapeXml(line)}</tspan>`
   )).join('')
 
-  const svg = `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 ${w} ${h}" preserveAspectRatio="xMidYMid meet">
+  // Explicit width/height attributes — without them some renderers
+  // fall back to the SVG default 300×150 intrinsic size, and <img>
+  // elements that aren't force-sized via CSS (ComfyStudio's preview
+  // panel uses object-fit: contain from natural size) show the
+  // placeholder shrunken in the middle of a larger black viewport
+  // instead of filling the clip. Matching width/height to viewBox
+  // keeps the natural aspect and lets `object-fit: cover` / `contain`
+  // do the right thing downstream.
+  const svg = `<svg xmlns="http://www.w3.org/2000/svg" width="${w}" height="${h}" viewBox="0 0 ${w} ${h}" preserveAspectRatio="xMidYMid meet">
     <rect width="100%" height="100%" fill="#0b0b0e"/>
     <rect x="0" y="0" width="100%" height="${topBarH}" fill="#f59e0b"/>
     <text x="50%" y="${titleY}" fill="#f59e0b"
@@ -175,6 +183,44 @@ async function registerSceneAsset(sourceVideo, scene, projectDir) {
   })
 }
 
+// Register a single first-frame candidate as an IMAGE asset. Used
+// when a placeholder has frame candidates but no final video yet —
+// the timeline shows the selected (or latest) frame as a still for
+// the row's duration so the user can preview the composition without
+// committing to an i2v pass. Tagged distinctly so cleanup wipes it
+// on re-apply.
+function registerFrameAsset(sourceVideo, row, candidate) {
+  const assetsStore = useAssetsStore.getState()
+  const declaredGap = (Number(row.newTcOut) || 0) - (Number(row.newTcIn) || 0)
+  const duration = Math.max(0.5, declaredGap || 1.5)
+  return assetsStore.addAsset({
+    name: `GEN ${row.index} (frame ${String(candidate.id || '').slice(-8)})`,
+    url: toFileUrl(candidate.path),
+    path: candidate.path,
+    absolutePath: candidate.path,
+    type: 'image',
+    width: candidate.width || sourceVideo?.width,
+    height: candidate.height || sourceVideo?.height,
+    isImported: false,
+    settings: {
+      duration,
+      width: candidate.width || sourceVideo?.width,
+      height: candidate.height || sourceVideo?.height,
+      reeditPlaceholder: true,
+      reeditFrameCandidate: true,
+      reeditSceneIndex: row.index,
+      reeditFrameId: candidate.id,
+      reeditPrompt: candidate.prompt || row.note || '',
+      reeditSeed: candidate.seed,
+      genSpec: {
+        prompt: candidate.prompt || row.note || '',
+        durationS: duration,
+        seed: candidate.seed,
+      },
+    },
+  })
+}
+
 // Register a generated MP4 (from reeditGenerate.js) as a scene-like
 // video asset. Mirrors registerSceneAsset's shape but with a distinct
 // tag so cleanupStaleReeditAssets sweeps both on re-apply.
@@ -204,6 +250,31 @@ function registerGeneratedAsset(sourceVideo, row, generatedPath) {
       reeditGeneratedModel: gen.model || null,
       reeditGeneratedPrompt: gen.prompt || row.note || '',
       reeditGeneratedAt: gen.generatedAt || null,
+    },
+  })
+}
+
+// Register the Demucs-separated stem WAV as an audio asset so it can
+// sit on an audio track under the re-edit. We stamp `reeditStemKind`
+// in settings so `cleanupStaleReeditAssets` wipes old stem assets on
+// re-apply without touching the user's own audio uploads.
+function registerStemAsset(sourceVideo, stemPath, kind, durationSec) {
+  const assetsStore = useAssetsStore.getState()
+  const labels = { music: 'Music (original stem)', vo: 'VO (original stem)' }
+  return assetsStore.addAsset({
+    name: labels[kind] || `Stem (${kind})`,
+    url: toFileUrl(stemPath),
+    path: stemPath,
+    absolutePath: stemPath,
+    type: 'audio',
+    duration: durationSec,
+    hasAudio: true,
+    audioEnabled: true,
+    isImported: true,
+    settings: {
+      duration: durationSec,
+      reeditStemKind: kind,
+      reeditSourceVideoPath: sourceVideo?.path || null,
     },
   })
 }
@@ -246,7 +317,9 @@ function cleanupStaleReeditAssets() {
   const stale = (assetsStore.assets || []).filter((a) => (
     a?.settings?.reeditSceneId
     || a?.settings?.reeditPlaceholder
+    || a?.settings?.reeditFrameCandidate
     || a?.settings?.reeditGeneratedRowIndex != null
+    || a?.settings?.reeditStemKind
   ))
   for (const asset of stale) {
     try { assetsStore.removeAsset(asset.id) } catch (_) { /* ignore */ }
@@ -281,7 +354,7 @@ export function resetReeditProjectState() {
   cleanupStaleReeditAssets()
 }
 
-export async function applyEdlToTimeline({ edl, scenes, sourceVideo, onProgress } = {}) {
+export async function applyEdlToTimeline({ edl, scenes, sourceVideo, onProgress, useGeneratedVideos = true, capabilities = null } = {}) {
   if (!Array.isArray(edl) || edl.length === 0) {
     throw new Error('EDL is empty.')
   }
@@ -343,13 +416,19 @@ export async function applyEdlToTimeline({ edl, scenes, sourceVideo, onProgress 
     if (row.kind === 'placeholder') {
       const declaredGap = (Number(row.newTcOut) || 0) - (Number(row.newTcIn) || 0)
       const gapDur = Math.max(0.5, declaredGap || 1.5)
-      const generatedPath = row.genSpec?.generatedPath
+      // `useGeneratedVideos: false` lets the user preview / ship the
+      // re-edit with the frame stills instead of the AI-generated
+      // motion — handy when the i2v output feels off but the
+      // composition of the chosen first frame is still good. The
+      // video files stay on disk and the toggle is fully reversible.
+      const generatedPath = useGeneratedVideos ? row.genSpec?.generatedPath : null
+      const candidates = Array.isArray(row.genSpec?.frameCandidates) ? row.genSpec.frameCandidates : []
 
       if (generatedPath) {
-        // Generation already produced an MP4 — drop it in as a real
-        // video clip. The generated duration may differ slightly from
-        // the EDL row's declared gap; we honor the clip's actual
-        // length via trimEnd so playback doesn't try to read past EOF.
+        // i2v already produced an MP4 — drop it in as a real video
+        // clip. The generated duration may differ slightly from the
+        // EDL row's declared gap; honor the clip's actual length via
+        // trimEnd so playback doesn't try to read past EOF.
         const actualDur = Math.max(0.1, Number(row.genSpec?.durationSec) || gapDur)
         const asset = registerGeneratedAsset(sourceVideo, row, generatedPath)
         timelineStore.addClip(videoTrack.id, asset, cursor, null, {
@@ -360,6 +439,24 @@ export async function applyEdlToTimeline({ edl, scenes, sourceVideo, onProgress 
           selectAfterAdd: false,
         })
         cursor += actualDur
+      } else if (candidates.length > 0) {
+        // Frames exist but no video yet — use the selected (or latest)
+        // candidate as a still on the timeline so the user can
+        // preview the composition before committing to an i2v pass.
+        // Dropping a still-image placeholder is a much better
+        // preview than the generic "GENERATION NEEDED" card because
+        // it already shows the specific shot they liked.
+        const selected = candidates.find((c) => c?.id === row.genSpec?.selectedFrameId)
+          || candidates[candidates.length - 1]
+        const asset = registerFrameAsset(sourceVideo, row, selected)
+        timelineStore.addClip(videoTrack.id, asset, cursor, null, {
+          duration: gapDur,
+          trimStart: 0,
+          trimEnd: gapDur,
+          saveHistory: false,
+          selectAfterAdd: false,
+        })
+        cursor += gapDur
       } else {
         const asset = registerPlaceholderAsset(sourceVideo, row, gapDur)
         timelineStore.addClip(videoTrack.id, asset, cursor, null, {
@@ -398,6 +495,57 @@ export async function applyEdlToTimeline({ edl, scenes, sourceVideo, onProgress 
     placed++
   }
 
+  // Layer Demucs-separated stems on top of the assembled re-edit when
+  // the proposer was granted the matching capability. The stems are
+  // derived from the SOURCE video — so their natural length matches
+  // sourceVideo.duration, not the re-edit's total `cursor`. If the
+  // re-edit is shorter we truncate the stem; if it's longer (because
+  // placeholders were added), the stem plays its full length once and
+  // the remainder stays silent. For ads this is almost always "re-edit
+  // equals or is shorter than source", so the simple truncate is right.
+  const stems = sourceVideo?.stems || null
+  const stemPlacements = []
+  if (stems && capabilities?.useOriginalMusic && stems.musicPath) {
+    stemPlacements.push({ kind: 'music', path: stems.musicPath })
+  }
+  if (stems && capabilities?.useOriginalVoiceover && stems.vocalsPath) {
+    stemPlacements.push({ kind: 'vo', path: stems.vocalsPath })
+  }
+  const stemsPlaced = []
+  if (stemPlacements.length > 0) {
+    const totalReeditDur = cursor > 0 ? cursor : (Number(sourceVideo.duration) || 0)
+    const stemNaturalDur = Math.max(0.1, Number(sourceVideo.duration) || totalReeditDur)
+    // Use min of the two so we never ask the renderer to play past the
+    // stem's EOF nor past the edit's end.
+    const clipDur = Math.max(0.1, Math.min(totalReeditDur, stemNaturalDur))
+
+    // Grab existing audio tracks once so we can pick off-the-shelf ones
+    // before creating new ones. Fresh projects ship with a single
+    // "Audio 1" that's empty — we're happy to reuse it for Music.
+    const takeAudioTrack = () => {
+      const state = useTimelineStore.getState()
+      const audioTracks = (state.tracks || []).filter((t) => t.type === 'audio')
+      // Prefer a completely empty track to avoid clobbering user audio;
+      // fall back to creating a new one.
+      const empty = audioTracks.find((t) => !(state.clips || []).some((c) => c.trackId === t.id))
+      if (empty) return empty
+      return state.addTrack('audio', { channels: 'stereo' })
+    }
+
+    for (const placement of stemPlacements) {
+      const track = takeAudioTrack()
+      const asset = registerStemAsset(sourceVideo, placement.path, placement.kind, stemNaturalDur)
+      useTimelineStore.getState().addClip(track.id, asset, 0, null, {
+        duration: clipDur,
+        trimStart: 0,
+        trimEnd: clipDur,
+        saveHistory: false,
+        selectAfterAdd: false,
+      })
+      stemsPlaced.push(placement.kind)
+    }
+  }
+
   onProgress?.({ index: total, total, done: true })
-  return { placed, placeholdersPlaced, skippedMissingScene }
+  return { placed, placeholdersPlaced, skippedMissingScene, stemsPlaced }
 }

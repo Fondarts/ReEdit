@@ -28,13 +28,30 @@ export const BACKEND_LABELS = {
 }
 
 const STORAGE_KEY = 'reedit.llm.v1'
+// Gemini models are split by task: analysis is a per-shot pass that
+// runs once per scene and scales with clip count, so Flash (cheap, fast
+// enough for video-native input) is the better default. Proposal runs
+// once per re-edit and its output quality defines the final EDL, so
+// Pro (stronger reasoning) is the better default there. The legacy
+// `geminiModel` field stays as a fallback for callers that don't pick
+// a task-specific model (e.g. `pingGemini()`, experimental scripts).
 const DEFAULT_SETTINGS = {
   backend: LLM_BACKENDS.LM_STUDIO,
   anthropicModel: 'claude-sonnet-4-6',
   anthropicApiKey: '',
   geminiModel: 'gemini-2.5-flash',
+  geminiAnalysisModel: 'gemini-2.5-flash',
+  geminiProposalModel: 'gemini-2.5-pro',
   geminiEmbeddingModel: 'gemini-embedding-2',
   geminiApiKey: '',
+}
+
+// Task identifiers the dispatcher uses to pick the right Gemini model.
+// Other backends ignore this — they don't expose a model-per-task UX
+// at the moment.
+export const LLM_TASKS = {
+  ANALYSIS: 'analysis',
+  PROPOSAL: 'proposal',
 }
 
 export function loadLlmSettings() {
@@ -86,9 +103,26 @@ async function pickLmStudioChatModel(preferVision = false) {
   return first.id || first.model
 }
 
+// Resolve which Gemini model to use for a given task. Callers pass
+// `task` when they care; if they don't, we fall back to the legacy
+// `geminiModel` field so old code paths keep working.
+export function resolveGeminiModelForTask(settings, task) {
+  if (task === LLM_TASKS.ANALYSIS) {
+    return settings.geminiAnalysisModel || settings.geminiModel || 'gemini-2.5-flash'
+  }
+  if (task === LLM_TASKS.PROPOSAL) {
+    return settings.geminiProposalModel || settings.geminiModel || 'gemini-2.5-pro'
+  }
+  return settings.geminiModel || 'gemini-2.5-flash'
+}
+
 /**
  * Unified chat completion. Accepts OpenAI-shape messages and returns
  * OpenAI-shape response regardless of backend.
+ *
+ * `task` (LLM_TASKS.ANALYSIS | LLM_TASKS.PROPOSAL) is used by the
+ * Gemini backend to pick between the user's analysis / proposal
+ * model preferences. Ignored by LM Studio and Claude.
  */
 export async function chatCompletion({
   messages,
@@ -96,6 +130,7 @@ export async function chatCompletion({
   maxTokens = 4000,
   preferVision = false,
   backendOverride,
+  task,
 } = {}) {
   const settings = loadLlmSettings()
   const backend = backendOverride || settings.backend
@@ -119,7 +154,7 @@ export async function chatCompletion({
     }
     return await geminiChatCompletion({
       apiKey: settings.geminiApiKey,
-      model: settings.geminiModel,
+      model: resolveGeminiModelForTask(settings, task),
       messages,
       temperature,
       maxTokens,

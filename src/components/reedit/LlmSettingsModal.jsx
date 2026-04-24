@@ -18,10 +18,18 @@ import {
  * to Electron safeStorage is a todo before this ships externally.
  */
 function LlmSettingsModal({ isOpen, settings, onClose, onSave }) {
+  // Defaults for the two Gemini task-specific models. Analysis runs per
+  // shot → Flash (cheap + fast); Proposal runs once per re-edit with
+  // high quality stakes → Pro. If the user never saved anything, fall
+  // back to those picks the first time the modal opens.
+  const defaultAnalysis = settings?.geminiAnalysisModel || settings?.geminiModel || 'gemini-2.5-flash'
+  const defaultProposal = settings?.geminiProposalModel || 'gemini-2.5-pro'
+
   const [backend, setBackend] = useState(settings?.backend || LLM_BACKENDS.LM_STUDIO)
   const [anthropicModel, setAnthropicModel] = useState(settings?.anthropicModel || ANTHROPIC_MODELS[0].id)
   const [anthropicApiKey, setAnthropicApiKey] = useState(settings?.anthropicApiKey || '')
-  const [geminiModel, setGeminiModel] = useState(settings?.geminiModel || GEMINI_MODELS[0].id)
+  const [geminiAnalysisModel, setGeminiAnalysisModel] = useState(defaultAnalysis)
+  const [geminiProposalModel, setGeminiProposalModel] = useState(defaultProposal)
   const [geminiEmbeddingModel, setGeminiEmbeddingModel] = useState(
     settings?.geminiEmbeddingModel || GEMINI_EMBEDDING_MODELS[GEMINI_EMBEDDING_MODELS.length - 1].id,
   )
@@ -34,7 +42,8 @@ function LlmSettingsModal({ isOpen, settings, onClose, onSave }) {
     setBackend(settings?.backend || LLM_BACKENDS.LM_STUDIO)
     setAnthropicModel(settings?.anthropicModel || ANTHROPIC_MODELS[0].id)
     setAnthropicApiKey(settings?.anthropicApiKey || '')
-    setGeminiModel(settings?.geminiModel || GEMINI_MODELS[0].id)
+    setGeminiAnalysisModel(settings?.geminiAnalysisModel || settings?.geminiModel || 'gemini-2.5-flash')
+    setGeminiProposalModel(settings?.geminiProposalModel || 'gemini-2.5-pro')
     setGeminiEmbeddingModel(settings?.geminiEmbeddingModel || GEMINI_EMBEDDING_MODELS[GEMINI_EMBEDDING_MODELS.length - 1].id)
     setGeminiApiKey(settings?.geminiApiKey || '')
     setShowKey(false)
@@ -48,7 +57,12 @@ function LlmSettingsModal({ isOpen, settings, onClose, onSave }) {
       backend,
       anthropicModel,
       anthropicApiKey: anthropicApiKey.trim(),
-      geminiModel,
+      // Keep the legacy `geminiModel` in sync with the analysis model
+      // so code paths that haven't migrated to task-specific resolution
+      // (e.g. pingGemini, experimental scripts) still get a sane pick.
+      geminiModel: geminiAnalysisModel,
+      geminiAnalysisModel,
+      geminiProposalModel,
       geminiEmbeddingModel,
       geminiApiKey: geminiApiKey.trim(),
     })
@@ -172,16 +186,39 @@ function LlmSettingsModal({ isOpen, settings, onClose, onSave }) {
 
           {backend === LLM_BACKENDS.GEMINI && (
             <>
+              {/* Two task-specific pickers: analysis runs per shot
+                  (prefer Flash for cost), proposal runs once per
+                  re-edit (prefer Pro for reasoning). */}
               <div>
-                <label className="block text-[11px] uppercase tracking-wider text-sf-text-muted mb-2">Gemini model (chat / video analysis)</label>
+                <label className="block text-[11px] uppercase tracking-wider text-sf-text-muted mb-2">Analysis model <span className="normal-case text-sf-text-muted/70">· per-shot video analysis</span></label>
                 <div className="space-y-1.5">
                   {GEMINI_MODELS.map((m) => (
                     <button
                       key={m.id}
                       type="button"
-                      onClick={() => setGeminiModel(m.id)}
+                      onClick={() => setGeminiAnalysisModel(m.id)}
                       className={`w-full text-left p-2.5 rounded-lg border transition-colors
-                        ${geminiModel === m.id
+                        ${geminiAnalysisModel === m.id
+                          ? 'border-sf-accent bg-sf-accent/10 text-sf-text-primary'
+                          : 'border-sf-dark-700 bg-sf-dark-900 text-sf-text-muted hover:border-sf-dark-500 hover:text-sf-text-primary'}`}
+                    >
+                      <div className="text-sm font-medium">{m.label}</div>
+                      <div className="text-[10px] leading-snug opacity-80">{m.blurb}</div>
+                    </button>
+                  ))}
+                </div>
+              </div>
+
+              <div>
+                <label className="block text-[11px] uppercase tracking-wider text-sf-text-muted mb-2">Proposal model <span className="normal-case text-sf-text-muted/70">· re-edit reasoning (EDL)</span></label>
+                <div className="space-y-1.5">
+                  {GEMINI_MODELS.map((m) => (
+                    <button
+                      key={m.id}
+                      type="button"
+                      onClick={() => setGeminiProposalModel(m.id)}
+                      className={`w-full text-left p-2.5 rounded-lg border transition-colors
+                        ${geminiProposalModel === m.id
                           ? 'border-sf-accent bg-sf-accent/10 text-sf-text-primary'
                           : 'border-sf-dark-700 bg-sf-dark-900 text-sf-text-muted hover:border-sf-dark-500 hover:text-sf-text-primary'}`}
                     >

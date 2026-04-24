@@ -2601,7 +2601,7 @@ ipcMain.handle('analysis:optimizeFootage', async (event, options) => {
     vacePath: vaceRawPath,
     maskPath: localMaskPath,
     outputPath: finalPath,
-    feather: 15,
+    feather: 45,
     // Force the composite length to the original clip's frame count.
     // Wan VACE sometimes returns +1 frame on shots where our wanFrames
     // snap differs from numFrames; without this cap that trailing
@@ -2619,6 +2619,147 @@ ipcMain.handle('analysis:optimizeFootage', async (event, options) => {
 
   emit('done', { promptId, outputPath: finalPath, version: versionTag })
   return { success: true, promptId, outputPath: finalPath, inProjectDir: true, composited: true, vaceRawPath, version: versionTag }
+})
+
+// ============================================
+// Audio stem separation (VO + Music via Demucs)
+// ============================================
+//
+// Wraps `separate_stems.py` (sibling of `make_mask.py` at the repo
+// root). The script does the heavy lifting: extract audio, run demucs
+// with `--two-stems vocals`, rename + move the outputs into the
+// project's `.reedit/stems/` folder. We emit progress events so the
+// Import view can show the current stage; the renderer persists the
+// output paths into `sourceVideo.stems`.
+ipcMain.handle('analysis:separateStems', async (event, options) => {
+  const { sourceVideoPath, projectDir, model = 'htdemucs', device = 'auto' } = options || {}
+  if (!sourceVideoPath) return { success: false, error: 'sourceVideoPath required.' }
+  if (!projectDir) return { success: false, error: 'projectDir required.' }
+
+  const emit = (stage, extra = {}) => {
+    try { event.sender.send('analysis:separateStems:progress', { stage, ...extra }) } catch (_) { /* renderer closed */ }
+  }
+  emit('starting')
+
+  try {
+    const st = await fs.stat(sourceVideoPath)
+    if (!st || st.size < 1024) throw new Error('source video missing or empty')
+  } catch (err) {
+    return { success: false, error: `Source video not readable at ${sourceVideoPath}: ${err.message}` }
+  }
+
+  const projectDirFwd = projectDir.replace(/\\/g, '/')
+  const stemsDir = path.join(projectDirFwd, '.reedit', 'stems')
+  try { await fs.mkdir(stemsDir, { recursive: true }) } catch (err) {
+    return { success: false, error: `Could not create stems dir: ${err.message}` }
+  }
+
+  const sourceBase = sanitizeForFilename(path.basename(sourceVideoPath, path.extname(sourceVideoPath))) || 'source'
+  const vocalsPath = path.join(stemsDir, `${sourceBase}_vocals.wav`)
+  const musicPath = path.join(stemsDir, `${sourceBase}_music.wav`)
+
+  // Cache validation: if both WAVs exist AND are newer than the source
+  // video's mtime, reuse them. The mtime check means re-importing a
+  // fresh source (different content, same path) triggers a regen.
+  try {
+    const [vStat, mStat, srcStat] = await Promise.all([
+      fs.stat(vocalsPath).catch(() => null),
+      fs.stat(musicPath).catch(() => null),
+      fs.stat(sourceVideoPath).catch(() => null),
+    ])
+    if (vStat && mStat && srcStat
+        && vStat.size > 1024 && mStat.size > 1024
+        && vStat.mtimeMs >= srcStat.mtimeMs && mStat.mtimeMs >= srcStat.mtimeMs) {
+      emit('done', { vocalsPath, musicPath, model, cached: true })
+      return { success: true, vocalsPath, musicPath, model, cached: true, inProjectDir: true }
+    }
+  } catch (_) { /* proceed with regen */ }
+
+  const scriptPath = path.resolve(__dirname, '..', '..', 'separate_stems.py')
+  try { await fs.access(scriptPath) } catch {
+    return { success: false, error: `separate_stems.py not found at ${scriptPath}.` }
+  }
+
+  // Hand ffmpeg + ffprobe paths to the script so it doesn't rely on
+  // PATH lookup for those binaries — we already bundle them via
+  // ffmpeg-static / ffprobe-static.
+  const args = [
+    '--src', sourceVideoPath,
+    '--out-dir', stemsDir,
+    '--out-prefix', sourceBase,
+    '--model', model,
+    '--device', device,
+  ]
+  if (ffmpegPath) args.push('--ffmpeg', ffmpegPath)
+  if (ffprobeStaticPath) args.push('--ffprobe', ffprobeStaticPath)
+
+  // The script prints `[stem] stage: message` lines on stderr. We
+  // translate each into a progress event so the UI can show the stage
+  // without parsing raw demucs output on the renderer side.
+  let lastManifest = null
+  const runRes = await runPython(scriptPath, args, {
+    onStderr: (chunk) => {
+      for (const line of String(chunk).split(/\r?\n/)) {
+        const m = /^\[stem\]\s+([a-z_]+)\s*:\s*(.*)$/i.exec(line)
+        if (!m) continue
+        const [, stage, message] = m
+        emit(stage, { message })
+      }
+    },
+  })
+
+  if (!runRes.success) {
+    const tail = (runRes.stderr || '').slice(-400)
+    // Common case: user hasn't installed demucs yet. The stderr will
+    // typically contain "No module named 'demucs'" — surface that as
+    // an actionable hint rather than dumping the whole traceback.
+    if (/no module named ['"]demucs['"]/i.test(tail)) {
+      return {
+        success: false,
+        error: "Demucs is not installed. Run `pip install demucs` in the Python environment you're using for this project, then try again.",
+      }
+    }
+    if (/no audio stream/i.test(tail)) {
+      return { success: false, error: 'Source video has no audio stream — nothing to separate.' }
+    }
+    return { success: false, error: `separate_stems.py failed (code ${runRes.code}). Tail: ${tail}` }
+  }
+
+  // The script prints a single JSON manifest line on stdout as its
+  // final output. Parse the last JSON object we can find in stdout.
+  const stdoutLines = String(runRes.stdout || '').split(/\r?\n/).filter(Boolean)
+  for (let i = stdoutLines.length - 1; i >= 0; i--) {
+    const trimmed = stdoutLines[i].trim()
+    if (!trimmed.startsWith('{')) continue
+    try {
+      lastManifest = JSON.parse(trimmed)
+      break
+    } catch (_) { /* keep looking */ }
+  }
+  if (!lastManifest?.vocalsPath || !lastManifest?.musicPath) {
+    return { success: false, error: 'separate_stems.py succeeded but did not emit a valid manifest line.' }
+  }
+
+  // Belt-and-suspenders: verify the files the script reported actually
+  // exist on disk. This catches weird race conditions where the script
+  // renamed a file but the move hadn't landed before the process exited.
+  try {
+    await fs.access(lastManifest.vocalsPath)
+    await fs.access(lastManifest.musicPath)
+  } catch (err) {
+    return { success: false, error: `Manifest points to missing files: ${err.message}` }
+  }
+
+  emit('done', { vocalsPath: lastManifest.vocalsPath, musicPath: lastManifest.musicPath, model: lastManifest.model, device: lastManifest.device })
+  return {
+    success: true,
+    vocalsPath: lastManifest.vocalsPath,
+    musicPath: lastManifest.musicPath,
+    model: lastManifest.model,
+    device: lastManifest.device,
+    inProjectDir: true,
+    cached: false,
+  }
 })
 
 // Extracts one JPEG frame at `tcSec` and writes it to `outputPath`. The

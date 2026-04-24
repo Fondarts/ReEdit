@@ -19,7 +19,7 @@
  */
 
 import lmstudio from './lmstudio'
-import { chatCompletion, loadLlmSettings, LLM_BACKENDS } from './reeditLlmClient'
+import { chatCompletion, loadLlmSettings, LLM_BACKENDS, LLM_TASKS, resolveGeminiModelForTask } from './reeditLlmClient'
 
 const SYSTEM_PROMPT = `You annotate single frames from advertisements for a shot log. You return ONLY a JSON object, no commentary, no markdown fences.`
 
@@ -131,7 +131,7 @@ export async function pickVisionModelId(explicit) {
     if (!settings.geminiApiKey) {
       throw new Error('Gemini API is selected but no API key is set. Open LLM Settings to paste one.')
     }
-    return settings.geminiModel || 'gemini-2.5-flash'
+    return resolveGeminiModelForTask(settings, LLM_TASKS.ANALYSIS)
   }
 
   const models = await lmstudio.listModels()
@@ -230,7 +230,7 @@ export async function captionScenes(scenes, {
         'Gemini video analysis needs sourceVideoPath + projectDir. Re-run captioning from the Analysis view, which passes them in.'
       )
     }
-    const model = modelId || settings.geminiModel || 'gemini-2.5-flash'
+    const model = modelId || resolveGeminiModelForTask(settings, LLM_TASKS.ANALYSIS)
     const { scenes: analyzedScenes } = await analyzeScenesVideo(scenes, {
       sourceVideoPath,
       projectDir,
