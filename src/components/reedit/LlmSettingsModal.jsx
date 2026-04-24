@@ -34,6 +34,7 @@ function LlmSettingsModal({ isOpen, settings, onClose, onSave }) {
     settings?.geminiEmbeddingModel || GEMINI_EMBEDDING_MODELS[GEMINI_EMBEDDING_MODELS.length - 1].id,
   )
   const [geminiApiKey, setGeminiApiKey] = useState(settings?.geminiApiKey || '')
+  const [geminiSendSourceVideo, setGeminiSendSourceVideo] = useState(Boolean(settings?.geminiSendSourceVideo))
   const [showKey, setShowKey] = useState(false)
   const firstInputRef = useRef(null)
 
@@ -46,6 +47,7 @@ function LlmSettingsModal({ isOpen, settings, onClose, onSave }) {
     setGeminiProposalModel(settings?.geminiProposalModel || 'gemini-2.5-pro')
     setGeminiEmbeddingModel(settings?.geminiEmbeddingModel || GEMINI_EMBEDDING_MODELS[GEMINI_EMBEDDING_MODELS.length - 1].id)
     setGeminiApiKey(settings?.geminiApiKey || '')
+    setGeminiSendSourceVideo(Boolean(settings?.geminiSendSourceVideo))
     setShowKey(false)
     setTimeout(() => { firstInputRef.current?.focus() }, 0)
   }, [isOpen, settings])
@@ -65,6 +67,7 @@ function LlmSettingsModal({ isOpen, settings, onClose, onSave }) {
       geminiProposalModel,
       geminiEmbeddingModel,
       geminiApiKey: geminiApiKey.trim(),
+      geminiSendSourceVideo,
     })
   }
 
@@ -284,6 +287,28 @@ function LlmSettingsModal({ isOpen, settings, onClose, onSave }) {
                   Stored in localStorage for this fork. Sent only to Google's Gemini API when a request runs. The key covers both chat and embeddings — same Google AI Studio project.
                 </p>
               </div>
+
+              <label className={`flex items-start gap-2.5 p-2.5 rounded-lg border cursor-pointer transition-colors
+                ${geminiSendSourceVideo
+                  ? 'border-sf-accent bg-sf-accent/10'
+                  : 'border-sf-dark-700 bg-sf-dark-900 hover:border-sf-dark-500'}`}
+              >
+                <input
+                  type="checkbox"
+                  checked={geminiSendSourceVideo}
+                  onChange={(e) => setGeminiSendSourceVideo(e.target.checked)}
+                  className="mt-0.5 accent-sf-accent"
+                />
+                <div className="flex-1 min-w-0">
+                  <div className={`text-sm font-medium ${geminiSendSourceVideo ? 'text-sf-text-primary' : 'text-sf-text-secondary'}`}>
+                    Send source video to proposal
+                    <span className="text-sf-text-muted/70 normal-case text-[10px] ml-2">Gemini only</span>
+                  </div>
+                  <div className="text-[10px] leading-snug text-sf-text-muted mt-0.5">
+                    When ON, the proposer attaches the source video alongside the text shot log. Gemini can then reason about real continuity, match-cuts, and visual flow instead of only the prose description. Adds 5-20 MB per request; Claude / LM Studio ignore the flag.
+                  </div>
+                </div>
+              </label>
             </>
           )}
         </div>

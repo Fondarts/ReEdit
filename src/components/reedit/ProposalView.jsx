@@ -227,6 +227,7 @@ function ProposalView({ onNavigate }) {
         totalDurationSec: sourceVideo.duration || null,
         targetDurationSec,
         capabilities,
+        sourceVideoPath: sourceVideo?.path || null,
       })
       setDraft(proposal)
     } catch (err) {

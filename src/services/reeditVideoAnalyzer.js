@@ -100,13 +100,50 @@ Rules:
 // Stream-copied sub-clips land next to the project under `.reedit/clips`
 // — same convention the EDL → timeline path uses, so ffmpeg's path
 // length / permission edge cases get exercised by the same code.
-function sceneClipPath(projectDir, scene) {
+export function sceneOriginalClipPath(projectDir, scene) {
   const dir = (projectDir || '').replace(/\\/g, '/')
   return `${dir}/.reedit/clips/${scene.id}.mp4`
 }
 
+// The "active" clip for a scene is either (a) the optimized output the
+// user selected via the version dropdown, or (b) the original sub-clip
+// extracted from the source video. Every consumer that loads a scene
+// clip (hover preview, re-caption pass, Apply-to-timeline) must resolve
+// through here so switching the active version in one place swaps it
+// everywhere else in the same render.
+export function resolveActiveClipPath(scene, projectDir) {
+  const version = scene?.activeOptimizationVersion
+  if (version && Array.isArray(scene?.optimizations)) {
+    const entry = scene.optimizations.find((o) => o?.version === version)
+    if (entry?.path) return entry.path
+  }
+  return sceneOriginalClipPath(projectDir, scene)
+}
+
+// Legacy alias kept so internal callers don't need to change mid-refactor.
+function sceneClipPath(projectDir, scene) {
+  return sceneOriginalClipPath(projectDir, scene)
+}
+
 async function ensureSceneClip({ sourceVideoPath, projectDir, scene }) {
-  const outputPath = sceneClipPath(projectDir, scene)
+  // If an optimized version is active, skip the ffmpeg re-encode and
+  // just verify the finished file exists. Optimized clips ARE already
+  // frame-accurate MP4s at the native resolution, so we can use them
+  // as-is for analysis, hover preview, and timeline registration.
+  const activePath = resolveActiveClipPath(scene, projectDir)
+  const originalPath = sceneOriginalClipPath(projectDir, scene)
+  if (activePath !== originalPath) {
+    try {
+      const existsRes = await window.electronAPI?.exists?.(activePath)
+      if (existsRes) return activePath
+    } catch (_) { /* fall through to original */ }
+    // Optimized file vanished (deleted externally, project moved, etc).
+    // Fall through to the original-extract path below — the UI can
+    // still show data, and the user can re-run optimize if they want
+    // the clean version back.
+  }
+
+  const outputPath = originalPath
   const res = await window.electronAPI?.extractSceneClip?.({
     videoPath: sourceVideoPath,
     tcIn: Number(scene.tcIn) || 0,

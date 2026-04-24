@@ -30,6 +30,7 @@
 import useAssetsStore from '../stores/assetsStore'
 import useTimelineStore from '../stores/timelineStore'
 import useProjectStore from '../stores/projectStore'
+import { resolveActiveClipPath, sceneOriginalClipPath } from './reeditVideoAnalyzer'
 
 function toFileUrl(absolutePath) {
   let normalized = absolutePath.replace(/\\/g, '/')
@@ -145,24 +146,56 @@ export function buildPlaceholderSvgDataUrl({ note, index, width, height }) {
 // works out of the box and playback needs no trim math.
 async function registerSceneAsset(sourceVideo, scene, projectDir) {
   const assetsStore = useAssetsStore.getState()
-  const clipOutputPath = `${projectDir.replace(/\\/g, '/')}/.reedit/clips/${scene.id}.mp4`
-  const res = await window.electronAPI?.extractSceneClip?.({
-    videoPath: sourceVideo.path,
-    tcIn: Number(scene.tcIn) || 0,
-    tcOut: Number(scene.tcOut) || (Number(scene.tcIn) + 0.5),
-    outputPath: clipOutputPath,
-  })
-  if (!res?.success) {
-    throw new Error(`Could not extract ${scene.id}: ${res?.error || 'unknown error'}`)
+  const originalPath = sceneOriginalClipPath(projectDir, scene)
+  const activePath = resolveActiveClipPath(scene, projectDir)
+  const isActiveOriginal = activePath === originalPath
+
+  // For the active-is-original case we still re-extract so the sub-clip
+  // is up to date (frame-accurate + duration-validated against the
+  // source). For an optimized active version, the finished MP4 already
+  // exists on disk — we just verify it and point the asset at it.
+  let clipPath = activePath
+  if (isActiveOriginal) {
+    const res = await window.electronAPI?.extractSceneClip?.({
+      videoPath: sourceVideo.path,
+      tcIn: Number(scene.tcIn) || 0,
+      tcOut: Number(scene.tcOut) || (Number(scene.tcIn) + 0.5),
+      outputPath: originalPath,
+    })
+    if (!res?.success) {
+      throw new Error(`Could not extract ${scene.id}: ${res?.error || 'unknown error'}`)
+    }
+    clipPath = res.path || originalPath
+  } else {
+    // Optimized version — confirm the file is still there; fall back to
+    // extracting the original if it was deleted externally.
+    try {
+      const ex = await window.electronAPI?.exists?.(activePath)
+      if (!ex) {
+        const res = await window.electronAPI?.extractSceneClip?.({
+          videoPath: sourceVideo.path,
+          tcIn: Number(scene.tcIn) || 0,
+          tcOut: Number(scene.tcOut) || (Number(scene.tcIn) + 0.5),
+          outputPath: originalPath,
+        })
+        if (!res?.success) {
+          throw new Error(`Could not extract ${scene.id}: ${res?.error || 'unknown error'}`)
+        }
+        clipPath = res.path || originalPath
+      }
+    } catch (err) {
+      throw new Error(`Could not verify optimized clip for ${scene.id}: ${err.message}`)
+    }
   }
 
   const duration = Math.max(0.1, Number(scene.tcOut) - Number(scene.tcIn))
   const hasAudio = sourceVideo.hasAudio !== false
+  const activeVersion = scene.activeOptimizationVersion || null
   return assetsStore.addAsset({
-    name: `${scene.id} · ${(sourceVideo.name || 'source').replace(/\.[^.]+$/, '')}`,
-    url: toFileUrl(clipOutputPath),
-    path: clipOutputPath,
-    absolutePath: clipOutputPath,
+    name: `${scene.id}${activeVersion ? ` · ${activeVersion}` : ''} · ${(sourceVideo.name || 'source').replace(/\.[^.]+$/, '')}`,
+    url: toFileUrl(clipPath),
+    path: clipPath,
+    absolutePath: clipPath,
     type: 'video',
     duration,
     fps: sourceVideo.fps,
@@ -179,6 +212,7 @@ async function registerSceneAsset(sourceVideo, scene, projectDir) {
       reeditSceneId: scene.id,
       reeditSceneTcIn: scene.tcIn,
       reeditSceneTcOut: scene.tcOut,
+      reeditActiveVersion: activeVersion,
     },
   })
 }

@@ -2,6 +2,7 @@ import { useEffect, useRef, useState } from 'react'
 import { FileText, Loader2, AlertCircle, PlayCircle, RotateCcw, Sparkles, StopCircle, Eye, EyeOff, Cpu, KeyRound, Wand2, CheckCircle2 } from 'lucide-react'
 import useProjectStore from '../../stores/projectStore'
 import { captionScenes, pickVisionModelId } from '../../services/reeditCaptioner'
+import { resolveActiveClipPath } from '../../services/reeditVideoAnalyzer'
 import { useLlmSettings } from '../../hooks/useLlmSettings'
 import { LLM_BACKENDS, BACKEND_LABELS, ANTHROPIC_MODELS, GEMINI_MODELS } from '../../services/reeditLlmClient'
 import LlmSettingsModal from './LlmSettingsModal'
@@ -182,7 +183,7 @@ const OPTIMIZE_STAGE_LABEL = {
   error: 'Failed',
 }
 
-function OptimizeFootageCell({ scene, state, onRun, disabled, previewState, onPreview }) {
+function OptimizeFootageCell({ scene, state, onRun, disabled, previewState, onPreview, onSetActiveVersion }) {
   if (!shotHasGraphics(scene)) {
     return <span className="text-sf-text-muted text-[10px] italic">—</span>
   }
@@ -192,51 +193,56 @@ function OptimizeFootageCell({ scene, state, onRun, disabled, previewState, onPr
   const label = OPTIMIZE_STAGE_LABEL[stage] || (stage ? stage : 'Optimize')
   const previewRunning = previewState?.stage === 'running'
 
-  // Preview button is always present — fast feedback loop for
-  // mask iteration. Disabled while either action is in flight.
+  // Persisted optimization stack (survives project reload). The local
+  // `state` above only reflects in-flight UI; once the run persists it
+  // ends up here so the dropdown keeps working after refresh.
+  const stack = Array.isArray(scene.optimizations) ? scene.optimizations : []
+  const hasHistory = stack.length > 0
+  const active = scene.activeOptimizationVersion || null
+  const activeEntry = active ? stack.find((o) => o.version === active) : null
+
+  // Version dropdown — only shown when there's at least one completed
+  // optimization. Includes the "Original" option so the user can jump
+  // back to the source sub-clip at any time.
+  const versionDropdown = hasHistory ? (
+    <select
+      value={active || ''}
+      onChange={(e) => onSetActiveVersion?.(scene.id, e.target.value || null)}
+      className="text-[10px] bg-sf-dark-900 border border-sf-dark-700 rounded px-1 py-0.5 text-sf-text-secondary hover:border-sf-dark-500 focus:outline-none focus:border-sf-accent"
+      title="Switch which clip the rest of the pipeline uses for this shot"
+    >
+      <option value="">Original</option>
+      {stack.map((o) => (
+        <option key={o.version} value={o.version}>{o.version}</option>
+      ))}
+    </select>
+  ) : null
+
+  // Regenerate-mask button: always available. Runs make_mask.py
+  // alone and reveals the finished `<id>_mask.mp4` in the OS file
+  // manager. No cache — each click overwrites the previous mask, so
+  // the user can iterate padding / threshold / persistence tweaks
+  // without deleting files by hand. Disabled only while another
+  // action on this row is in flight.
   const previewButton = (
     <button
       type="button"
       onClick={onPreview}
       disabled={disabled || previewRunning || running}
-      className={`text-[10px] text-left
+      className={`inline-flex items-center gap-1 px-2 py-0.5 rounded text-[10px] border transition-colors
         ${(disabled || previewRunning || running)
-          ? 'text-sf-text-muted/60 cursor-not-allowed'
-          : 'text-sf-accent hover:underline'}`}
-      title="Run make_mask.py only — no VACE, no composite. Opens the generated mask folder."
+          ? 'border-sf-dark-700 bg-sf-dark-900 text-sf-text-muted/60 cursor-not-allowed'
+          : 'border-sf-dark-700 bg-sf-dark-900 hover:bg-sf-dark-800 text-sf-text-secondary hover:text-sf-text-primary hover:border-sf-accent/60'}`}
+      title="Regenerate the mask (make_mask.py). Skips VACE + composite. Opens the mask folder when done."
     >
-      {previewRunning ? 'Previewing mask…' : 'Preview mask'}
+      {previewRunning ? (
+        <Loader2 className="w-3 h-3 animate-spin" />
+      ) : (
+        <RotateCcw className="w-3 h-3" />
+      )}
+      {previewRunning ? 'Regenerating…' : 'Regenerate mask'}
     </button>
   )
-
-  if (stage === 'done') {
-    return (
-      <div className="flex flex-col gap-1">
-        <div className="inline-flex items-center gap-1.5 text-[11px] text-emerald-300">
-          <CheckCircle2 className="w-3.5 h-3.5" />
-          <span>Done{state?.version ? ` · ${state.version}` : ''}</span>
-        </div>
-        {state?.outputPath && (
-          <button
-            type="button"
-            onClick={() => window.electronAPI?.showItemInFolder?.(state.outputPath)}
-            className="text-[10px] text-sf-accent hover:underline text-left truncate"
-            title={state.outputPath}
-          >
-            Reveal output
-          </button>
-        )}
-        <button
-          type="button"
-          onClick={onRun}
-          className="text-[10px] text-sf-text-muted hover:text-sf-text-primary text-left"
-        >
-          Re-run
-        </button>
-        {previewButton}
-      </div>
-    )
-  }
 
   if (stage === 'error') {
     return (
@@ -268,6 +274,43 @@ function OptimizeFootageCell({ scene, state, onRun, disabled, previewState, onPr
           <Loader2 className="w-3.5 h-3.5 animate-spin" />
           <span>{label}{elapsed ? ` · ${elapsed}s` : ''}</span>
         </div>
+        {previewButton}
+      </div>
+    )
+  }
+
+  // Persisted done state: scene has optimizations in the stack even if
+  // the transient `state` is stale (project reloaded since the last run).
+  if (hasHistory) {
+    return (
+      <div className="flex flex-col gap-1">
+        <div className="inline-flex items-center gap-1.5 text-[11px] text-emerald-300">
+          <CheckCircle2 className="w-3.5 h-3.5" />
+          <span>
+            {active ? `Active: ${active}` : 'Active: Original'}
+          </span>
+        </div>
+        <div className="inline-flex items-center gap-1.5">
+          <span className="text-[10px] text-sf-text-muted">Version:</span>
+          {versionDropdown}
+        </div>
+        {activeEntry?.path && (
+          <button
+            type="button"
+            onClick={() => window.electronAPI?.showItemInFolder?.(activeEntry.path)}
+            className="text-[10px] text-sf-accent hover:underline text-left truncate"
+            title={activeEntry.path}
+          >
+            Reveal active
+          </button>
+        )}
+        <button
+          type="button"
+          onClick={onRun}
+          className="text-[10px] text-sf-text-muted hover:text-sf-text-primary text-left"
+        >
+          Generate new version
+        </button>
         {previewButton}
       </div>
     )
@@ -518,9 +561,50 @@ function AnalysisView() {
         return
       }
       setOptimizeState((prev) => ({ ...prev, [scene.id]: { stage: 'done', outputPath: res.outputPath, inProjectDir: res.inProjectDir, version: res.version } }))
+
+      // Persist the new version into the shot's optimization stack and
+      // mark it as active, so the next hover / re-caption / apply-to-
+      // timeline consumes the optimized file instead of the original
+      // sub-clip. The stack keeps every attempt around (by version tag),
+      // allowing the dropdown in the Optimize column to jump back.
+      const entry = {
+        version: res.version,
+        path: res.outputPath,
+        vaceRawPath: res.vaceRawPath || null,
+        model: res.model || null,
+        composited: res.composited !== false,
+        createdAt: new Date().toISOString(),
+      }
+      const nextScenes = (analysis?.scenes || []).map((s) => {
+        if (s.id !== scene.id) return s
+        const stack = Array.isArray(s.optimizations) ? s.optimizations.slice() : []
+        // Replace in place if the same version tag already exists
+        // (only possible when a re-run clobbers the file and reports
+        // the same VNN). Otherwise append.
+        const idx = stack.findIndex((o) => o.version === entry.version)
+        if (idx >= 0) stack[idx] = entry
+        else stack.push(entry)
+        return { ...s, optimizations: stack, activeOptimizationVersion: entry.version }
+      })
+      await saveProject({
+        analysis: { ...(analysis || {}), scenes: nextScenes },
+      })
     } catch (err) {
       setOptimizeState((prev) => ({ ...prev, [scene.id]: { stage: 'error', error: err?.message || String(err) } }))
     }
+  }
+
+  // Switch the active optimized version for a scene. Passing `null`
+  // reverts to the original sub-clip. Persists to the project so hover
+  // / re-caption / apply-to-timeline immediately pick up the change.
+  const setSceneActiveVersion = async (sceneId, version) => {
+    const nextScenes = (analysis?.scenes || []).map((s) => {
+      if (s.id !== sceneId) return s
+      return { ...s, activeOptimizationVersion: version || null }
+    })
+    await saveProject({
+      analysis: { ...(analysis || {}), scenes: nextScenes },
+    })
   }
 
   // Per-scene preview state: separate from optimizeState because the
@@ -763,13 +847,18 @@ function AnalysisView() {
                         onMouseEnter={(e) => {
                           if (!thumbUrl) return
                           const rect = e.currentTarget.getBoundingClientRect()
-                          // Prefer the cached shot clip (written by the
-                          // Gemini video analyzer) for a playing preview.
-                          // Falls back to the static thumbnail when the
-                          // clip isn't materialised yet (captioning never
-                          // ran, or ran on a non-video backend).
-                          const clipPath = scene.videoAnalysis?.clipPath
-                          const videoUrl = clipPath ? toComfyUrl(clipPath, analysis?.captionedAt || analysis?.createdAt) : null
+                          // Prefer the ACTIVE clip for the scene — if
+                          // the user selected an optimized version via
+                          // the version dropdown, hover plays that one;
+                          // otherwise the analyzer's cached original.
+                          // Falls back to the static thumbnail if no
+                          // clip has been materialised yet.
+                          const activePath = projectDir
+                            ? resolveActiveClipPath(scene, projectDir)
+                            : scene.videoAnalysis?.clipPath
+                          const videoUrl = activePath
+                            ? toComfyUrl(activePath, scene.activeOptimizationVersion || analysis?.captionedAt || analysis?.createdAt)
+                            : null
                           setHover({ url: thumbUrl, videoUrl, rect, previewW, previewH })
                         }}
                         onMouseLeave={() => setHover(null)}
@@ -801,6 +890,7 @@ function AnalysisView() {
                         onRun={() => runOptimizeFootage(scene)}
                         previewState={previewState[scene.id]}
                         onPreview={() => runPreviewMask(scene)}
+                        onSetActiveVersion={setSceneActiveVersion}
                         disabled={!projectDir}
                       />
                     </td>

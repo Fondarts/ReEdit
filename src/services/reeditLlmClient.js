@@ -44,6 +44,13 @@ const DEFAULT_SETTINGS = {
   geminiProposalModel: 'gemini-2.5-pro',
   geminiEmbeddingModel: 'gemini-embedding-2',
   geminiApiKey: '',
+  // When true, the proposer attaches the source video to the user
+  // message alongside the text shot log. Only Gemini supports this —
+  // Claude / LM Studio ignore the flag since neither accepts video
+  // input. We keep it OFF by default because it adds 5-20 MB per
+  // request (proportional to source length) and the text-only path
+  // already performs well for short ads.
+  geminiSendSourceVideo: false,
 }
 
 // Task identifiers the dispatcher uses to pick the right Gemini model.

@@ -25,7 +25,8 @@
  */
 
 import { pickVisionModelId, extractJson } from './reeditCaptioner'
-import { chatCompletion, LLM_TASKS } from './reeditLlmClient'
+import { chatCompletion, LLM_TASKS, LLM_BACKENDS, loadLlmSettings } from './reeditLlmClient'
+import { INLINE_BYTE_LIMIT } from './geminiClient'
 
 export const PROPOSAL_METRICS = [
   {
@@ -85,7 +86,17 @@ Score the current cut against A / B / C / D and propose an EDL that visibly impr
   },
 ]
 
-const SYSTEM_PROMPT = `You are a senior advertising creative director helping to re-edit an existing commercial using only its already-filmed shots plus at most a few AI-generated fill shots. You work from a shot log and return a concrete, ordered edit decision list (EDL) with per-shot rationale. You return ONLY a JSON object, no commentary, no markdown fences.`
+// System prompt varies with the footage-generation capability: if the
+// user doesn't allow AI fill shots, it would be contradictory (and
+// often confusing to the model) to advertise them in the role
+// description. The rest of the brief stays identical regardless.
+function buildSystemPrompt(capabilities) {
+  const allowFill = Boolean(capabilities?.footageGeneration)
+  const roleTail = allowFill
+    ? 'using only its already-filmed shots plus, when a structural gap truly requires it, a few AI-generated placeholder shots you explicitly propose'
+    : 'using only its already-filmed shots — you cannot add, generate, or invent new footage'
+  return `You are a senior advertising creative director helping to re-edit an existing commercial ${roleTail}. You work from a shot log and return a concrete, ordered edit decision list (EDL) with per-shot rationale. You return ONLY a JSON object, no commentary, no markdown fences.`
+}
 
 // A scene is eligible for the proposal when the user hasn't excluded
 // it AND we have enough data to describe it to the LLM. Shots whose
@@ -115,6 +126,16 @@ function formatSceneBlock(scene) {
   const lines = []
   const duration = Number(scene.duration) || (Number(scene.tcOut) - Number(scene.tcIn))
   lines.push(`## ${scene.id} · ${Number(scene.tcIn).toFixed(2)}–${Number(scene.tcOut).toFixed(2)}s · ${Number.isFinite(duration) ? duration.toFixed(2) : '?'}s`)
+
+  // Active optimization (Wan VACE graphics removal). Surface the
+  // version tag so the LLM can reason about which shots now have
+  // their on-screen text/logo removed vs still carry it. This is the
+  // shot that will actually play on the timeline, so the LLM's mental
+  // model should match that reality (e.g. a shot with its CTA removed
+  // is now available to reuse in places it wasn't before).
+  if (scene.activeOptimizationVersion) {
+    lines.push(`Optimized: ${scene.activeOptimizationVersion} — on-screen graphics (text / logo overlays) have been removed via Wan VACE; the Graphics block below describes the ORIGINAL overlays, which are no longer visible on the active clip.`)
+  }
 
   const visual = va.visual || scene.caption || st.visual
   if (visual) lines.push(`Visual: ${visual}`)
@@ -382,6 +403,7 @@ export async function generateProposal({
   targetDurationSec,
   criteria,
   capabilities,
+  sourceVideoPath,
 } = {}) {
   if (!Array.isArray(scenes) || scenes.length === 0) {
     throw new Error('Shot log is empty — run Analysis first.')
@@ -406,6 +428,37 @@ export async function generateProposal({
     : (metricDef?.criteria || null)
   let lastModel = modelId || null
 
+  // One-time source-video hydration. When the user has turned on
+  // "Send source video to proposal (Gemini only)" and the active
+  // backend is Gemini, read the source file as a data URL so we can
+  // attach it alongside the text shot log. We do this once outside
+  // runOnce because the file bytes don't change between retry attempts
+  // and the read can easily be 15–25 MB — worth caching.
+  const settings = loadLlmSettings()
+  const sendVideo = Boolean(
+    sourceVideoPath
+    && settings.backend === LLM_BACKENDS.GEMINI
+    && settings.geminiSendSourceVideo,
+  )
+  let sourceVideoDataUrl = null
+  if (sendVideo) {
+    try {
+      const mime = /\.mov$/i.test(sourceVideoPath) ? 'video/quicktime'
+        : /\.webm$/i.test(sourceVideoPath) ? 'video/webm'
+        : 'video/mp4'
+      const res = await window.electronAPI?.readFileAsDataUrl?.(sourceVideoPath, mime)
+      if (res?.success && res.dataUrl) {
+        if (!res.bytes || res.bytes <= INLINE_BYTE_LIMIT) {
+          sourceVideoDataUrl = res.dataUrl
+        } else {
+          console.warn(`[reedit] Source video is ${(res.bytes / 1024 / 1024).toFixed(1)} MB — over the ${(INLINE_BYTE_LIMIT / 1024 / 1024).toFixed(0)} MB inline cap for Gemini. Falling back to text-only proposal.`)
+        }
+      }
+    } catch (err) {
+      console.warn('[reedit] Could not read source video for Gemini proposal:', err?.message || err)
+    }
+  }
+
   // Single attempt helper so we can re-run with a correction note if
   // the first pass undershoots the budget (which local Qwen2.5-VL
   // reliably does when the duration target requires padding with
@@ -413,9 +466,21 @@ export async function generateProposal({
   // so this path works for both LM Studio and the Anthropic backend
   // without the proposer knowing which is active.
   const runOnce = async (correctionNote) => {
+    const userPromptText = buildUserPrompt({ scenes, brandBrief, extraInstructions, metric: targetMetric, totalDurationSec, targetDurationSec, criteria: effectiveCriteria, correctionNote, capabilities })
+    // When we have a video ready, compose the user message as a
+    // content array: the prompt first (order matters — Gemini treats
+    // the last text as the active instruction) then the video. The
+    // dispatcher forwards OpenAI-shape content arrays to the Gemini
+    // client which translates `video_url` into inlineData.
+    const userContent = sourceVideoDataUrl
+      ? [
+          { type: 'text', text: userPromptText + '\n\nThe full source video is attached below. Use it to sanity-check the shot log (camera movements, continuity, graphic placement) when making edit decisions.' },
+          { type: 'video_url', video_url: { url: sourceVideoDataUrl } },
+        ]
+      : userPromptText
     const messages = [
-      { role: 'system', content: SYSTEM_PROMPT },
-      { role: 'user', content: buildUserPrompt({ scenes, brandBrief, extraInstructions, metric: targetMetric, totalDurationSec, targetDurationSec, criteria: effectiveCriteria, correctionNote, capabilities }) },
+      { role: 'system', content: buildSystemPrompt(capabilities) },
+      { role: 'user', content: userContent },
     ]
     const response = await chatCompletion({
       messages,
