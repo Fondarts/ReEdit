@@ -343,6 +343,38 @@ contextBridge.exposeInMainWorld('electronAPI', {
   },
 
   /**
+   * Bake a zoom/pan reframe into a physical MP4. ffmpeg pre-crops the
+   * source sub-clip by the given zoom + anchor; ComfyUI then runs a
+   * RealESRGAN upscale-only workflow to bring the resolution back to
+   * delivery quality. Output joins the scene's optimization stack
+   * with an `R{NN}` tag alongside any existing `V{NN}` VACE entries.
+   * @param {{ sceneId: string, sourceVideoPath: string, projectDir: string, zoom: number, anchorX: number, anchorY: number, targetW: number, targetH: number, comfyUrl?: string }} options
+   * @returns {Promise<{success: boolean, version?: string, outputPath?: string, kind?: string, error?: string}>}
+   */
+  commitReframe: (options) => ipcRenderer.invoke('analysis:commitReframe', options),
+  onCommitReframeProgress: (cb) => {
+    const handler = (_, payload) => cb(payload)
+    ipcRenderer.on('analysis:commitReframe:progress', handler)
+    return () => ipcRenderer.removeListener('analysis:commitReframe:progress', handler)
+  },
+
+  /**
+   * Footage extend: sends the scene's cached sub-clip + its last frame
+   * to ComfyUI for LTX 2.3 image-to-video generation, then concats the
+   * AI-generated tail onto the original. Output lands under
+   * `{projectDir}/.reedit/optimized/{sceneId}_E{NN}.mp4` and joins the
+   * scene's optimization stack with an `E{NN}` tag.
+   * @param {{ sceneId: string, projectDir: string, extendSec: number, workflow: object, loadImageNodeId: string, comfyUrl?: string }} options
+   * @returns {Promise<{success: boolean, version?: string, outputPath?: string, kind?: string, error?: string}>}
+   */
+  commitExtend: (options) => ipcRenderer.invoke('analysis:commitExtend', options),
+  onCommitExtendProgress: (cb) => {
+    const handler = (_, payload) => cb(payload)
+    ipcRenderer.on('analysis:commitExtend:progress', handler)
+    return () => ipcRenderer.removeListener('analysis:commitExtend:progress', handler)
+  },
+
+  /**
    * Extract audio waveform peaks via ffmpeg (Electron only)
    * @param {string} mediaInput - file:// URL, comfystudio:// URL, or absolute path
    * @param {object} options - { sampleCount?: number, sampleRate?: number }

@@ -13,10 +13,13 @@
  *   shots). When off, the LLM must only reorder / trim existing shots.
  * - footageExtend: allow annotating shots as "needs N seconds of
  *   extension" via AI. Note-level only today — no EDL kind change.
- * - footageUpscale: allow using shots whose native resolution is
- *   below the delivery target (they'll be upscaled post-proposal).
- * - reframe: allow using shots outside the target aspect ratio
- *   (they'll be reframed post-proposal).
+ * - footageReframe: allow zoom/pan re-framing within the same aspect
+ *   ratio. Timeline previews the crop instantly via transforms; the
+ *   user can then Commit reframe which sends the shot to ComfyUI for
+ *   a final upscale+crop pass that becomes a new version in the stack.
+ * - useOriginalMusic / useOriginalVoiceover: let the proposer layer
+ *   the separated stems across the re-edit decoupled from their
+ *   source shot.
  *
  * Defaults: all false. The default re-edit is brand-safe — the LLM
  * can only reorder / trim the shot log without introducing any
@@ -28,8 +31,8 @@ const STORAGE_KEY = 'reedit.proposal.capabilities.v1'
 export const DEFAULT_CAPABILITIES = Object.freeze({
   footageGeneration: false,
   footageExtend: false,
-  footageUpscale: false,
-  reframe: false,
+  footageReframe: false,
+  colorCorrection: false,
   useOriginalMusic: false,
   useOriginalVoiceover: false,
 })
@@ -46,14 +49,14 @@ export const CAPABILITY_DEFINITIONS = [
     blurb: 'Lets the proposer flag shots that should be extended by N seconds via AI.',
   },
   {
-    id: 'footageUpscale',
-    label: 'Footage upscale',
-    blurb: 'Allows using shots whose native resolution is below the delivery target (upscaled post-proposal).',
+    id: 'footageReframe',
+    label: 'Footage reframe',
+    blurb: 'Lets the proposer mark shots for zoom/pan re-framing within the same aspect. Timeline previews the crop instantly via transforms; a Commit button upscales with ComfyUI for final delivery quality.',
   },
   {
-    id: 'reframe',
-    label: 'Reframe',
-    blurb: 'Allows using shots outside the target aspect ratio (reframed post-proposal).',
+    id: 'colorCorrection',
+    label: 'Color correction',
+    blurb: 'Lets the proposer annotate shots with color adjustments (exposure, contrast, saturation, gain, gamma, offset, hue). Applied directly to the timeline clip via the native Color controls — no baking required.',
   },
   {
     id: 'useOriginalMusic',
@@ -72,7 +75,16 @@ export function loadCapabilities() {
   try {
     const raw = localStorage.getItem(STORAGE_KEY)
     if (!raw) return { ...DEFAULT_CAPABILITIES }
-    const parsed = JSON.parse(raw)
+    const parsed = JSON.parse(raw) || {}
+    // Migration: the old builds stored `footageUpscale` and `reframe`
+    // as two separate flags. Either one should promote to the new
+    // unified `footageReframe` so users don't lose intent across the
+    // upgrade. The legacy keys are stripped on next save.
+    if ((parsed.footageUpscale || parsed.reframe) && parsed.footageReframe == null) {
+      parsed.footageReframe = true
+    }
+    delete parsed.footageUpscale
+    delete parsed.reframe
     // Merge over defaults so a stored shape missing a flag (from an
     // older build) still returns a complete object.
     return { ...DEFAULT_CAPABILITIES, ...parsed }

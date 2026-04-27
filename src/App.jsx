@@ -332,13 +332,14 @@ function App() {
   return (
     <div className="h-screen flex flex-col bg-sf-dark-950 no-select">
       {/* Title Bar */}
-      <TitleBar 
-        projectName={currentProject?.name || 'Untitled'} 
+      <TitleBar
+        projectName={currentProject?.name || 'Untitled'}
         activeTab={mainTab}
         onTabChange={setMainTab}
         centerInsetLeft={editorLeftInset}
         centerInsetRight={editorRightInset}
         showComfyUiTab={showComfyUiTab}
+        onOpenSettings={openSettingsModal}
       />
       
       {/* Main Content Area */}
@@ -400,21 +401,48 @@ function App() {
             </WorkspaceErrorBoundary>
           </div>
         )}
-        {mainTab === 'projects' ? (
-          <ProjectsView />
-        ) : mainTab === 'import' ? (
+        {/* Full-screen overlay views without long-running operations. Mount
+            only when active — nothing important dies when they unmount. */}
+        {mainTab === 'projects' && <ProjectsView />}
+        {mainTab === 'export' && <ExportPanel />}
+        {mainTab === 'stock' && <StockPanel />}
+        {mainTab === 'llm-assistant' && <LLMAssistantWorkspace />}
+
+        {/* Re-edit pipeline views. Kept MOUNTED across tab switches (only
+            `display` toggles visibility) so that:
+              • renderer-side long-running ops don't die — Analyze's
+                caption loop, Proposal generation, Apply to timeline.
+              • main-process ops (Optimize, Commit reframe, Demucs) keep
+                their IPC progress listeners attached so the UI still
+                reflects completion when the user comes back to the tab.
+            Same pattern Generate already uses below. Render order matters:
+            the Editor block sits last so its z-stacked resize handles win
+            over anything that tries to poke through. */}
+        <div
+          className="flex-1 flex flex-col min-h-0 overflow-hidden bg-sf-dark-950"
+          style={{ display: mainTab === 'import' ? 'flex' : 'none' }}
+        >
           <ImportVideoView onVideoImported={() => setMainTab('analysis')} />
-        ) : mainTab === 'analysis' ? (
+        </div>
+        <div
+          className="flex-1 flex flex-col min-h-0 overflow-hidden bg-sf-dark-950"
+          style={{ display: mainTab === 'analysis' ? 'flex' : 'none' }}
+        >
           <AnalysisView />
-        ) : mainTab === 'proposal' ? (
+        </div>
+        <div
+          className="flex-1 flex flex-col min-h-0 overflow-hidden bg-sf-dark-950"
+          style={{ display: mainTab === 'proposal' ? 'flex' : 'none' }}
+        >
           <ProposalView onNavigate={setMainTab} />
-        ) : mainTab === 'export' ? (
-          <ExportPanel />
-        ) : mainTab === 'stock' ? (
-          <StockPanel />
-        ) : mainTab === 'llm-assistant' ? (
-          <LLMAssistantWorkspace />
-        ) : mainTab === 'comfyui' || mainTab === 'generate' || mainTab === 'mog' ? null : (
+        </div>
+
+        {/* Editor (Timeline + Preview + Inspector). Mounted whenever
+            we're NOT in one of the other workspaces that replace it
+            entirely. Staying mounted keeps the InspectorPanel's
+            "Commit reframe" progress listener alive while the user
+            flips over to Analysis to queue another job. */}
+        {![ 'projects', 'import', 'analysis', 'proposal', 'export', 'stock', 'llm-assistant', 'comfyui', 'generate', 'mog' ].includes(mainTab) && (
           <>
             {/* Left Panel - Full Height Mode (spans entire left side) */}
             {leftPanelFullHeight && (

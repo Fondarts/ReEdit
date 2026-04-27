@@ -28,6 +28,9 @@ import {
   TONAL_ADJUSTMENT_GROUP_KEYS,
 } from '../utils/adjustments'
 import { clearDiskCacheUrl } from './VideoLayerRenderer'
+import { swapSceneActiveVersion } from '../services/reeditEdlToTimeline'
+import { commitExtend as commitExtendService } from '../services/reeditExtend'
+import { loadCapabilitySettings } from '../services/reeditCapabilitySettings'
 import { FRAME_RATE, TRANSITION_TYPES, TRANSITION_DEFAULT_SETTINGS } from '../constants/transitions'
 import {
   DEFAULT_LETTERBOX_ASPECT,
@@ -688,7 +691,296 @@ function InspectorPanel({ isExpanded, onToggleExpanded }) {
   ]
   
   const transform = getTransform()
-  
+
+  // Reframe commit: detect when the selected clip is a re-edit scene
+  // asset with a pending reframe intent (either the proposer tagged
+  // it, or the user zoomed past 100 % on a scene clip that isn't
+  // already reframed on disk). The Commit reframe button appears
+  // under the Transform section for these clips only.
+  const sceneIdForReframe = selectedAsset?.settings?.reeditSceneId || null
+  const activeVersionForReframe = selectedAsset?.settings?.reeditActiveVersion || null
+  const isAlreadyReframed = activeVersionForReframe && /^R/i.test(String(activeVersionForReframe))
+  const zoomedIn = Number(transform?.scaleX) > 100 || Number(transform?.scaleY) > 100
+  const canCommitReframe = Boolean(
+    sceneIdForReframe
+    && isVideoClip
+    && !isAlreadyReframed
+    && zoomedIn,
+  )
+  // Live reference to the scene so we can list its optimization stack
+  // without re-running the reedit pipeline. Used to show the version
+  // toggle under Transform (Original ↔ R01 ↔ R02 …) for comparison.
+  const sceneForReframe = useProjectStore((s) => {
+    if (!sceneIdForReframe) return null
+    return s.currentProject?.analysis?.scenes?.find((sc) => sc.id === sceneIdForReframe) || null
+  })
+  const sceneOptimizations = sceneForReframe?.optimizations || []
+  const hasVersionHistory = sceneOptimizations.length > 0
+
+  // Extend commit: the proposer wrote `EXTEND +Xs:` into the row note
+  // and registerSceneAsset stashed the hint on asset.settings. The
+  // Commit extend button appears when an extend is pending AND the
+  // active version is not already an E-tagged optimization.
+  const extendHint = selectedAsset?.settings?.reeditExtendHint || null
+  const isAlreadyExtended = activeVersionForReframe && /^E/i.test(String(activeVersionForReframe))
+  const canCommitExtend = Boolean(
+    sceneIdForReframe
+    && isVideoClip
+    && !isAlreadyExtended
+    && extendHint?.seconds
+    && selectedAsset?.settings?.reeditExtendPending,
+  )
+
+  // Local progress + error state for a reframe-commit run. Runs are
+  // scoped to the selected clip — when the user selects another clip
+  // we don't clear this, because the commit keeps running in the
+  // background and the user may come back to check.
+  const [reframeCommitState, setReframeCommitState] = useState({ stage: null, error: null, sceneId: null })
+  useEffect(() => {
+    const unsub = window.electronAPI?.onCommitReframeProgress?.((payload) => {
+      if (!payload?.sceneId) return
+      setReframeCommitState((prev) => (
+        prev.sceneId && prev.sceneId !== payload.sceneId ? prev : { ...prev, ...payload }
+      ))
+    })
+    return () => { try { unsub?.() } catch (_) { /* ignore */ } }
+  }, [])
+
+  const reframeRunning = reframeCommitState.stage
+    && reframeCommitState.sceneId === sceneIdForReframe
+    && !['done', 'error'].includes(reframeCommitState.stage)
+
+  // Extend commit — mirrors reframeCommitState in shape. Kept
+  // separate so a reframe + extend on the same clip don't clobber each
+  // other's progress / error UI.
+  const [extendCommitState, setExtendCommitState] = useState({ stage: null, error: null, sceneId: null })
+  useEffect(() => {
+    const unsub = window.electronAPI?.onCommitExtendProgress?.((payload) => {
+      if (!payload?.sceneId) return
+      setExtendCommitState((prev) => (
+        prev.sceneId && prev.sceneId !== payload.sceneId ? prev : { ...prev, ...payload }
+      ))
+    })
+    return () => { try { unsub?.() } catch (_) { /* ignore */ } }
+  }, [])
+  const extendRunning = extendCommitState.stage
+    && extendCommitState.sceneId === sceneIdForReframe
+    && !['done', 'error'].includes(extendCommitState.stage)
+
+  const timelineWidth = useTimelineStore((s) => s.width)
+  const timelineHeight = useTimelineStore((s) => s.height)
+
+  // Version picker handler. Swaps the on-timeline clip between the
+  // original sub-clip (with reframe preview transform re-applied) and
+  // any committed R-tagged MP4, then persists the choice so re-applying
+  // or hovering picks up the same version. Setting version to '' jumps
+  // back to the original sub-clip.
+  const handleSetActiveVersion = useCallback(async (version) => {
+    if (!sceneIdForReframe) return
+    const project = useProjectStore.getState().currentProject
+    const projectDir = useProjectStore.getState().currentProjectHandle
+    if (typeof projectDir !== 'string') return
+    const nextScenes = (project?.analysis?.scenes || []).map((s) => (
+      s.id === sceneIdForReframe ? { ...s, activeOptimizationVersion: version || null } : s
+    ))
+    await useProjectStore.getState().saveProject({
+      analysis: { ...(project?.analysis || {}), scenes: nextScenes },
+    })
+    const updatedScene = nextScenes.find((s) => s.id === sceneIdForReframe)
+    try {
+      swapSceneActiveVersion({
+        sceneId: sceneIdForReframe,
+        version: version || null,
+        scene: updatedScene,
+        projectDir,
+        canvasWidth: Number(timelineWidth) || undefined,
+        canvasHeight: Number(timelineHeight) || undefined,
+      })
+    } catch (err) {
+      console.warn('[reedit] version swap failed:', err)
+    }
+  }, [sceneIdForReframe, timelineWidth, timelineHeight])
+
+  const handleCommitReframe = useCallback(async () => {
+    if (!canCommitReframe || reframeRunning) return
+    const project = useProjectStore.getState().currentProject
+    const projectDir = useProjectStore.getState().currentProjectHandle
+    if (typeof projectDir !== 'string') return
+    const sourceVideo = project?.sourceVideo
+    if (!sourceVideo?.path) return
+    const targetW = Number(timelineWidth) || sourceVideo.width || 1920
+    const targetH = Number(timelineHeight) || sourceVideo.height || 1080
+    // Derive zoom + anchor from the CURRENT transform on the clip —
+    // not from the original row.reframe — because the user may have
+    // fine-tuned scale / position after the proposal landed.
+    const scalePct = Math.max(Number(transform?.scaleX), Number(transform?.scaleY)) || 100
+    const zoom = Math.max(1, scalePct / 100)
+    // Convert pixel translation back to 0-1 anchor. Inverse of
+    // buildReframeTransform: positionX = -(anchorX - 0.5) * zoom * W
+    // → anchorX = 0.5 - positionX / (zoom * W). Same for Y.
+    const denomX = zoom * targetW
+    const denomY = zoom * targetH
+    const anchorX = denomX > 0 ? Math.max(0, Math.min(1, 0.5 - (Number(transform?.positionX) || 0) / denomX)) : 0.5
+    const anchorY = denomY > 0 ? Math.max(0, Math.min(1, 0.5 - (Number(transform?.positionY) || 0) / denomY)) : 0.5
+
+    setReframeCommitState({ stage: 'starting', error: null, sceneId: sceneIdForReframe })
+    try {
+      // Pick the upscale model from Settings → Capabilities → Footage
+      // reframe. Main.js falls back to the shipped default when this
+      // key isn't present, but reading it here keeps the model choice
+      // honest to whatever the user picked most recently.
+      const upscaleModel = loadCapabilitySettings()?.footageReframe?.upscaleModel
+      const res = await window.electronAPI.commitReframe({
+        sceneId: sceneIdForReframe,
+        sourceVideoPath: sourceVideo.path,
+        projectDir,
+        zoom, anchorX, anchorY,
+        targetW, targetH,
+        upscaleModel,
+      })
+      if (!res?.success) {
+        setReframeCommitState({ stage: 'error', error: res?.error || 'Unknown error.', sceneId: sceneIdForReframe })
+        return
+      }
+      setReframeCommitState({ stage: 'done', outputPath: res.outputPath, version: res.version, sceneId: sceneIdForReframe, error: null })
+
+      // Persist the new R{NN} entry into the scene's optimization
+      // stack so the version dropdown picks it up and the resolver
+      // routes every downstream consumer to the upscaled MP4.
+      const liveProject = useProjectStore.getState().currentProject
+      const scenes = liveProject?.analysis?.scenes || []
+      const nextScenes = scenes.map((s) => {
+        if (s.id !== sceneIdForReframe) return s
+        const stack = Array.isArray(s.optimizations) ? s.optimizations.slice() : []
+        const entry = {
+          version: res.version,
+          path: res.outputPath,
+          kind: 'reframe',
+          preCropPath: res.preCropPath || null,
+          cropInfo: res.cropInfo || null,
+          createdAt: new Date().toISOString(),
+        }
+        const idx = stack.findIndex((o) => o.version === entry.version)
+        if (idx >= 0) stack[idx] = entry
+        else stack.push(entry)
+        return { ...s, optimizations: stack, activeOptimizationVersion: entry.version }
+      })
+      const saveProjectFn = useProjectStore.getState().saveProject
+      await saveProjectFn({ analysis: { ...(liveProject?.analysis || {}), scenes: nextScenes } })
+
+      // Live-swap the clip on the timeline to the new R-tagged MP4 so
+      // the user sees the upscaled / cropped result immediately. Without
+      // this the change only materialises on the next Apply to timeline.
+      // The helper looks up the asset tagged with this sceneId, points
+      // it at the new file, and resets the clip transform (identity,
+      // since the file is physically cropped now — keeping the zoom on
+      // top would double-crop).
+      const updatedScene = nextScenes.find((s) => s.id === sceneIdForReframe)
+      try {
+        swapSceneActiveVersion({
+          sceneId: sceneIdForReframe,
+          version: res.version,
+          scene: updatedScene,
+          projectDir,
+          canvasWidth: targetW,
+          canvasHeight: targetH,
+        })
+      } catch (swapErr) {
+        // Non-fatal — the scene.activeOptimizationVersion is already
+        // saved, so an Apply to timeline would pick it up. Log and move
+        // on rather than clobber the "done" state we just set.
+        console.warn('[reedit] live swap after commit failed:', swapErr)
+      }
+    } catch (err) {
+      setReframeCommitState({ stage: 'error', error: err?.message || String(err), sceneId: sceneIdForReframe })
+    }
+  }, [canCommitReframe, reframeRunning, sceneIdForReframe, timelineWidth, timelineHeight, transform])
+
+  // Commit extend — same lifecycle as commit reframe. We send the
+  // scene's source sub-clip + the extend duration to the main process,
+  // which extracts the last frame, sends it through LTX 2.3 i2v, and
+  // concats the generated tail onto the original. On success we push
+  // a new E{NN} entry into the scene's optimization stack, flip the
+  // active version to it, and swap the on-timeline clip.
+  const handleCommitExtend = useCallback(async () => {
+    if (!canCommitExtend || extendRunning) return
+    const project = useProjectStore.getState().currentProject
+    const projectDir = useProjectStore.getState().currentProjectHandle
+    if (typeof projectDir !== 'string') return
+    const sourceVideo = project?.sourceVideo
+    const extendSec = Number(extendHint?.seconds) || 1
+    // The extended MP4's dimensions should match the source sub-clip
+    // (no reframe baked in here) so we pass the source video's native
+    // dims. fps comes from the source too — LTX generates at a fixed
+    // fps if you let it, but we override so the concat join matches.
+    const width = Number(selectedAsset?.settings?.width) || Number(sourceVideo?.width) || 1920
+    const height = Number(selectedAsset?.settings?.height) || Number(sourceVideo?.height) || 1080
+    const fps = Number(selectedAsset?.settings?.fps) || Number(sourceVideo?.fps) || 25
+    // Use the LLM's rationale (the note after `EXTEND +Xs:`) as the
+    // prompt so the continuation keeps the beat. The asset doesn't
+    // carry the note directly, so we hand a generic motion prompt;
+    // future work: save the note on asset.settings.reeditExtendNote.
+    const promptText = `Continue the shot naturally; hold ${extendSec.toFixed(1)}s longer with matching motion, lighting, and subject.`
+
+    setExtendCommitState({ stage: 'starting', error: null, sceneId: sceneIdForReframe })
+    try {
+      const res = await commitExtendService({
+        sceneId: sceneIdForReframe,
+        projectDir,
+        extendSec,
+        width, height, fps,
+        promptText,
+      })
+      if (!res?.success) {
+        setExtendCommitState({ stage: 'error', error: res?.error || 'Unknown error.', sceneId: sceneIdForReframe })
+        return
+      }
+      setExtendCommitState({ stage: 'done', outputPath: res.outputPath, version: res.version, sceneId: sceneIdForReframe, error: null })
+
+      // Persist the new E-tagged entry into the scene's stack + flip
+      // active to it. Same shape as the reframe handler so the version
+      // dropdown picks it up with a "reframe / extend / graphics-
+      // removed" hint string depending on the tag's prefix.
+      const liveProject = useProjectStore.getState().currentProject
+      const scenes = liveProject?.analysis?.scenes || []
+      const nextScenes = scenes.map((s) => {
+        if (s.id !== sceneIdForReframe) return s
+        const stack = Array.isArray(s.optimizations) ? s.optimizations.slice() : []
+        const entry = {
+          version: res.version,
+          path: res.outputPath,
+          kind: 'extend',
+          extendSec,
+          tailPath: res.tailPath || null,
+          lastFramePath: res.lastFramePath || null,
+          createdAt: new Date().toISOString(),
+        }
+        const idx = stack.findIndex((o) => o.version === entry.version)
+        if (idx >= 0) stack[idx] = entry
+        else stack.push(entry)
+        return { ...s, optimizations: stack, activeOptimizationVersion: entry.version }
+      })
+      const saveProjectFn = useProjectStore.getState().saveProject
+      await saveProjectFn({ analysis: { ...(liveProject?.analysis || {}), scenes: nextScenes } })
+
+      const updatedScene = nextScenes.find((s) => s.id === sceneIdForReframe)
+      try {
+        swapSceneActiveVersion({
+          sceneId: sceneIdForReframe,
+          version: res.version,
+          scene: updatedScene,
+          projectDir,
+          canvasWidth: width,
+          canvasHeight: height,
+        })
+      } catch (swapErr) {
+        console.warn('[reedit] live swap after extend commit failed:', swapErr)
+      }
+    } catch (err) {
+      setExtendCommitState({ stage: 'error', error: err?.message || String(err), sceneId: sceneIdForReframe })
+    }
+  }, [canCommitExtend, extendRunning, sceneIdForReframe, extendHint, selectedAsset])
+
   // Calculate clip-relative time for keyframes
   const clipTime = selectedClip ? playheadPosition - selectedClip.startTime : 0
   
@@ -1750,6 +2042,133 @@ function InspectorPanel({ isExpanded, onToggleExpanded }) {
         })}
         {expandedSections.includes('transform') && (
           <div className="p-3 space-y-3 border-b border-sf-dark-700">
+            {/* Version picker for re-edit scene clips. Appears once the
+                scene has at least one committed optimization — lets the
+                user flip between the Original (live zoom preview) and
+                any baked R-tagged reframe / V-tagged VACE output to
+                compare quality and framing without leaving the inspector. */}
+            {sceneIdForReframe && hasVersionHistory && (
+              <div className="rounded-lg border border-sf-dark-700 bg-sf-dark-900 p-2 flex items-center gap-2">
+                <span className="text-[10px] text-sf-text-muted whitespace-nowrap">Version</span>
+                <select
+                  value={activeVersionForReframe || ''}
+                  onChange={(e) => handleSetActiveVersion(e.target.value || null)}
+                  className="flex-1 text-[11px] bg-sf-dark-800 border border-sf-dark-700 rounded px-1.5 py-1 text-sf-text-primary hover:border-sf-dark-500 focus:outline-none focus:border-sf-accent"
+                  title="Flip between the original shot (with live zoom preview) and committed upscale versions."
+                >
+                  <option value="">Original (preview)</option>
+                  {sceneOptimizations.map((o) => {
+                    const hint = o.kind === 'extend' || /^E/i.test(String(o.version))
+                      ? `extend (+${Number(o.extendSec || 0).toFixed(1)}s)`
+                      : o.kind === 'reframe' || /^R/i.test(String(o.version))
+                        ? 'reframe'
+                        : 'graphics removed'
+                    return (
+                      <option key={o.version} value={o.version}>
+                        {o.version} — {hint}
+                      </option>
+                    )
+                  })}
+                </select>
+              </div>
+            )}
+
+            {/* Commit reframe — only for re-edit scene clips that are
+                currently zoomed in (scale > 100 %) and whose active
+                version is not already an R-tagged optimization. */}
+            {canCommitReframe && (
+              <div className="rounded-lg border border-sf-accent/30 bg-sf-accent/5 p-2 flex flex-col gap-1.5">
+                <div className="text-[10px] text-sf-text-secondary leading-snug">
+                  This shot is previewing a reframe via transform. Committing bakes the zoom/pan into an upscaled MP4 (ComfyUI + RealESRGAN) and swaps it in as a new version.
+                </div>
+                {reframeCommitState.stage === 'error' && reframeCommitState.sceneId === sceneIdForReframe ? (
+                  <div className="text-[10px] text-sf-error leading-snug">
+                    {reframeCommitState.error}
+                  </div>
+                ) : reframeCommitState.stage === 'done' && reframeCommitState.sceneId === sceneIdForReframe ? (
+                  <div className="text-[10px] text-emerald-300 leading-snug">
+                    Committed as {reframeCommitState.version}.
+                  </div>
+                ) : null}
+                <button
+                  type="button"
+                  onClick={handleCommitReframe}
+                  disabled={reframeRunning}
+                  className={`inline-flex items-center gap-1.5 px-2 py-1.5 rounded-md text-[11px] font-medium transition-colors
+                    ${reframeRunning
+                      ? 'bg-sf-dark-800 text-sf-text-muted cursor-not-allowed'
+                      : 'bg-sf-accent hover:bg-sf-accent-hover text-white'}`}
+                  title="Send this shot to ComfyUI for an upscale + crop pass that bakes the current reframe into a physical MP4."
+                >
+                  {reframeRunning ? (
+                    <>
+                      <Loader2 className="w-3.5 h-3.5 animate-spin" />
+                      {reframeCommitState.stage === 'pre_cropping' ? 'Pre-cropping…'
+                        : reframeCommitState.stage === 'uploading' ? 'Uploading…'
+                        : reframeCommitState.stage === 'queued' ? 'Queued…'
+                        : reframeCommitState.stage === 'running' ? `Upscaling… ${reframeCommitState.elapsedSec ? reframeCommitState.elapsedSec + 's' : ''}`
+                        : 'Starting…'}
+                    </>
+                  ) : (
+                    <>
+                      <Wand2 className="w-3.5 h-3.5" />
+                      Commit reframe (upscale + crop)
+                    </>
+                  )}
+                </button>
+              </div>
+            )}
+
+            {/* Commit extend — only for scene clips where the proposer
+                tagged an `EXTEND +Xs:` directive (stored on asset.settings.
+                reeditExtendHint) and we're still on the original version.
+                The clip is already previewing the stretch via clip.speed,
+                so clicking Commit extend swaps the slow-motion preview
+                for a real AI-generated continuation. */}
+            {canCommitExtend && (
+              <div className="rounded-lg border border-purple-500/30 bg-purple-500/5 p-2 flex flex-col gap-1.5">
+                <div className="text-[10px] text-sf-text-secondary leading-snug">
+                  This shot is previewing a +{Number(extendHint?.seconds || 0).toFixed(1)}s extension via slow-motion. Committing generates a real continuation with LTX i2v and concats it with the original, then swaps it in as a new version.
+                </div>
+                {extendCommitState.stage === 'error' && extendCommitState.sceneId === sceneIdForReframe ? (
+                  <div className="text-[10px] text-sf-error leading-snug">
+                    {extendCommitState.error}
+                  </div>
+                ) : extendCommitState.stage === 'done' && extendCommitState.sceneId === sceneIdForReframe ? (
+                  <div className="text-[10px] text-emerald-300 leading-snug">
+                    Committed as {extendCommitState.version}.
+                  </div>
+                ) : null}
+                <button
+                  type="button"
+                  onClick={handleCommitExtend}
+                  disabled={extendRunning}
+                  className={`inline-flex items-center gap-1.5 px-2 py-1.5 rounded-md text-[11px] font-medium transition-colors
+                    ${extendRunning
+                      ? 'bg-sf-dark-800 text-sf-text-muted cursor-not-allowed'
+                      : 'bg-purple-600 hover:bg-purple-500 text-white'}`}
+                  title="Send this shot to ComfyUI for an AI-generated continuation and concat the result with the original."
+                >
+                  {extendRunning ? (
+                    <>
+                      <Loader2 className="w-3.5 h-3.5 animate-spin" />
+                      {extendCommitState.stage === 'extracting_last_frame' ? 'Extracting last frame…'
+                        : extendCommitState.stage === 'uploading' ? 'Uploading…'
+                        : extendCommitState.stage === 'queued' ? 'Queued…'
+                        : extendCommitState.stage === 'running' ? `Extending… ${extendCommitState.elapsedSec ? extendCommitState.elapsedSec + 's' : ''}`
+                        : extendCommitState.stage === 'finalizing' ? 'Concatenating…'
+                        : 'Starting…'}
+                    </>
+                  ) : (
+                    <>
+                      <Wand2 className="w-3.5 h-3.5" />
+                      Commit extend (+{Number(extendHint?.seconds || 0).toFixed(1)}s)
+                    </>
+                  )}
+                </button>
+              </div>
+            )}
+
             {/* Position */}
             <div>
               <label className="text-[10px] text-sf-text-muted block mb-1.5 flex items-center gap-1">
@@ -3427,6 +3846,133 @@ function InspectorPanel({ isExpanded, onToggleExpanded }) {
         })}
         {expandedSections.includes('transform') && (
           <div className="p-3 space-y-3 border-b border-sf-dark-700">
+            {/* Version picker for re-edit scene clips. Appears once the
+                scene has at least one committed optimization — lets the
+                user flip between the Original (live zoom preview) and
+                any baked R-tagged reframe / V-tagged VACE output to
+                compare quality and framing without leaving the inspector. */}
+            {sceneIdForReframe && hasVersionHistory && (
+              <div className="rounded-lg border border-sf-dark-700 bg-sf-dark-900 p-2 flex items-center gap-2">
+                <span className="text-[10px] text-sf-text-muted whitespace-nowrap">Version</span>
+                <select
+                  value={activeVersionForReframe || ''}
+                  onChange={(e) => handleSetActiveVersion(e.target.value || null)}
+                  className="flex-1 text-[11px] bg-sf-dark-800 border border-sf-dark-700 rounded px-1.5 py-1 text-sf-text-primary hover:border-sf-dark-500 focus:outline-none focus:border-sf-accent"
+                  title="Flip between the original shot (with live zoom preview) and committed upscale versions."
+                >
+                  <option value="">Original (preview)</option>
+                  {sceneOptimizations.map((o) => {
+                    const hint = o.kind === 'extend' || /^E/i.test(String(o.version))
+                      ? `extend (+${Number(o.extendSec || 0).toFixed(1)}s)`
+                      : o.kind === 'reframe' || /^R/i.test(String(o.version))
+                        ? 'reframe'
+                        : 'graphics removed'
+                    return (
+                      <option key={o.version} value={o.version}>
+                        {o.version} — {hint}
+                      </option>
+                    )
+                  })}
+                </select>
+              </div>
+            )}
+
+            {/* Commit reframe — only for re-edit scene clips that are
+                currently zoomed in (scale > 100 %) and whose active
+                version is not already an R-tagged optimization. */}
+            {canCommitReframe && (
+              <div className="rounded-lg border border-sf-accent/30 bg-sf-accent/5 p-2 flex flex-col gap-1.5">
+                <div className="text-[10px] text-sf-text-secondary leading-snug">
+                  This shot is previewing a reframe via transform. Committing bakes the zoom/pan into an upscaled MP4 (ComfyUI + RealESRGAN) and swaps it in as a new version.
+                </div>
+                {reframeCommitState.stage === 'error' && reframeCommitState.sceneId === sceneIdForReframe ? (
+                  <div className="text-[10px] text-sf-error leading-snug">
+                    {reframeCommitState.error}
+                  </div>
+                ) : reframeCommitState.stage === 'done' && reframeCommitState.sceneId === sceneIdForReframe ? (
+                  <div className="text-[10px] text-emerald-300 leading-snug">
+                    Committed as {reframeCommitState.version}.
+                  </div>
+                ) : null}
+                <button
+                  type="button"
+                  onClick={handleCommitReframe}
+                  disabled={reframeRunning}
+                  className={`inline-flex items-center gap-1.5 px-2 py-1.5 rounded-md text-[11px] font-medium transition-colors
+                    ${reframeRunning
+                      ? 'bg-sf-dark-800 text-sf-text-muted cursor-not-allowed'
+                      : 'bg-sf-accent hover:bg-sf-accent-hover text-white'}`}
+                  title="Send this shot to ComfyUI for an upscale + crop pass that bakes the current reframe into a physical MP4."
+                >
+                  {reframeRunning ? (
+                    <>
+                      <Loader2 className="w-3.5 h-3.5 animate-spin" />
+                      {reframeCommitState.stage === 'pre_cropping' ? 'Pre-cropping…'
+                        : reframeCommitState.stage === 'uploading' ? 'Uploading…'
+                        : reframeCommitState.stage === 'queued' ? 'Queued…'
+                        : reframeCommitState.stage === 'running' ? `Upscaling… ${reframeCommitState.elapsedSec ? reframeCommitState.elapsedSec + 's' : ''}`
+                        : 'Starting…'}
+                    </>
+                  ) : (
+                    <>
+                      <Wand2 className="w-3.5 h-3.5" />
+                      Commit reframe (upscale + crop)
+                    </>
+                  )}
+                </button>
+              </div>
+            )}
+
+            {/* Commit extend — only for scene clips where the proposer
+                tagged an `EXTEND +Xs:` directive (stored on asset.settings.
+                reeditExtendHint) and we're still on the original version.
+                The clip is already previewing the stretch via clip.speed,
+                so clicking Commit extend swaps the slow-motion preview
+                for a real AI-generated continuation. */}
+            {canCommitExtend && (
+              <div className="rounded-lg border border-purple-500/30 bg-purple-500/5 p-2 flex flex-col gap-1.5">
+                <div className="text-[10px] text-sf-text-secondary leading-snug">
+                  This shot is previewing a +{Number(extendHint?.seconds || 0).toFixed(1)}s extension via slow-motion. Committing generates a real continuation with LTX i2v and concats it with the original, then swaps it in as a new version.
+                </div>
+                {extendCommitState.stage === 'error' && extendCommitState.sceneId === sceneIdForReframe ? (
+                  <div className="text-[10px] text-sf-error leading-snug">
+                    {extendCommitState.error}
+                  </div>
+                ) : extendCommitState.stage === 'done' && extendCommitState.sceneId === sceneIdForReframe ? (
+                  <div className="text-[10px] text-emerald-300 leading-snug">
+                    Committed as {extendCommitState.version}.
+                  </div>
+                ) : null}
+                <button
+                  type="button"
+                  onClick={handleCommitExtend}
+                  disabled={extendRunning}
+                  className={`inline-flex items-center gap-1.5 px-2 py-1.5 rounded-md text-[11px] font-medium transition-colors
+                    ${extendRunning
+                      ? 'bg-sf-dark-800 text-sf-text-muted cursor-not-allowed'
+                      : 'bg-purple-600 hover:bg-purple-500 text-white'}`}
+                  title="Send this shot to ComfyUI for an AI-generated continuation and concat the result with the original."
+                >
+                  {extendRunning ? (
+                    <>
+                      <Loader2 className="w-3.5 h-3.5 animate-spin" />
+                      {extendCommitState.stage === 'extracting_last_frame' ? 'Extracting last frame…'
+                        : extendCommitState.stage === 'uploading' ? 'Uploading…'
+                        : extendCommitState.stage === 'queued' ? 'Queued…'
+                        : extendCommitState.stage === 'running' ? `Extending… ${extendCommitState.elapsedSec ? extendCommitState.elapsedSec + 's' : ''}`
+                        : extendCommitState.stage === 'finalizing' ? 'Concatenating…'
+                        : 'Starting…'}
+                    </>
+                  ) : (
+                    <>
+                      <Wand2 className="w-3.5 h-3.5" />
+                      Commit extend (+{Number(extendHint?.seconds || 0).toFixed(1)}s)
+                    </>
+                  )}
+                </button>
+              </div>
+            )}
+
             {/* Position */}
             <div>
               <label className="text-[10px] text-sf-text-muted block mb-1.5 flex items-center gap-1">

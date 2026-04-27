@@ -83,6 +83,22 @@ Requirements:
 
 Outputs land in `{projectDir}/.reedit/stems/<source>_vocals.wav` and `{source}_music.wav`. The project file records the paths so re-opening the project doesn't re-run the separation.
 
+## Footage reframe
+
+Proposal → Capabilities has a **Footage reframe** toggle. When enabled, the LLM may annotate shots with a `REFRAME:` directive (optionally `zoom=1.4 anchor=0.3,0.5`) indicating that a tighter or repositioned view would land a narrative beat better.
+
+Two-stage flow:
+
+1. **Preview (instant, no encoding)** — `Apply to timeline` reads the directive and applies a matching transform (scale + position) directly on the clip via `clip.transform`. No file is written; the canvas renders the zoom + pan in real time. The user can fine-tune the reframe manually from the InspectorPanel (Transform section).
+2. **Commit (upscale + crop in ComfyUI)** — when the user is happy with the preview, the `Commit reframe (upscale + crop)` button inside the Transform section kicks off the baking pipeline:
+   - ffmpeg pre-crops the source sub-clip by the current zoom + anchor, writing a sub-frame MP4 at the target aspect.
+   - ComfyUI runs a RealESRGAN x4 upscale + scale-to-target pass on that pre-crop.
+   - The resulting MP4 lands in `{projectDir}/.reedit/optimized/<sceneId>_R{NN}.mp4` and joins the scene's optimization stack with an `R{NN}` tag alongside any VACE `V{NN}` entries.
+
+The version dropdown on the Analysis view's Optimize cell lists both — `R01 — reframe`, `V01 — graphics removed`, etc. The active version is what the timeline, hover preview, and Apply-to-timeline will use going forward.
+
+Requirements: same as Optimize footage (ComfyUI running, `RealESRGAN_x4plus.pth` under `models/upscale_models/`). Typical cost: 30-90 s on an RTX 4070 for a 30s clip.
+
 ## First Run
 
 When you first open the app:

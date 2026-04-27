@@ -1,6 +1,14 @@
 import { create } from 'zustand'
 import { persist } from 'zustand/middleware'
 
+// Monotonic counter so two addAsset() calls inside the same millisecond
+// (common inside for-loops over the reedit pipeline: e.g. stems,
+// multiple scene clips, frame candidates) still produce unique ids.
+// Using `Date.now()` alone collapsed the last two calls onto one id
+// when the event loop dispatched them fast enough, which then made
+// the renderer resolve both clips to whichever asset find() hit first.
+let _assetIdCounter = 0
+
 /**
  * Store for managing generated and imported assets
  * Persisted to localStorage for data survival across refreshes
@@ -123,7 +131,7 @@ export const useAssetsStore = create(
    */
   addAsset: (asset) => {
     const newAsset = {
-      id: Date.now().toString(),
+      id: `asset-${Date.now()}-${++_assetIdCounter}`,
       createdAt: new Date().toISOString(),
       ...asset
     }

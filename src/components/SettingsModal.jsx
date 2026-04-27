@@ -2,7 +2,7 @@ import { useState, useEffect, useMemo } from 'react'
 import {
   X, Server, FolderOpen, Palette, Monitor, Save,
   HardDrive, Film, Keyboard, Wrench, Power,
-  KeyRound, CheckCircle2, ExternalLink,
+  KeyRound, CheckCircle2, ExternalLink, Sparkles,
 } from 'lucide-react'
 import useProjectStore, { RESOLUTION_PRESETS, FPS_PRESETS } from '../stores/projectStore'
 import { THEMES, getStoredThemeId, applyTheme } from '../config/themes'
@@ -10,6 +10,7 @@ import { getPexelsApiKey, setPexelsApiKey } from '../services/pexelsSettings'
 import WorkflowSetupSection from './WorkflowSetupSection'
 import ComfyLauncherSettingsSection from './ComfyLauncherSettingsSection'
 import ComfyLauncherLogViewer from './ComfyLauncherLogViewer'
+import CapabilitiesSettingsSection from './CapabilitiesSettingsSection'
 import ApiKeyDialog from './ApiKeyDialog'
 import {
   COMFY_PARTNER_KEY_CHANGED_EVENT,
@@ -76,6 +77,12 @@ const SETTINGS_SECTIONS = [
     title: 'Workflow Setup',
     icon: Wrench,
     description: 'Scan workflows, review missing dependencies, and install curated models or node packs.',
+  },
+  {
+    id: 'capabilities',
+    title: 'Capabilities',
+    icon: Sparkles,
+    description: 'Tune how each proposer capability behaves: model choice, duration limits, scale caps.',
   },
   {
     id: 'appearance',
@@ -674,6 +681,9 @@ function GeneralTab({ initialSection = null }) {
       break
     case 'launcher':
       activeSectionContent = <ComfyLauncherSettingsSection onOpenLogViewer={() => setLogViewerOpen(true)} />
+      break
+    case 'capabilities':
+      activeSectionContent = <CapabilitiesSettingsSection />
       break
     case 'appearance':
       activeSectionContent = (

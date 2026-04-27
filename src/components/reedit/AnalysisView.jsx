@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState } from 'react'
-import { FileText, Loader2, AlertCircle, PlayCircle, RotateCcw, Sparkles, StopCircle, Eye, EyeOff, Cpu, KeyRound, Wand2, CheckCircle2 } from 'lucide-react'
+import { FileText, Loader2, AlertCircle, PlayCircle, RotateCcw, Sparkles, StopCircle, Eye, EyeOff, Cpu, KeyRound, Wand2, CheckCircle2, RefreshCw, Lightbulb } from 'lucide-react'
 import useProjectStore from '../../stores/projectStore'
-import { captionScenes, pickVisionModelId } from '../../services/reeditCaptioner'
+import { captionScenes, pickVisionModelId, analyzeOverallAd } from '../../services/reeditCaptioner'
 import { resolveActiveClipPath } from '../../services/reeditVideoAnalyzer'
 import { useLlmSettings } from '../../hooks/useLlmSettings'
 import { LLM_BACKENDS, BACKEND_LABELS, ANTHROPIC_MODELS, GEMINI_MODELS } from '../../services/reeditLlmClient'
@@ -80,8 +80,26 @@ function DescriptionCell({ scene }) {
   // shape (toCaptionerShape in reeditCaptioner.js copies audio through).
   const audio = va?.audio ?? struct.audio ?? null
   const graphics = va?.graphics ?? null
+  // Subject + Brand mark bboxes — the hero element's position in frame
+  // and the separate, tighter brand-mark anchor (when a literal logo
+  // is visible). Surfacing both lets the user verify at a glance what
+  // the analyzer captured and whether reframes will land on the brand.
+  const coordsFromBbox = (bbox) => {
+    if (!bbox || !Array.isArray(bbox.box_2d) || bbox.box_2d.length < 4) return null
+    const [ymin, xmin, ymax, xmax] = bbox.box_2d.map((n) => Number(n) / 1000)
+    if (![ymin, xmin, ymax, xmax].every((v) => Number.isFinite(v))) return null
+    return {
+      cx: ((xmin + xmax) / 2).toFixed(2),
+      cy: ((ymin + ymax) / 2).toFixed(2),
+      w: (xmax - xmin).toFixed(2),
+      h: (ymax - ymin).toFixed(2),
+      label: bbox.label || 'subject',
+    }
+  }
+  const subjectCoords = coordsFromBbox(va?.subject_bbox)
+  const brandMarkCoords = coordsFromBbox(va?.brand_mark_bbox)
 
-  if (!visual && !audio && !graphics) {
+  if (!visual && !audio && !graphics && !subjectCoords && !brandMarkCoords) {
     return <span className="text-sf-text-muted italic">— (Run Caption all)</span>
   }
 
@@ -98,6 +116,48 @@ function DescriptionCell({ scene }) {
       {visual && (
         <div className="text-sf-text-primary leading-snug">{visual}</div>
       )}
+
+      {brandMarkCoords && (() => {
+        const loose = Number(brandMarkCoords.w) > 0.3 || Number(brandMarkCoords.h) > 0.3
+        return (
+          <div className={`border-l-2 pl-2 space-y-0.5 ${loose ? 'border-amber-500/40' : 'border-emerald-500/30'}`}>
+            <div className={`text-[9px] uppercase tracking-wider font-medium ${loose ? 'text-amber-300/80' : 'text-emerald-300/80'}`}>Brand mark{loose ? ' (loose bbox)' : ''}</div>
+            <div className="text-[11px] text-sf-text-secondary leading-snug">
+              <span className="text-sf-text-muted">{brandMarkCoords.label} · </span>
+              <span className={`font-mono ${loose ? 'text-amber-300' : 'text-emerald-300'}`}>[{brandMarkCoords.cx},{brandMarkCoords.cy}]</span>
+              <span className="text-sf-text-muted"> (bbox {brandMarkCoords.w}×{brandMarkCoords.h})</span>
+              {loose && (
+                <span className="ml-1.5 text-amber-300/80 italic text-[10px]">
+                  — bbox too loose for a reliable brand-focused reframe
+                </span>
+              )}
+            </div>
+          </div>
+        )
+      })()}
+      {subjectCoords && (() => {
+        // Flag loose bboxes so the user can tell when Gemini picked the
+        // parent object (grille, whole car, the entire face) instead of
+        // the tight subject element (logo, eye, badge). A bbox wider
+        // than 0.3 on either axis will cause the parser to DROP any
+        // REFRAME on this shot (see snapReframeToLogo in reeditProposer.js).
+        const loose = Number(subjectCoords.w) > 0.3 || Number(subjectCoords.h) > 0.3
+        return (
+          <div className={`border-l-2 pl-2 space-y-0.5 ${loose ? 'border-amber-500/40' : 'border-sky-500/30'}`}>
+            <div className={`text-[9px] uppercase tracking-wider font-medium ${loose ? 'text-amber-300/80' : 'text-sky-300/80'}`}>Subject{loose ? ' (loose bbox)' : ''}</div>
+            <div className="text-[11px] text-sf-text-secondary leading-snug">
+              <span className="text-sf-text-muted">{subjectCoords.label} · </span>
+              <span className={`font-mono ${loose ? 'text-amber-300' : 'text-sky-300'}`}>[{subjectCoords.cx},{subjectCoords.cy}]</span>
+              <span className="text-sf-text-muted"> (bbox {subjectCoords.w}×{subjectCoords.h})</span>
+              {loose && (
+                <span className="ml-1.5 text-amber-300/80 italic text-[10px]">
+                  — bbox too wide: any REFRAME on this shot will be auto-dropped
+                </span>
+              )}
+            </div>
+          </div>
+        )
+      })()}
 
       {audioHasAnything && (
         <div className="border-l-2 border-emerald-500/30 pl-2 space-y-0.5">
@@ -212,9 +272,19 @@ function OptimizeFootageCell({ scene, state, onRun, disabled, previewState, onPr
       title="Switch which clip the rest of the pipeline uses for this shot"
     >
       <option value="">Original</option>
-      {stack.map((o) => (
-        <option key={o.version} value={o.version}>{o.version}</option>
-      ))}
+      {stack.map((o) => {
+        // Add a short hint so the dropdown tells the user what kind
+        // of pass produced each version at a glance. VACE outputs
+        // erase on-screen graphics; reframe outputs bake a zoom/crop.
+        const kindHint = o.kind === 'reframe' || /^R/i.test(String(o.version))
+          ? 'reframe'
+          : 'graphics removed'
+        return (
+          <option key={o.version} value={o.version}>
+            {o.version} — {kindHint}
+          </option>
+        )
+      })}
     </select>
   ) : null
 
@@ -368,6 +438,17 @@ function AnalysisView() {
   const [captionError, setCaptionError] = useState(null)
   const abortRef = useRef(null)
 
+  // Per-scene re-caption: { [sceneId]: 'running' | 'error' }. Kept
+  // separate from the batch `captioning` flag so one failing shot can
+  // be retried without freezing the whole view.
+  const [perSceneCaptioning, setPerSceneCaptioning] = useState({})
+
+  // Overall ad analysis (concept / message / mood). Populated by the
+  // "Understand the ad" button at the top of the shot log and persisted
+  // into analysis.overall so it survives reloads.
+  const [overallRunning, setOverallRunning] = useState(false)
+  const [overallError, setOverallError] = useState(null)
+
   // Per-scene optimize state — keyed by sceneId, tracks the full
   // lifecycle of the VACE re-inpaint job (starting / generating_mask /
   // uploading / queued / running / done / error). The ComfyUI server
@@ -506,12 +587,34 @@ function AnalysisView() {
         },
       })
 
+      // Follow up with the overall ad-concept read. Gemini watches the
+      // source video directly; LM Studio / Claude summarise from the
+      // per-shot captions we just produced. If this fails we still save
+      // the captions — the user can retry the overall pass via a re-run
+      // without losing work. Wrapped in its own try so one backend
+      // failure (e.g. source video >20 MB for Gemini inline) doesn't
+      // discard the per-shot captions that just succeeded.
+      setOverallRunning(true)
+      setOverallError(null)
+      let overall = null
+      try {
+        overall = await analyzeOverallAd(updatedScenes, { sourceVideoPath })
+      } catch (err) {
+        console.warn('[reedit] overall ad analysis failed (captions saved):', err)
+        setOverallError(err?.message || String(err))
+      } finally {
+        setOverallRunning(false)
+      }
+
       await saveProject({
         analysis: {
           ...(analysis || {}),
           scenes: updatedScenes,
           captionedAt: new Date().toISOString(),
           captionModel: modelId,
+          overall: overall
+            ? { ...overall, createdAt: new Date().toISOString() }
+            : (analysis?.overall || null),
         },
       })
     } catch (err) {
@@ -543,6 +646,47 @@ function AnalysisView() {
   const cancelCaptioning = () => {
     if (abortRef.current) abortRef.current.aborted = true
   }
+
+  // Re-caption a single scene. Reuses the same captionScenes() so both
+  // backends (Gemini native-video and LM Studio / Claude frame) route
+  // through one code path — we just pass a 1-element array. On success
+  // we merge the updated scene back into analysis.scenes by id, so no
+  // other scene's caption / error / videoAnalysis is touched.
+  const runCaptionOne = async (scene) => {
+    if (perSceneCaptioning[scene.id] === 'running' || captioning) return
+    setPerSceneCaptioning((prev) => ({ ...prev, [scene.id]: 'running' }))
+    try {
+      const modelId = await pickVisionModelId()
+      const projectDirLocal = typeof currentProjectHandle === 'string' ? currentProjectHandle : null
+      const sourceVideoPath = sourceVideo?.path || null
+      const { scenes: updatedOne } = await captionScenes([scene], {
+        modelId,
+        sourceVideoPath,
+        projectDir: projectDirLocal,
+      })
+      const updated = updatedOne?.[0]
+      if (!updated) throw new Error('Re-caption returned no scene.')
+      const nextScenes = scenes.map((s) => (s.id === scene.id ? updated : s))
+      await saveProject({
+        analysis: {
+          ...(analysis || {}),
+          scenes: nextScenes,
+          captionedAt: new Date().toISOString(),
+          captionModel: modelId,
+        },
+      })
+      setPerSceneCaptioning((prev) => {
+        const next = { ...prev }
+        delete next[scene.id]
+        return next
+      })
+    } catch (err) {
+      console.error(`[reedit] re-caption failed for ${scene.id}`, err)
+      setPerSceneCaptioning((prev) => ({ ...prev, [scene.id]: 'error' }))
+      setCaptionError(`Re-caption for ${scene.id}: ${err?.message || String(err)}`)
+    }
+  }
+
 
   const runOptimizeFootage = async (scene) => {
     if (!projectDir) return
@@ -710,10 +854,10 @@ function AnalysisView() {
                 ${hasCaptions
                   ? 'border border-sf-dark-700 bg-sf-dark-900 hover:bg-sf-dark-800 text-sf-text-muted hover:text-sf-text-primary'
                   : 'bg-sf-accent hover:bg-sf-accent-hover text-white'}`}
-              title="Generate visual descriptions via LM Studio"
+              title="Caption each shot and produce the overall ad read (concept / message / mood). One pass; runs against the active LLM backend."
             >
               <Sparkles className="w-3.5 h-3.5" />
-              {hasCaptions ? 'Re-caption all' : 'Caption all'}
+              {hasCaptions ? 'Re-analyze' : 'Analyze'}
             </button>
           )}
           {captioning && (
@@ -771,7 +915,9 @@ function AnalysisView() {
       {captioning && (
         <div className="flex-shrink-0 px-6 py-2 text-xs text-sf-text-muted border-b border-sf-dark-800 flex items-center gap-2">
           <Loader2 className="w-3 h-3 animate-spin" />
-          Captioning scene {captionProgress.current}/{captionProgress.total}
+          {overallRunning
+            ? 'Reading overall ad concept…'
+            : `Analyzing scene ${captionProgress.current}/${captionProgress.total}`}
           {captionProgress.model && (
             <span className="text-sf-text-muted/70">· {captionProgress.model}</span>
           )}
@@ -787,6 +933,81 @@ function AnalysisView() {
         <div className="flex-shrink-0 px-6 py-2 text-xs text-sf-error border-b border-sf-dark-800 flex items-start gap-2">
           <AlertCircle className="w-3.5 h-3.5 mt-0.5 flex-shrink-0" />
           <span>{captionError}</span>
+        </div>
+      )}
+
+      {/* Overall-ad read. Produced as part of the Analyze pass (same
+          button that captions each shot) so there's one action, not
+          two. Persisted into analysis.overall; passed into the proposal
+          prompt as an "original intent" block so the re-edit doesn't
+          drift off the creative concept. Banner is display-only —
+          re-running is just clicking Re-analyze. */}
+      {analysis?.status === 'done' && (analysis?.overall || overallRunning || overallError) && (
+        <div className="flex-shrink-0 border-b border-sf-dark-800 bg-sf-dark-900/40">
+          <div className="px-6 py-3">
+            <div className="flex items-start gap-3">
+              <div className="w-7 h-7 rounded-full bg-amber-500/10 border border-amber-500/30 flex items-center justify-center flex-shrink-0">
+                <Lightbulb className="w-3.5 h-3.5 text-amber-300" />
+              </div>
+              <div className="flex-1 min-w-0">
+                <div className="flex items-center gap-2 mb-1">
+                  <h2 className="text-xs font-semibold uppercase tracking-wider text-sf-text-muted">Ad concept (as understood by the model)</h2>
+                  {overallRunning && <Loader2 className="w-3 h-3 animate-spin text-sf-text-muted" />}
+                </div>
+                {overallError && (
+                  <div className="text-[11px] text-sf-error flex items-start gap-1.5">
+                    <AlertCircle className="w-3 h-3 flex-shrink-0 mt-0.5" />
+                    <span>{overallError}</span>
+                  </div>
+                )}
+                {analysis?.overall && (
+                  <div className="grid grid-cols-1 md:grid-cols-2 gap-x-6 gap-y-1.5 text-[11px] leading-relaxed">
+                    {analysis.overall.concept && (
+                      <div className="md:col-span-2">
+                        <span className="text-sf-text-muted">Concept: </span>
+                        <span className="text-sf-text-primary">{analysis.overall.concept}</span>
+                      </div>
+                    )}
+                    {analysis.overall.message && (
+                      <div className="md:col-span-2">
+                        <span className="text-sf-text-muted">Message: </span>
+                        <span className="text-sf-text-primary">{analysis.overall.message}</span>
+                      </div>
+                    )}
+                    {analysis.overall.mood && (
+                      <div>
+                        <span className="text-sf-text-muted">Mood: </span>
+                        <span className="text-sf-text-secondary">{analysis.overall.mood}</span>
+                      </div>
+                    )}
+                    {analysis.overall.target_audience && (
+                      <div>
+                        <span className="text-sf-text-muted">Audience: </span>
+                        <span className="text-sf-text-secondary">{analysis.overall.target_audience}</span>
+                      </div>
+                    )}
+                    {analysis.overall.brand_role && (
+                      <div className="md:col-span-2">
+                        <span className="text-sf-text-muted">Brand role: </span>
+                        <span className="text-sf-text-secondary">{analysis.overall.brand_role}</span>
+                      </div>
+                    )}
+                    {analysis.overall.narrative_arc && (
+                      <div className="md:col-span-2">
+                        <span className="text-sf-text-muted">Arc: </span>
+                        <span className="text-sf-text-secondary">{analysis.overall.narrative_arc}</span>
+                      </div>
+                    )}
+                    {analysis.overall.model && (
+                      <div className="md:col-span-2 text-[10px] text-sf-text-muted/70 italic">
+                        {analysis.overall.model}
+                      </div>
+                    )}
+                  </div>
+                )}
+              </div>
+            </div>
+          </div>
         </div>
       )}
 
@@ -875,9 +1096,45 @@ function AnalysisView() {
                     <td className="px-3 py-2 tabular-nums text-sf-text-secondary">{scene.duration?.toFixed?.(1) ?? '—'}s</td>
                     <td className="px-3 py-2 text-sf-text-primary leading-snug">
                       <DescriptionCell scene={scene} />
-                      {scene.captionError && (
-                        <div className="mt-1 text-[10px] text-sf-error">Caption failed: {scene.captionError}</div>
+                      {/* Per-scene error + retry. The batch "Caption all"
+                          can skip a shot for several reasons (Gemini
+                          safety filter, empty response, clip >20 MB,
+                          MAX_TOKENS truncation); we surface the exact
+                          reason and a single-click retry so the user
+                          doesn't have to re-caption all 17 shots to fix
+                          the one that failed. */}
+                      {(scene.captionError || scene.videoAnalysisError) && (
+                        <div className="mt-1.5 flex items-start gap-1.5 text-[10px]">
+                          <AlertCircle className="w-3 h-3 text-sf-error flex-shrink-0 mt-0.5" />
+                          <div className="flex-1 text-sf-error">
+                            {scene.captionError || scene.videoAnalysisError}
+                          </div>
+                        </div>
                       )}
+                      <div className="mt-1.5">
+                        <button
+                          type="button"
+                          onClick={() => runCaptionOne(scene)}
+                          disabled={captioning || perSceneCaptioning[scene.id] === 'running' || excluded}
+                          title={excluded
+                            ? 'Include the scene first to re-caption it.'
+                            : (scene.caption || scene.videoAnalysis?.visual)
+                              ? 'Re-caption just this shot (keeps the rest as-is).'
+                              : 'Caption just this shot.'}
+                          className={`inline-flex items-center gap-1 px-1.5 py-0.5 rounded border text-[10px] transition-colors
+                            ${perSceneCaptioning[scene.id] === 'running'
+                              ? 'border-sf-dark-700 bg-sf-dark-800 text-sf-text-muted'
+                              : 'border-sf-dark-700 bg-sf-dark-900 hover:bg-sf-dark-800 text-sf-text-muted hover:text-sf-text-primary'}
+                            ${excluded ? 'opacity-40 cursor-not-allowed' : ''}`}
+                        >
+                          {perSceneCaptioning[scene.id] === 'running' ? (
+                            <Loader2 className="w-3 h-3 animate-spin" />
+                          ) : (
+                            <RefreshCw className="w-3 h-3" />
+                          )}
+                          {(scene.caption || scene.videoAnalysis?.visual) ? 'Re-caption' : 'Caption'}
+                        </button>
+                      </div>
                     </td>
                     <td className="px-3 py-2"><Chip tone="brand">{s.brand}</Chip></td>
                     <td className="px-3 py-2"><Chip tone="emotion">{s.emotion}</Chip></td>

@@ -306,6 +306,101 @@ export async function captionScenes(scenes, {
   return { model, scenes: results }
 }
 
+// Text-only prompt for the LM Studio / Claude path of analyzeOverallAd.
+// The per-shot captions are the closest proxy we have to "the model
+// watched the ad" when we can't actually feed it the video. We show the
+// captions in order with timecodes so the model can reason about the
+// narrative arc without needing to see frames.
+const OVERALL_TEXT_SYSTEM_PROMPT = `You are a senior creative strategist reviewing an advertisement. You are given a sequential shot log — one entry per cut — and must infer the ad's high-level read from it. Return ONLY a JSON object, no prose, no markdown fences.`
+
+function buildShotLogSummary(scenes) {
+  const lines = []
+  for (const s of scenes || []) {
+    if (s?.excluded) continue
+    const tc = typeof s.tcIn === 'number' ? `${s.tcIn.toFixed(1)}s` : '—'
+    const visual = s?.videoAnalysis?.visual || s?.structured?.visual || s?.caption || '(no caption)'
+    const audio = s?.videoAnalysis?.audio
+    const vo = audio?.voiceover_transcript ? ` · VO: "${audio.voiceover_transcript}"` : ''
+    const music = audio?.music ? ` · Music: ${audio.music}` : ''
+    lines.push(`Shot ${s.index} @ ${tc}: ${visual}${vo}${music}`)
+  }
+  return lines.join('\n')
+}
+
+const OVERALL_TEXT_USER_PROMPT_TEMPLATE = (shotLog) => `Here is the per-shot description of the ad, in order:
+
+${shotLog}
+
+Return a JSON object with exactly these fields:
+
+{
+  "concept": "1-2 sentences describing the creative concept / central idea driving the ad.",
+  "message": "1 sentence capturing the single takeaway the viewer should walk away with.",
+  "mood": "3-6 words summarising the emotional register.",
+  "target_audience": "1 sentence describing who this is speaking to.",
+  "brand_role": "1 sentence on how the brand / product appears in the ad.",
+  "narrative_arc": "1-2 sentences summarising the beat structure (setup → turn → payoff)."
+}
+
+Rules:
+- If you truly cannot determine a field from what the shot log contains, use null.
+- Return the JSON object only.`
+
+/**
+ * High-level "did the model understand the ad" pass. Returns
+ * { concept, message, mood, target_audience, brand_role, narrative_arc,
+ * rawText, model }. Dispatches to the Gemini-native video analyzer when
+ * Gemini is the selected backend (most accurate — model actually watches
+ * the ad) and to a text-only summary from the existing per-shot captions
+ * otherwise. Callers should run `captionScenes` first; without captions,
+ * the text-only path has nothing meaningful to summarise.
+ */
+export async function analyzeOverallAd(scenes, {
+  sourceVideoPath,
+  modelOverride,
+  temperature = 0.3,
+} = {}) {
+  const settings = loadLlmSettings()
+
+  if (settings.backend === LLM_BACKENDS.GEMINI) {
+    if (!sourceVideoPath) {
+      throw new Error('Overall analysis (Gemini) needs the source video path.')
+    }
+    const { analyzeOverallVideo } = await import('./reeditVideoAnalyzer')
+    return await analyzeOverallVideo({ sourceVideoPath, modelOverride, temperature })
+  }
+
+  // Text-only fallback for LM Studio / Claude. Shot log is required —
+  // we don't pretend to infer ad intent from scene count alone.
+  const captioned = (scenes || []).filter((s) => !s?.excluded && (s?.caption || s?.videoAnalysis?.visual || s?.structured?.visual))
+  if (captioned.length === 0) {
+    throw new Error('No captioned shots available. Run "Caption all" first, then retry.')
+  }
+  const shotLog = buildShotLogSummary(scenes)
+  const messages = [
+    { role: 'system', content: OVERALL_TEXT_SYSTEM_PROMPT },
+    { role: 'user', content: OVERALL_TEXT_USER_PROMPT_TEMPLATE(shotLog) },
+  ]
+  const response = await chatCompletion({
+    messages,
+    temperature,
+    maxTokens: 1500,
+  })
+  const rawText = response?.choices?.[0]?.message?.content || ''
+  if (!rawText) throw new Error('LLM returned an empty response for the overall analysis.')
+  const parsed = extractJson(rawText) || {}
+  return {
+    concept: parsed.concept || null,
+    message: parsed.message || null,
+    mood: parsed.mood || null,
+    target_audience: parsed.target_audience || null,
+    brand_role: parsed.brand_role || null,
+    narrative_arc: parsed.narrative_arc || null,
+    rawText,
+    model: response?.model || 'unknown',
+  }
+}
+
 // Map the richer video-analysis schema back to the five fields
 // AnalysisView's chip row renders. The extra fields (camera_movement,
 // audio, tempo_cue, etc.) are still available on scene.videoAnalysis

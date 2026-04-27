@@ -198,6 +198,30 @@ const LETTERBOX_PRESETS = [
 const AUTO_SMOOTH_PREVIEW_KEY = 'comfystudio-auto-smooth-preview'
 const PREVIEW_TRANSFORM_CONTROLS_KEY = 'previewShowTransformControls'
 
+// Human-readable labels for the commit pipeline stages. The strings
+// are short because the banner sits over the playable area — we want
+// it informative but not dominant. The reframe vs extend verbs differ
+// on the "running" stage (upscaling vs generating) so we key per-kind.
+const REFRAME_STAGE_LABEL = {
+  starting: 'Starting…',
+  pre_cropping: 'Pre-cropping source…',
+  uploading: 'Uploading to ComfyUI…',
+  queued_submit: 'Queueing…',
+  queued: 'Waiting in queue…',
+  running: 'Upscaling…',
+  finalizing: 'Finalizing…',
+}
+
+const EXTEND_STAGE_LABEL = {
+  starting: 'Starting…',
+  extracting_last_frame: 'Extracting last frame…',
+  uploading: 'Uploading to ComfyUI…',
+  queued_submit: 'Queueing…',
+  queued: 'Waiting in queue…',
+  running: 'Extending…',
+  finalizing: 'Concatenating…',
+}
+
 function PreviewPanel() {
   const videoRefA = useRef(null) // Used for asset preview mode
   const containerRef = useRef(null)
@@ -228,6 +252,45 @@ function PreviewPanel() {
   const [capturingStillFrame, setCapturingStillFrame] = useState(false)
   
   const setFrameForAI = useFrameForAIStore((s) => s.setFrame)
+
+  // Commit jobs in flight — reframe + extend tracked separately so the
+  // banner can pick the right label per-kind. Keyed by sceneId so
+  // future batch commits can show one entry per scene. Duplicating the
+  // IPC listener here is safe (Electron's ipcRenderer.on ADDS handlers
+  // rather than replacing), so InspectorPanel still gets its copy for
+  // the button state while the banner lives in this component.
+  const [reframeJobs, setReframeJobs] = useState({})
+  const [extendJobs, setExtendJobs] = useState({})
+  useEffect(() => {
+    const unsubReframe = window.electronAPI?.onCommitReframeProgress?.((payload) => {
+      if (!payload?.sceneId) return
+      setReframeJobs((prev) => ({
+        ...prev,
+        [payload.sceneId]: { ...(prev[payload.sceneId] || {}), ...payload },
+      }))
+    })
+    const unsubExtend = window.electronAPI?.onCommitExtendProgress?.((payload) => {
+      if (!payload?.sceneId) return
+      setExtendJobs((prev) => ({
+        ...prev,
+        [payload.sceneId]: { ...(prev[payload.sceneId] || {}), ...payload },
+      }))
+    })
+    return () => {
+      try { unsubReframe?.() } catch (_) { /* ignore */ }
+      try { unsubExtend?.() } catch (_) { /* ignore */ }
+    }
+  }, [])
+  // Pick one active job to advertise on the banner. If both a reframe
+  // and an extend are running simultaneously (rare but possible on
+  // different scenes), we prefer extend since it's the longer pass.
+  const activeCommitJob = useMemo(() => {
+    const extendActive = Object.values(extendJobs).find((j) => j.stage && !['done', 'error'].includes(j.stage))
+    if (extendActive) return { kind: 'extend', ...extendActive }
+    const reframeActive = Object.values(reframeJobs).find((j) => j.stage && !['done', 'error'].includes(j.stage))
+    if (reframeActive) return { kind: 'reframe', ...reframeActive }
+    return null
+  }, [reframeJobs, extendJobs])
   
   // Mask preview state (for multi-frame mask playback)
   const [maskFrame, setMaskFrame] = useState(0)
@@ -1864,12 +1927,37 @@ function PreviewPanel() {
       >
         {/* Wrapper for video container and guides overlay */}
         <div className="relative" style={getAspectRatioStyle()}>
-          <div 
+          <div
             ref={containerRef}
             className="relative bg-black overflow-hidden w-full h-full"
             style={previewStageStyle}
             onContextMenu={handleContextMenu}
           >
+              {/* Commit banner — reframe (upscale) or extend (i2v) job
+                  currently running in the background. Pinned to the top
+                  of the preview, survives tab switches thanks to the
+                  mount-persistent layout in App.jsx, and duplicates the
+                  IPC listener so we don't depend on InspectorPanel
+                  being the active view. */}
+              {activeCommitJob && (
+                <div className="absolute top-0 left-0 right-0 z-[60] pt-2 flex justify-center pointer-events-none">
+                  <div className={`flex items-center gap-2 px-3 py-1.5 rounded-full text-white text-xs font-medium shadow-lg backdrop-blur-sm border
+                    ${activeCommitJob.kind === 'extend'
+                      ? 'bg-purple-600/90 border-purple-500/40'
+                      : 'bg-sf-accent/90 border-sf-accent/40'}`}>
+                    <Loader2 className="w-3.5 h-3.5 animate-spin" />
+                    <span>
+                      {activeCommitJob.kind === 'extend'
+                        ? (EXTEND_STAGE_LABEL[activeCommitJob.stage] || 'Extending…')
+                        : (REFRAME_STAGE_LABEL[activeCommitJob.stage] || 'Upscaling…')}
+                    </span>
+                    {activeCommitJob.elapsedSec ? (
+                      <span className="text-white/70 tabular-nums">{activeCommitJob.elapsedSec}s</span>
+                    ) : null}
+                  </div>
+                </div>
+              )}
+
               {/* Timeline Playback Mode */}
             {previewMode === 'timeline' && clips.length > 0 ? (
               <>

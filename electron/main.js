@@ -2100,6 +2100,32 @@ function buildWanVaceWorkflow({
   }
 }
 
+// Bare upscale workflow — load video → RealESRGAN upscale → scale to
+// target → save. No VACE, no text encoder, no sampler. Used by the
+// Commit reframe path where the reframe was already baked into a
+// pre-cropped MP4 via ffmpeg and all ComfyUI needs to do is bring the
+// resolution back up for delivery. Roughly 1/20th the cost of a VACE
+// pass for a clip of the same length.
+function buildUpscaleOnlyWorkflow({ inputName, outputPrefix, targetW, targetH, fps, upscaleModel }) {
+  // per_batch=1: the commit reframe pre-crop is full-frame (e.g. ~1500×840
+  // for a 1.3× zoom into 1920×1080), and the 4x upscale model blows that up
+  // to ~6000×3360 per frame before the ImageScale downstream brings it back
+  // to delivery size. With per_batch=4 the 4070's 12 GiB budget overflows
+  // after the upscale model itself is loaded (~9.5 GiB resident) —
+  // one frame at a time fits. downscale_ratio is a POST-upscale factor in
+  // the 0.01–1.0 range: 1.0 keeps the full 4x output, 0.5 halves it back
+  // (so net 2x), 0.25 brings it back to input size. 0.5 cuts the peak
+  // intermediate tensor by 4x without visible quality loss since ImageScale
+  // is downsizing it anyway, and stays well within 12 GiB.
+  return {
+    '1': { class_type: 'VHS_LoadVideo', inputs: { video: inputName, force_rate: 0, custom_width: 0, custom_height: 0, frame_load_cap: 0, skip_first_frames: 0, select_every_nth: 1, format: 'AnimateDiff' } },
+    '2': { class_type: 'UpscaleModelLoader', inputs: { model_name: upscaleModel || '4x_NMKD-Siax_200k.pth' } },
+    '3': { class_type: 'ImageUpscaleWithModelBatched', inputs: { upscale_model: ['2', 0], images: ['1', 0], per_batch: 1, downscale_ratio: 0.5, downscale_method: 'lanczos', precision: 'float16' } },
+    '4': { class_type: 'ImageScale', inputs: { image: ['3', 0], upscale_method: 'lanczos', width: targetW, height: targetH, crop: 'disabled' } },
+    '5': { class_type: 'VHS_VideoCombine', inputs: { images: ['4', 0], frame_rate: fps, loop_count: 0, filename_prefix: outputPrefix, format: 'video/h264-mp4', pingpong: false, save_output: true } },
+  }
+}
+
 // Negative prompt re-used across all optimize runs. Targets the usual
 // VACE failure modes (ghost text, duplicate frames, inpainting
 // artifacts) and the specific things we're trying to remove.
@@ -2622,6 +2648,505 @@ ipcMain.handle('analysis:optimizeFootage', async (event, options) => {
 })
 
 // ============================================
+// Commit reframe (zoom/pan → upscale + crop)
+// ============================================
+//
+// Handler for the "Commit reframe" button in InspectorPanel. Given a
+// scene that's currently being previewed with a zoom/pan transform on
+// the timeline, this bakes the reframe into a physical MP4:
+//   1. ffmpeg pre-crops the original sub-clip by `crop=<w>:<h>:<x>:<y>`
+//      derived from the zoom/anchor params, scaling the crop back to
+//      the target delivery resolution (pixel-for-pixel what the user
+//      was previewing, but as an actual file).
+//   2. The pre-cropped video goes to ComfyUI for a RealESRGAN x4 pass
+//      which lifts the effective resolution back to delivery-quality.
+//   3. The final file lands in `.reedit/optimized/<sceneId>_R{NN}.mp4`
+//      and slots into the same `scene.optimizations[]` stack as the
+//      VACE `V{NN}` outputs, so the version dropdown + resolver work
+//      without any new plumbing.
+ipcMain.handle('analysis:commitReframe', async (event, options) => {
+  const {
+    sceneId, sourceVideoPath, projectDir,
+    zoom, anchorX, anchorY,
+    targetW, targetH,
+    comfyUrl: comfyUrlOpt,
+    upscaleModel: upscaleModelOpt,
+  } = options || {}
+  if (!sceneId) return { success: false, error: 'sceneId required.' }
+  if (!projectDir) return { success: false, error: 'projectDir required.' }
+  const comfyUrl = comfyUrlOpt || 'http://localhost:8000'
+  // Fall back to the shipped default when the renderer didn't pass one;
+  // older callers (before capability settings existed) omit the field.
+  const upscaleModel = upscaleModelOpt || '4x_NMKD-Siax_200k.pth'
+
+  const emit = (stage, extra = {}) => {
+    try { event.sender.send('analysis:commitReframe:progress', { sceneId, stage, ...extra }) } catch (_) { /* renderer closed */ }
+  }
+  emit('starting')
+
+  const projectDirFwd = projectDir.replace(/\\/g, '/')
+  const sourceClipPath = path.join(projectDirFwd, '.reedit', 'clips', `${sceneId}.mp4`)
+  try {
+    const st = await fs.stat(sourceClipPath)
+    if (!st || st.size < 1024) throw new Error('empty')
+  } catch {
+    return { success: false, error: `Source clip not found at ${sourceClipPath}. The scene needs to have been captioned or optimized at least once so the cached sub-clip exists.` }
+  }
+
+  // Probe clip to know native dims + fps.
+  const meta = await probeVideoMeta(sourceClipPath)
+  if (!meta?.width || !meta?.height || !meta?.fps) {
+    return { success: false, error: 'ffprobe failed to read clip metadata.' }
+  }
+  const srcW = meta.width
+  const srcH = meta.height
+  const fps = meta.fps
+  const outW = Math.round(Number(targetW) || srcW)
+  const outH = Math.round(Number(targetH) || srcH)
+
+  // Derive crop window from zoom + anchor. The cropped region is the
+  // rectangle centered on (anchorX, anchorY) whose dimensions are the
+  // source divided by zoom — pick the same aspect as the target so the
+  // subsequent scale is a pure pixel rescale, no letterboxing.
+  const zoomClamped = Math.max(1, Math.min(3, Number(zoom) || 1.2))
+  // Keep the target aspect; width-limited or height-limited depending
+  // on which of the two requires a smaller crop at the requested zoom.
+  const targetAspect = outW / outH
+  const srcAspect = srcW / srcH
+  let cropW, cropH
+  if (targetAspect >= srcAspect) {
+    // Target is wider or equal — width is the limiting dimension.
+    cropW = Math.round(srcW / zoomClamped)
+    cropH = Math.round(cropW / targetAspect)
+  } else {
+    cropH = Math.round(srcH / zoomClamped)
+    cropW = Math.round(cropH * targetAspect)
+  }
+  // Anchor defines the center of the crop in source coords. Clamp so
+  // the crop stays fully inside the source frame.
+  const axClamped = Math.max(0, Math.min(1, Number(anchorX) ?? 0.5))
+  const ayClamped = Math.max(0, Math.min(1, Number(anchorY) ?? 0.5))
+  const cropCenterX = axClamped * srcW
+  const cropCenterY = ayClamped * srcH
+  let cropX = Math.round(cropCenterX - cropW / 2)
+  let cropY = Math.round(cropCenterY - cropH / 2)
+  cropX = Math.max(0, Math.min(srcW - cropW, cropX))
+  cropY = Math.max(0, Math.min(srcH - cropH, cropY))
+
+  emit('pre_cropping', { cropW, cropH, cropX, cropY, zoom: zoomClamped })
+
+  const projectOptimizedDir = path.join(projectDirFwd, '.reedit', 'optimized')
+  try { await fs.mkdir(projectOptimizedDir, { recursive: true }) } catch (_) { /* ignore */ }
+  // Scan existing R-tagged entries so the new output gets the next
+  // free number. Runs with V-tagged VACE outputs are skipped — they
+  // live in the same directory but don't compete for R slots.
+  const existing = await fs.readdir(projectOptimizedDir).catch(() => [])
+  const versionRe = new RegExp(`^${sceneId.replace(/[.*+?^${}()|[\\]\\\\]/g, '\\$&')}_R(\\d{2,})(?:[_.]|$)`)
+  let nextVersion = 1
+  for (const name of existing) {
+    const m = name.match(versionRe)
+    if (m) {
+      const n = parseInt(m[1], 10)
+      if (Number.isFinite(n) && n >= nextVersion) nextVersion = n + 1
+    }
+  }
+  const versionTag = `R${String(nextVersion).padStart(2, '0')}`
+  emit('note', { message: `Writing version ${versionTag}.` })
+
+  // Pre-crop via ffmpeg: the output is already at the delivery aspect
+  // but at a sub-frame resolution (since we zoomed in). ComfyUI will
+  // upscale that back to delivery-quality in the next step. We write
+  // straight into the project dir with a distinct `_pre_crop.mp4`
+  // suffix so the commit is easy to inspect / debug.
+  const preCropPath = path.join(projectOptimizedDir, `${sceneId}_${versionTag}_pre_crop.mp4`)
+  const cropExpr = `crop=${cropW}:${cropH}:${cropX}:${cropY}`
+  await new Promise((resolve, reject) => {
+    const args = [
+      '-hide_banner', '-nostats',
+      '-i', sourceClipPath,
+      '-vf', `${cropExpr},setsar=1`,
+      '-c:v', 'libx264', '-preset', 'veryfast', '-crf', '18',
+      '-pix_fmt', 'yuv420p',
+      '-c:a', 'aac', '-b:a', '192k',
+      '-movflags', '+faststart',
+      '-y', preCropPath,
+    ]
+    const proc = spawn(ffmpegPath, args, { windowsHide: true })
+    let stderr = ''
+    proc.stderr.on('data', (d) => { stderr += d.toString() })
+    proc.on('close', (code) => {
+      if (code === 0) resolve()
+      else reject(new Error(`ffmpeg pre-crop failed (${code}): ${stderr.slice(-300)}`))
+    })
+    proc.on('error', reject)
+  }).catch((err) => {
+    throw err
+  })
+
+  emit('uploading')
+
+  // Copy pre-crop into ComfyUI input. Follow the same naming pattern
+  // optimizeFootage uses so the file is namespaced by project + scene.
+  const comfyInputDir = await resolveComfyInputDir(comfyUrl)
+  if (!comfyInputDir) {
+    return { success: false, error: `Could not determine ComfyUI input dir from ${comfyUrl}/system_stats — is ComfyUI running?` }
+  }
+  const prefix = `reedit_${sanitizeForFilename(path.basename(projectDir))}_${sanitizeForFilename(sceneId)}_${versionTag}`
+  const comfyInputName = `${prefix}_pre_crop.mp4`
+  const comfyInputFullPath = path.join(comfyInputDir, comfyInputName)
+  try {
+    await copyFileOverwrite(preCropPath, comfyInputFullPath)
+  } catch (err) {
+    return { success: false, error: `Failed to copy pre-crop into ComfyUI input dir: ${err.message}` }
+  }
+
+  emit('queued_submit')
+  const outputPrefix = `reedit_optimized/${sanitizeForFilename(path.basename(projectDir))}_${sanitizeForFilename(sceneId)}_${versionTag}`
+  const workflow = buildUpscaleOnlyWorkflow({
+    inputName: comfyInputName,
+    outputPrefix,
+    targetW: outW,
+    targetH: outH,
+    fps,
+    upscaleModel,
+  })
+
+  let promptId
+  try {
+    const submitRes = await net.fetch(`${comfyUrl}/prompt`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ prompt: workflow }),
+    })
+    if (!submitRes.ok) {
+      const body = await submitRes.text().catch(() => '')
+      return { success: false, error: `ComfyUI rejected the workflow (${submitRes.status}): ${body.slice(0, 400)}` }
+    }
+    const submitJson = await submitRes.json()
+    promptId = submitJson?.prompt_id
+    if (!promptId) return { success: false, error: 'ComfyUI returned no prompt_id.' }
+  } catch (err) {
+    return { success: false, error: `Could not reach ComfyUI at ${comfyUrl}: ${err.message}` }
+  }
+
+  emit('queued', { promptId })
+
+  // Poll for completion. Upscale-only is much faster than VACE —
+  // 30-90 s typically on an RTX 4070 for a 30s clip — but keep the
+  // same 20-minute cap as optimizeFootage for safety.
+  const MAX_POLL_MS = 20 * 60 * 1000
+  const POLL_EVERY_MS = 3000
+  const startedAt = Date.now()
+  let result
+  while (true) {
+    if (Date.now() - startedAt > MAX_POLL_MS) {
+      return { success: false, error: `Timed out waiting for ${promptId} after ${MAX_POLL_MS / 60000} min.` }
+    }
+    try {
+      const histRes = await net.fetch(`${comfyUrl}/history/${promptId}`)
+      if (histRes.ok) {
+        const hist = await histRes.json()
+        const entry = hist?.[promptId]
+        if (entry?.status?.completed) {
+          result = entry
+          break
+        }
+        if (entry?.status?.status_str === 'error') {
+          const msgs = (entry.status.messages || []).map((m) => JSON.stringify(m)).join(' | ')
+          return { success: false, error: `ComfyUI reported workflow error: ${msgs.slice(0, 600)}` }
+        }
+      }
+    } catch (err) {
+      emit('poll_warn', { message: err.message })
+    }
+    emit('running', { elapsedSec: Math.round((Date.now() - startedAt) / 1000) })
+    await new Promise((r) => setTimeout(r, POLL_EVERY_MS))
+  }
+
+  // Pull the finished video off ComfyUI's history entry and drop it
+  // into the project's .reedit/optimized/ dir under the R{NN} tag so
+  // it joins the same stack as V-series outputs. The resolver picks
+  // up the tag string without caring about the V / R prefix.
+  let outputFile = null
+  for (const out of Object.values(result.outputs || {})) {
+    const gifs = Array.isArray(out?.gifs) ? out.gifs : []
+    for (const g of gifs) {
+      if (g?.fullpath) { outputFile = g.fullpath; break }
+    }
+    if (outputFile) break
+  }
+  if (!outputFile) {
+    return { success: false, error: 'Workflow completed but no video output was reported in history.' }
+  }
+
+  const finalPath = path.join(projectOptimizedDir, `${sceneId}_${versionTag}.mp4`)
+  try {
+    await copyFileOverwrite(outputFile, finalPath)
+  } catch (err) {
+    emit('note', { message: `Could not copy final to project dir (${err.message}); using ComfyUI output path.` })
+    emit('done', { promptId, outputPath: outputFile, version: versionTag, inProjectDir: false })
+    return { success: true, promptId, outputPath: outputFile, version: versionTag, inProjectDir: false, kind: 'reframe' }
+  }
+
+  emit('done', { promptId, outputPath: finalPath, version: versionTag, inProjectDir: true })
+  return {
+    success: true,
+    promptId,
+    outputPath: finalPath,
+    version: versionTag,
+    inProjectDir: true,
+    kind: 'reframe',
+    preCropPath,
+    cropInfo: { cropW, cropH, cropX, cropY, zoom: zoomClamped, anchorX: axClamped, anchorY: ayClamped },
+  }
+})
+
+// ============================================
+// Footage extend: add up to +2 s of AI-generated continuation to a shot
+// ============================================
+//
+// Mirrors commitReframe in shape (starting → queued → running → done)
+// but does image-to-video instead of upscale:
+//   1. Extract the clip's last frame as a PNG (ffmpeg -sseof -0.05).
+//   2. Upload the PNG to ComfyUI's input directory.
+//   3. Submit the LTX 2.3 i2v workflow the renderer pre-patched with
+//      duration / size / fps / prompt.
+//   4. Poll /history until the tail clip is ready.
+//   5. ffmpeg concat-demuxer the original sub-clip + the tail into a
+//      single MP4 saved under .reedit/optimized/<sceneId>_E{NN}.mp4.
+//   6. Reply with the version tag so the renderer can register the
+//      E-tagged entry into the scene's optimization stack.
+ipcMain.handle('analysis:commitExtend', async (event, options) => {
+  const {
+    sceneId, projectDir, extendSec,
+    workflow, loadImageNodeId,
+    comfyUrl: comfyUrlOpt,
+  } = options || {}
+  if (!sceneId) return { success: false, error: 'sceneId required.' }
+  if (!projectDir) return { success: false, error: 'projectDir required.' }
+  if (!workflow || typeof workflow !== 'object') return { success: false, error: 'workflow (patched LTX i2v JSON) required.' }
+  if (!loadImageNodeId) return { success: false, error: 'loadImageNodeId required so we can inject the last-frame image name.' }
+  const comfyUrl = comfyUrlOpt || 'http://localhost:8000'
+  const wantExtendSec = Math.max(0.2, Math.min(2, Number(extendSec) || 1))
+
+  const emit = (stage, extra = {}) => {
+    try { event.sender.send('analysis:commitExtend:progress', { sceneId, stage, ...extra }) } catch (_) { /* renderer closed */ }
+  }
+  emit('starting')
+
+  const projectDirFwd = projectDir.replace(/\\/g, '/')
+  const sourceClipPath = path.join(projectDirFwd, '.reedit', 'clips', `${sceneId}.mp4`)
+  try {
+    const st = await fs.stat(sourceClipPath)
+    if (!st || st.size < 1024) throw new Error('empty')
+  } catch {
+    return { success: false, error: `Source clip not found at ${sourceClipPath}. The scene needs to have been captioned or optimized at least once so the cached sub-clip exists.` }
+  }
+
+  const meta = await probeVideoMeta(sourceClipPath)
+  if (!meta?.width || !meta?.height || !meta?.fps) {
+    return { success: false, error: 'ffprobe failed to read clip metadata.' }
+  }
+  const fps = meta.fps
+
+  const projectOptimizedDir = path.join(projectDirFwd, '.reedit', 'optimized')
+  try { await fs.mkdir(projectOptimizedDir, { recursive: true }) } catch (_) { /* ignore */ }
+  // Pick the next E{NN} slot without clobbering existing R/V entries.
+  const existing = await fs.readdir(projectOptimizedDir).catch(() => [])
+  const versionRe = new RegExp(`^${sceneId.replace(/[.*+?^${}()|[\\]\\\\]/g, '\\$&')}_E(\\d{2,})(?:[_.]|$)`)
+  let nextVersion = 1
+  for (const name of existing) {
+    const m = name.match(versionRe)
+    if (m) {
+      const n = parseInt(m[1], 10)
+      if (Number.isFinite(n) && n >= nextVersion) nextVersion = n + 1
+    }
+  }
+  const versionTag = `E${String(nextVersion).padStart(2, '0')}`
+  emit('note', { message: `Writing version ${versionTag}.` })
+
+  // Step 1 — extract last frame as PNG. `-sseof -0.05` seeks to 50 ms
+  // before EOF which reliably lands on the last decoded frame (plain
+  // `-sseof -0` returns nothing on some containers). We use PNG for a
+  // lossless handoff to ComfyUI's LoadImage node.
+  emit('extracting_last_frame')
+  const lastFrameLocalPath = path.join(projectOptimizedDir, `${sceneId}_${versionTag}_last_frame.png`)
+  await new Promise((resolve, reject) => {
+    const args = [
+      '-hide_banner', '-nostats',
+      '-sseof', '-0.05',
+      '-i', sourceClipPath,
+      '-frames:v', '1',
+      '-q:v', '2',
+      '-y', lastFrameLocalPath,
+    ]
+    const proc = spawn(ffmpegPath, args, { windowsHide: true })
+    let stderr = ''
+    proc.stderr.on('data', (d) => { stderr += d.toString() })
+    proc.on('close', (code) => {
+      if (code === 0) resolve()
+      else reject(new Error(`ffmpeg last-frame extract failed (${code}): ${stderr.slice(-300)}`))
+    })
+    proc.on('error', reject)
+  }).catch((err) => { throw err })
+
+  // Step 2 — copy the PNG into ComfyUI's input dir so LoadImage can
+  // reach it by filename without needing an /upload round-trip.
+  emit('uploading')
+  const comfyInputDir = await resolveComfyInputDir(comfyUrl)
+  if (!comfyInputDir) {
+    return { success: false, error: `Could not determine ComfyUI input dir from ${comfyUrl}/system_stats — is ComfyUI running?` }
+  }
+  const prefix = `reedit_${sanitizeForFilename(path.basename(projectDir))}_${sanitizeForFilename(sceneId)}_${versionTag}`
+  const comfyInputName = `${prefix}_last_frame.png`
+  const comfyInputFullPath = path.join(comfyInputDir, comfyInputName)
+  try {
+    await copyFileOverwrite(lastFrameLocalPath, comfyInputFullPath)
+  } catch (err) {
+    return { success: false, error: `Failed to copy last frame into ComfyUI input dir: ${err.message}` }
+  }
+
+  // Step 3 — inject the uploaded image name into the workflow's
+  // LoadImage node. The renderer pre-patched everything else (prompt,
+  // size, fps, duration, seed) because those come from the LTX i2v
+  // template loader in reeditGenerate.js.
+  const patchedWorkflow = JSON.parse(JSON.stringify(workflow))
+  if (patchedWorkflow[loadImageNodeId]?.inputs) {
+    patchedWorkflow[loadImageNodeId].inputs.image = comfyInputName
+  } else {
+    return { success: false, error: `Workflow has no node ${loadImageNodeId} to inject the input image into.` }
+  }
+
+  emit('queued_submit')
+  let promptId
+  try {
+    const submitRes = await net.fetch(`${comfyUrl}/prompt`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ prompt: patchedWorkflow }),
+    })
+    if (!submitRes.ok) {
+      const body = await submitRes.text().catch(() => '')
+      return { success: false, error: `ComfyUI rejected the workflow (${submitRes.status}): ${body.slice(0, 400)}` }
+    }
+    const submitJson = await submitRes.json()
+    promptId = submitJson?.prompt_id
+    if (!promptId) return { success: false, error: 'ComfyUI returned no prompt_id.' }
+  } catch (err) {
+    return { success: false, error: `Could not reach ComfyUI at ${comfyUrl}: ${err.message}` }
+  }
+
+  emit('queued', { promptId })
+
+  const MAX_POLL_MS = 20 * 60 * 1000
+  const POLL_EVERY_MS = 3000
+  const startedAt = Date.now()
+  let result
+  while (true) {
+    if (Date.now() - startedAt > MAX_POLL_MS) {
+      return { success: false, error: `Timed out waiting for ${promptId} after ${MAX_POLL_MS / 60000} min.` }
+    }
+    try {
+      const histRes = await net.fetch(`${comfyUrl}/history/${promptId}`)
+      if (histRes.ok) {
+        const hist = await histRes.json()
+        const entry = hist?.[promptId]
+        if (entry?.status?.completed) {
+          result = entry
+          break
+        }
+        if (entry?.status?.status_str === 'error') {
+          const msgs = (entry.status.messages || []).map((m) => JSON.stringify(m)).join(' | ')
+          return { success: false, error: `ComfyUI reported workflow error: ${msgs.slice(0, 600)}` }
+        }
+      }
+    } catch (err) {
+      emit('poll_warn', { message: err.message })
+    }
+    emit('running', { elapsedSec: Math.round((Date.now() - startedAt) / 1000) })
+    await new Promise((r) => setTimeout(r, POLL_EVERY_MS))
+  }
+
+  // Step 4 — find the generated tail MP4 in the history outputs.
+  // LTX's SaveVideo / VHS_VideoCombine nodes report via `videos` or
+  // `gifs` depending on version; accept either.
+  let tailOutputFile = null
+  for (const out of Object.values(result.outputs || {})) {
+    const candidates = [
+      ...(Array.isArray(out?.videos) ? out.videos : []),
+      ...(Array.isArray(out?.gifs) ? out.gifs : []),
+    ]
+    for (const c of candidates) {
+      if (c?.fullpath) { tailOutputFile = c.fullpath; break }
+    }
+    if (tailOutputFile) break
+  }
+  if (!tailOutputFile) {
+    return { success: false, error: 'Workflow completed but no video output was reported in history.' }
+  }
+
+  // Copy the tail into the project dir so we don't depend on ComfyUI's
+  // output folder sticking around between runs.
+  const tailLocalPath = path.join(projectOptimizedDir, `${sceneId}_${versionTag}_tail.mp4`)
+  try {
+    await copyFileOverwrite(tailOutputFile, tailLocalPath)
+  } catch (err) {
+    return { success: false, error: `Could not copy ComfyUI tail output: ${err.message}` }
+  }
+
+  // Step 5 — concat original + tail via the concat demuxer. Writing the
+  // list file with forward-slash paths + -safe 0 avoids the Windows
+  // path-escape minefield that `-f concat` is known for. We re-encode
+  // to libx264 so mismatched codec params from the LTX output don't
+  // trip the demuxer — a stream-copy concat only works when timebase,
+  // codec, and GOP match, which isn't guaranteed here.
+  emit('finalizing')
+  const listFilePath = path.join(projectOptimizedDir, `${sceneId}_${versionTag}_concat.txt`)
+  const toListLine = (p) => `file '${p.replace(/\\/g, '/').replace(/'/g, "'\\''")}'`
+  const listBody = `${toListLine(sourceClipPath)}\n${toListLine(tailLocalPath)}\n`
+  await fs.writeFile(listFilePath, listBody, 'utf8')
+  const finalPath = path.join(projectOptimizedDir, `${sceneId}_${versionTag}.mp4`)
+  await new Promise((resolve, reject) => {
+    const args = [
+      '-hide_banner', '-nostats',
+      '-f', 'concat', '-safe', '0',
+      '-i', listFilePath,
+      '-c:v', 'libx264', '-preset', 'veryfast', '-crf', '18',
+      '-pix_fmt', 'yuv420p',
+      '-c:a', 'aac', '-b:a', '192k',
+      '-movflags', '+faststart',
+      '-y', finalPath,
+    ]
+    const proc = spawn(ffmpegPath, args, { windowsHide: true })
+    let stderr = ''
+    proc.stderr.on('data', (d) => { stderr += d.toString() })
+    proc.on('close', (code) => {
+      if (code === 0) resolve()
+      else reject(new Error(`ffmpeg concat failed (${code}): ${stderr.slice(-300)}`))
+    })
+    proc.on('error', reject)
+  }).catch((err) => { throw err })
+
+  // Best-effort cleanup of the scratch list file; the tail + frame get
+  // kept in the project dir so the user can inspect them if something
+  // looks off about the join.
+  try { await fs.unlink(listFilePath) } catch (_) { /* ignore */ }
+
+  emit('done', { promptId, outputPath: finalPath, version: versionTag, extendSec: wantExtendSec, inProjectDir: true })
+  return {
+    success: true,
+    promptId,
+    outputPath: finalPath,
+    version: versionTag,
+    inProjectDir: true,
+    kind: 'extend',
+    extendSec: wantExtendSec,
+    tailPath: tailLocalPath,
+    lastFramePath: lastFrameLocalPath,
+  }
+})
+
+// ============================================
 // Audio stem separation (VO + Music via Demucs)
 // ============================================
 //
@@ -2850,7 +3375,11 @@ ipcMain.handle('media:getAudioWaveform', async (event, mediaInput, options = {})
     return { success: false, error: `Audio file not found: ${err.message}` }
   }
 
-  const cacheKey = `${filePath}|${sampleCount}|${sampleRate}|${stat.mtimeMs}`
+  // v2 in the cache key so the bucket-distribution fix invalidates
+  // every previously-cached entry on first run; stale buckets would
+  // otherwise keep serving the old (slightly mis-aligned) waveform
+  // that drove the audio/visual desync.
+  const cacheKey = `v2|${filePath}|${sampleCount}|${sampleRate}|${stat.mtimeMs}`
   if (audioWaveformCache.has(cacheKey)) {
     return { success: true, ...audioWaveformCache.get(cacheKey) }
   }
@@ -2894,13 +3423,23 @@ ipcMain.handle('media:getAudioWaveform', async (event, mediaInput, options = {})
         }
 
         const bucketCount = sampleCount
-        const bucketSize = Math.max(1, Math.floor(floatCount / bucketCount))
+        // Float-precision bucket boundaries — Math.floor of the exact
+        // ratio at each edge — so any leftover samples spread evenly
+        // across the LAST handful of buckets instead of getting dumped
+        // into the final bucket. The old `floor(floatCount/bucketCount)`
+        // sizing made the last bucket up to ~bucketCount-1 samples
+        // wider than the rest, which then fooled the linear time→index
+        // mapping in the renderer (a 30 s file at 2000 Hz had its
+        // final 1.3 s squashed into one peak; the waveform displayed
+        // ran ~0.2-0.5 s BEHIND the audio playback).
         const peaks = new Array(bucketCount).fill(0)
         let maxPeak = 0
 
         for (let i = 0; i < bucketCount; i++) {
-          const start = i * bucketSize
-          const end = i === bucketCount - 1 ? floatCount : Math.min(floatCount, start + bucketSize)
+          const start = Math.floor((i * floatCount) / bucketCount)
+          const end = i === bucketCount - 1
+            ? floatCount
+            : Math.floor(((i + 1) * floatCount) / bucketCount)
           const span = Math.max(1, end - start)
           const stride = Math.max(1, Math.floor(span / 96))
 
@@ -3790,15 +4329,28 @@ ipcMain.handle('export:mixAudio', async (event, options = {}) => {
     const asset = assetMap.get(clip.assetId)
     if (!asset) continue
 
+    // Resolve the on-disk path. Re-edit assets (stems, extracted sub-
+    // clips, optimized versions) ship absolute paths because they live
+    // outside the project root, so path.join would silently mangle
+    // them on Windows when the drive letters don't match. We honour
+    // absolute paths verbatim and only join for relative ones.
     let inputPath = null
-    if (asset.path && projectPath) {
-      inputPath = path.join(projectPath, asset.path)
+    const candidatePath = asset.absolutePath || asset.path
+    if (candidatePath) {
+      const isAbs = path.isAbsolute(candidatePath) || /^[a-zA-Z]:[\\/]/.test(candidatePath)
+      if (isAbs) {
+        inputPath = candidatePath
+      } else if (projectPath) {
+        inputPath = path.join(projectPath, candidatePath)
+      }
     }
-    if (!inputPath && asset.url) {
-      inputPath = resolveMediaInputPath(asset.url)
+    if ((!inputPath || !fsSync.existsSync(inputPath)) && asset.url) {
+      const fromUrl = resolveMediaInputPath(asset.url)
+      if (fromUrl) inputPath = fromUrl
     }
-    if (!inputPath && clip.url) {
-      inputPath = resolveMediaInputPath(clip.url)
+    if ((!inputPath || !fsSync.existsSync(inputPath)) && clip.url) {
+      const fromClipUrl = resolveMediaInputPath(clip.url)
+      if (fromClipUrl) inputPath = fromClipUrl
     }
     if (!inputPath || !fsSync.existsSync(inputPath)) continue
 

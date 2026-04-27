@@ -86,9 +86,19 @@ const isElectron = () => typeof window !== 'undefined' && window.electronAPI != 
 /** Resolve asset to a stable file:// URL for export when in Electron to avoid blob URL invalidation / OOM */
 async function getExportAssetUrl(asset, projectHandle) {
   if (!asset?.url) return null
-  if (isElectron() && projectHandle && asset.path) {
+  if (isElectron() && asset.path) {
     try {
-      const filePath = await window.electronAPI.pathJoin(projectHandle, asset.path)
+      // Re-edit assets (extracted sub-clips, optimized R/V/E versions,
+      // separated stems) ship absolute paths because they live outside
+      // the project root. path.join('C:/proj', 'F:/stems') silently
+      // mangles them on Windows. Detect that case and skip the join —
+      // also use asset.absolutePath when registerSceneAsset / friends
+      // stamped one (always present for our registrations).
+      const candidate = asset.absolutePath || asset.path
+      const isAbsolute = /^[a-zA-Z]:[\\/]/.test(candidate) || candidate.startsWith('/') || candidate.startsWith('\\\\')
+      const filePath = (isAbsolute || !projectHandle)
+        ? candidate
+        : await window.electronAPI.pathJoin(projectHandle, candidate)
       return await window.electronAPI.getFileUrlDirect(filePath)
     } catch (e) {
       console.warn('Export: could not resolve file URL for asset, using blob:', asset.name, e)

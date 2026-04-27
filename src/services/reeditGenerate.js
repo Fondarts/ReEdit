@@ -35,7 +35,11 @@ const FRAME_WORKFLOW_PATH = '/workflows/image_z_image_turbo.json'
 // template (fetched from /queue once the user ran it manually — the
 // UI-format one that ships as a template can't be queued directly
 // because it uses a subgraph and /prompt needs a flat graph).
-const LTX_I2V_WORKFLOW_PATH = '/workflows/ltx2_3_i2v_api.json'
+export const LTX_I2V_WORKFLOW_PATH = '/workflows/ltx2_3_i2v_api.json'
+// Re-export the LoadImage node id so the commit-extend service can
+// tell main.js which slot to inject the uploaded last-frame PNG into
+// without re-discovering it from the JSON.
+export const LTX_LOAD_IMAGE_NODE_ID = '269'
 
 // All the node IDs we have to address in the flattened template carry
 // the `<subgraph>:<inner>` prefix that ComfyUI's flattener produced.
@@ -63,7 +67,11 @@ const LTX_NODE_IDS = {
  * referenced as v1.1 in the captured template but the user only has
  * v1.0 locally; we swap that at runtime here too.
  */
-function modifyLTX23I2VApiWorkflow(workflow, options = {}) {
+// Exported so commitExtend can reuse the exact same template patching
+// (prompt, size, fps, duration, seed) that the placeholder generator
+// already uses — if the upstream LTX template changes, both flows pick
+// up the fix automatically.
+export function modifyLTX23I2VApiWorkflow(workflow, options = {}) {
   const {
     prompt = '',
     negativePrompt = 'pc game, console game, video game, cartoon, childish, ugly',
@@ -151,6 +159,13 @@ async function fetchWorkflowJson(path = LTX_I2V_WORKFLOW_PATH) {
   const res = await fetch(path)
   if (!res.ok) throw new Error(`Could not load workflow ${path} (${res.status}).`)
   return await res.json()
+}
+
+// Convenience for sibling services (commitExtend) that only need the
+// LTX i2v template. Keeping the fetch helper private otherwise so
+// random callers can't load arbitrary workflow paths.
+export function fetchLTX23I2VWorkflow() {
+  return fetchWorkflowJson(LTX_I2V_WORKFLOW_PATH)
 }
 
 // (Upscaler-filename patching is now inside modifyLTX23I2VApiWorkflow

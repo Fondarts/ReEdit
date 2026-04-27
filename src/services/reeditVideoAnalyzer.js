@@ -55,6 +55,14 @@ const USER_PROMPT = `Watch this clip end-to-end, including audio if present. Ret
     "sfx": ["list of notable sound effects with short descriptive phrases, e.g. 'whoosh of car passing', 'skateboard wheels on concrete', 'distant crowd cheer'. Empty array if none."],
     "ambient": "short description of ambient sound bed (wind, crowd, room tone, traffic hum, etc.), else null"
   },
+  "subject_bbox": {
+    "box_2d": [ymin, xmin, ymax, xmax],
+    "label": "Short description of the SINGLE hero element in the frame — whatever the shot is ABOUT. TIGHT bbox (2-3 % padding), normalised 0-1000. Bboxes larger than ~0.3×0.3 are almost certainly too loose — you've boxed the parent object, not the subject. Examples: driver's face (NOT the driver's whole body), a hand gripping a wheel (NOT the whole driver), a product held up to camera (NOT the whole counter). If a literal brand mark is visible, use brand_mark_bbox below — DO NOT duplicate that element here; pick a different focal subject (the car body, the driver, the product silhouette)."
+  },
+  "brand_mark_bbox": {
+    "box_2d": [ymin, xmin, ymax, xmax],
+    "label": "The LITERAL brand logo / badge / wordmark visible in the frame. Populate this ONLY when a true brand mark is visible — not design signatures. Examples of LITERAL brand marks: the round BMW roundel (blue/white quadrants), the Nike swoosh, the Coca-Cola script wordmark, the Apple logo, a stitched brand tag, an embossed badge. Design signatures that are NOT brand marks: BMW kidney grilles, Porsche body curves, a particular shoe silhouette — those are brand-associated but aren't the logo. If no literal brand mark is visible in the frame, return null. Bbox must be TIGHT (2-3 % padding around the logo only, NOT the object carrying the logo). Coordinates normalised 0-1000."
+  },
   "graphics": {
     "has_text_on_screen": true_or_false,
     "text_content": "VERBATIM text overlayed on screen (titles, captions, subtitles, chyrons, UI text) as it appears, preserving line breaks with \\\\n. Null if no text.",
@@ -86,15 +94,17 @@ const USER_PROMPT = `Watch this clip end-to-end, including audio if present. Ret
 
 Rules:
 - If a field can't be determined from the clip, use null (for strings) or an empty array (for lists).
+- For 'subject_bbox': REQUIRED for every shot. Keep the bbox TIGHT (< 0.3 on each axis unless truly unavoidable). A loose bbox defeats the purpose — the downstream re-editor uses the centre as a zoom-in anchor, so it must land on a specific element. Never return null.
+- For 'brand_mark_bbox': OPTIONAL. Populate ONLY when a literal brand mark (logo, badge, wordmark) is visible and clearly identifiable in the frame. A kidney grille is NOT a brand mark — it's a design signature. Return null when no literal brand mark is visible. This field feeds brand-focused reframes downstream; a false positive (labelling a design element as a logo) causes worse reframes than returning null.
 - For 'audio', if there's no audio track at all, set the whole object to null.
 - For 'graphics', if the shot has NO text and NO logo and NO overlay graphics, set the whole object to null. Otherwise fill individual sub-fields — don't omit the object just because one sub-field is absent.
 - For 'graphics.bboxes':
   - Return ONE entry per distinct on-screen graphic element (each caption line, each logo, each icon) using its TIGHTEST bounding box as seen across the clip.
   - box_2d is [ymin, xmin, ymax, xmax] normalised to 0-1000 on each axis — (0,0) is top-left, (1000,1000) is bottom-right, ymax > ymin, xmax > xmin.
   - Be GENEROUS on box_2d — include a small padding (2-3% of the frame) around each graphic so letter outlines and anti-aliased edges sit inside. Prefer over-cover to missing pixels.
-  - Include EVERY graphic visible at any point in the clip, including small legal disclaimers, URLs, tiny chyrons, on-product logos. Do not skip items that feel unimportant.
+  - Include EVERY graphic visible at any point in the clip: overlayed graphics (titles, captions, legal disclaimers, URLs, chyrons, icons) AND **PHYSICAL BRAND MARKS** that are part of the filmed subject (a car badge on a grille, a logo stitched on clothing, a label on a product bottle, a manufacturer mark on a watch face). The physical ones matter because a downstream re-editor wants to know WHERE the brand lives in the frame even if it\'s not an overlay — use role \`logo_symbol\` or \`logo_wordmark\` for these, the same as for overlays.
   - If the same graphic element moves across the shot, return the UNION (the bbox that contains all its positions).
-  - If there are no overlayed graphics at all, set bboxes to [].
+  - If there are no overlayed graphics AND no physical brand marks at all, set bboxes to [].
 - Return the JSON object only.`
 
 // Stream-copied sub-clips land next to the project under `.reedit/clips`
@@ -277,6 +287,16 @@ export async function analyzeSceneVideo(scene, {
     // the prompt. We keep it wherever it arrived; the main-process
     // mask picker looks in both spots before falling back to luma/color.
     graphics: parsed.graphics ?? null,
+    // Hero subject bbox for downstream reframe decisions. REQUIRED per
+    // the prompt, but we tolerate null here in case an older analysis
+    // pass (pre-schema-update) is still in the project file.
+    subject_bbox: parsed.subject_bbox ?? null,
+    // Tight bbox around a literal brand mark (logo / badge / wordmark)
+    // when visible. Null when no literal brand mark appears — the
+    // kidney grille or other brand-associated design elements do NOT
+    // count. Used by the proposer to land "establish brand" reframes
+    // on the actual logo rather than on the parent object.
+    brand_mark_bbox: parsed.brand_mark_bbox ?? null,
     cut_type: parsed.cut_type || null,
     tempo_cue: parsed.tempo_cue || null,
     clipPath,
@@ -361,6 +381,133 @@ export async function analyzeScenesVideo(scenes, {
     }
   }
   return { scenes: results }
+}
+
+// High-level "what's this ad about" prompt. Deliberately biased toward
+// advertising lenses (concept, message, target, brand role) so the
+// output is useful as a sanity check — does the model actually
+// understand what the ad is trying to say? If the concept it describes
+// back sounds wrong, the downstream per-shot captions and the proposer
+// prompt are almost certainly going to be off too.
+const OVERALL_SYSTEM_PROMPT = `You are a senior creative strategist reviewing an advertisement end-to-end. You return ONLY a JSON object — no prose, no markdown fences, no preamble.`
+
+const OVERALL_USER_PROMPT = `Watch this ad in full, including audio. Return a JSON object with exactly these fields:
+
+{
+  "concept": "1-2 sentences describing the creative concept / central idea driving the ad (e.g. 'a road-trip montage that frames the product as the companion for small adventures').",
+  "message": "1 sentence capturing the single takeaway the viewer should walk away with.",
+  "mood": "3-6 words summarising the emotional register (e.g. 'warm, nostalgic, quietly aspirational').",
+  "target_audience": "1 sentence describing who this is speaking to (demographic + psychographic, no numbers).",
+  "brand_role": "1 sentence on how the brand / product appears in the ad (explicit hero, background enabler, punchline, etc).",
+  "narrative_arc": "1-2 sentences summarising the beat structure (setup → turn → payoff), in the ad's own logic — not a shot list.",
+  "voiceover_segments": [
+    {
+      "text": "VERBATIM transcription of this segment, word-for-word. Preserve punctuation as spoken (commas, question marks, ellipses for pauses within the segment).",
+      "startSec": 0.0,
+      "endSec": 0.0,
+      "role": "line | question | tagline | legal | other — 'line' is the normal default, 'tagline' is the ad's closing signature, 'legal' is fast-spoken disclaimers (\\\"when-used-as-directed\\\" etc.)."
+    }
+  ]
+}
+
+Rules:
+- Write the prose fields in natural English; no bullet points inside string fields.
+- If you truly cannot determine a prose field from what you saw, use null.
+- For 'voiceover_segments': return EVERY VO segment in the ad, in the order they are spoken. A SEGMENT is one complete sentence or phrase that reads naturally on its own — roughly what a person would read before taking a breath. Do NOT split mid-sentence; do NOT merge two sentences into one segment. A 30 s ad typically has 3-7 segments. Include startSec / endSec timestamps in seconds from the start of the source video, rounded to 0.1 s. If the ad has no VO at all, return an empty array []. Never null the field.
+- Return the JSON object only.`
+
+/**
+ * Overall-ad analysis. Sends the entire source video to Gemini and
+ * asks for a high-level read: concept, message, mood, target, brand
+ * role, narrative arc. Used by AnalysisView as a sanity check — if the
+ * concept description comes back wrong, the per-shot captions that
+ * feed the proposer are likely wrong too.
+ *
+ * Inline byte limit applies (same 20 MB as per-shot analysis). For a
+ * typical 15-60 s H.264 1080p ad this is safely under the limit; longer
+ * or higher-bitrate sources will surface an actionable error instead
+ * of a mysterious 400.
+ */
+export async function analyzeOverallVideo({
+  sourceVideoPath,
+  modelOverride,
+  temperature = 0.3,
+  maxTokens = 2000,
+} = {}) {
+  if (!sourceVideoPath) throw new Error('analyzeOverallVideo: missing sourceVideoPath')
+  const settings = requireGeminiKey()
+  const model = modelOverride || resolveGeminiModelForTask(settings, LLM_TASKS.ANALYSIS)
+
+  const res = await window.electronAPI?.readFileAsDataUrl?.(sourceVideoPath, 'video/mp4')
+  if (!res?.success) {
+    throw new Error(res?.error || `Could not read source video at ${sourceVideoPath}.`)
+  }
+  const bytes = res.bytes || 0
+  if (bytes > INLINE_BYTE_LIMIT) {
+    throw new Error(
+      `Source video is ${(bytes / 1024 / 1024).toFixed(1)} MB — above the ${(INLINE_BYTE_LIMIT / 1024 / 1024).toFixed(0)} MB inline limit. ` +
+      `Re-transcode to 1080p/H.264 at a lower bitrate (CRF 22-24) before running overall analysis, ` +
+      `or wait for the Files API path.`
+    )
+  }
+
+  const messages = [
+    { role: 'system', content: OVERALL_SYSTEM_PROMPT },
+    {
+      role: 'user',
+      content: [
+        { type: 'text', text: OVERALL_USER_PROMPT },
+        { type: 'video_url', video_url: { url: res.dataUrl } },
+      ],
+    },
+  ]
+
+  const response = await geminiChatCompletion({
+    apiKey: settings.geminiApiKey,
+    model,
+    messages,
+    temperature,
+    maxTokens,
+    responseMimeType: 'application/json',
+    thinkingBudget: 0,
+  })
+
+  const rawText = response?.choices?.[0]?.message?.content || ''
+  if (!rawText) {
+    const reason = response?.blockReason
+      ? `prompt blocked (${response.blockReason})`
+      : response?.finishReason === 'MAX_TOKENS'
+        ? `output truncated at maxTokens=${maxTokens}`
+        : response?.finishReason || 'empty response'
+    throw new Error(`Gemini returned no text for overall analysis: ${reason}.`)
+  }
+  const parsed = extractJson(rawText) || {}
+  // Normalise voiceover_segments into a stable shape + filter bogus
+  // entries (missing timestamps, zero-length, malformed). Downstream
+  // code indexes into this array so we want a clean, predictable
+  // structure even when Gemini returns something weird.
+  const rawSegs = Array.isArray(parsed.voiceover_segments) ? parsed.voiceover_segments : []
+  const voiceoverSegments = rawSegs
+    .map((s, idx) => ({
+      id: `vo-${idx}`,
+      text: String(s?.text || '').trim(),
+      startSec: Number(s?.startSec),
+      endSec: Number(s?.endSec),
+      role: s?.role || 'line',
+    }))
+    .filter((s) => s.text && Number.isFinite(s.startSec) && Number.isFinite(s.endSec) && s.endSec > s.startSec)
+  return {
+    concept: parsed.concept || null,
+    message: parsed.message || null,
+    mood: parsed.mood || null,
+    target_audience: parsed.target_audience || null,
+    brand_role: parsed.brand_role || null,
+    narrative_arc: parsed.narrative_arc || null,
+    voiceover_segments: voiceoverSegments,
+    rawText,
+    model,
+    usage: response?.usage || null,
+  }
 }
 
 /**

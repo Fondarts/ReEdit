@@ -27,6 +27,7 @@
 import { pickVisionModelId, extractJson } from './reeditCaptioner'
 import { chatCompletion, LLM_TASKS, LLM_BACKENDS, loadLlmSettings } from './reeditLlmClient'
 import { INLINE_BYTE_LIMIT } from './geminiClient'
+import { loadCapabilitySettings } from './reeditCapabilitySettings'
 
 export const PROPOSAL_METRICS = [
   {
@@ -140,6 +141,32 @@ function formatSceneBlock(scene) {
   const visual = va.visual || scene.caption || st.visual
   if (visual) lines.push(`Visual: ${visual}`)
 
+  // Bbox helpers — format the bbox into a single coordinate-heavy line
+  // the LLM can copy into `anchor=`. We emit BOTH brand_mark_bbox and
+  // subject_bbox when available so the proposer can pick the right
+  // anchor per reframe intent (brand-focused vs generic push-in).
+  const formatBbox = (bbox, fallbackLabel) => {
+    if (!bbox || !Array.isArray(bbox.box_2d) || bbox.box_2d.length < 4) return null
+    const [ymin, xmin, ymax, xmax] = bbox.box_2d.map((n) => Number(n) / 1000)
+    if (![ymin, xmin, ymax, xmax].every((v) => Number.isFinite(v))) return null
+    const cx = ((xmin + xmax) / 2).toFixed(2)
+    const cy = ((ymin + ymax) / 2).toFixed(2)
+    const w = (xmax - xmin).toFixed(2)
+    const h = (ymax - ymin).toFixed(2)
+    return { cx, cy, w, h, label: bbox.label || fallbackLabel, loose: (xmax - xmin) > 0.3 || (ymax - ymin) > 0.3 }
+  }
+  const brandMark = formatBbox(va.brand_mark_bbox, 'brand mark')
+  if (brandMark && !brandMark.loose) {
+    lines.push(`BrandMark: ${brandMark.label} centered at [${brandMark.cx},${brandMark.cy}] (bbox ~${brandMark.w}×${brandMark.h}) — use this anchor for any brand-focused REFRAME`)
+  } else if (!brandMark) {
+    lines.push('BrandMark: none visible — do NOT propose a brand-focused REFRAME on this shot')
+  }
+  const subject = formatBbox(va.subject_bbox, 'hero subject')
+  if (subject) {
+    const looseNote = subject.loose ? ' (LOOSE — too wide for a tight reframe; skip REFRAME on this shot)' : ''
+    lines.push(`Subject: ${subject.label} centered at [${subject.cx},${subject.cy}] (bbox ~${subject.w}×${subject.h})${looseNote}`)
+  }
+
   const chips = []
   if (st.brand) chips.push(`brand=${st.brand}`)
   if (st.emotion) chips.push(`emotion=${st.emotion}`)
@@ -178,15 +205,38 @@ function formatSceneBlock(scene) {
   }
 
   // Graphics block for overlays — null when the shot has no text /
-  // logo / overlay elements.
+  // logo / overlay elements. When the analyzer produced bounding boxes
+  // we surface the center point (normalised 0..1 on each axis) so the
+  // proposer can use it directly as a REFRAME anchor — the
+  // `graphics.bboxes[].box_2d` comes in `[ymin, xmin, ymax, xmax]`
+  // normalised to 0..1000 per the analyzer prompt.
   if (va.graphics) {
     const g = va.graphics
     const gfxPieces = []
+    const bboxCenterFor = (role) => {
+      const bboxes = Array.isArray(g.bboxes) ? g.bboxes : []
+      // Match either by exact role string or by a looser substring for
+      // the role the proposer cares about (logo / wordmark / tagline).
+      const hit = bboxes.find((b) => typeof b?.role === 'string' && b.role.toLowerCase().includes(role))
+      if (!hit || !Array.isArray(hit.box_2d) || hit.box_2d.length < 4) return null
+      const [ymin, xmin, ymax, xmax] = hit.box_2d.map((n) => Number(n) || 0)
+      const cx = ((xmin + xmax) / 2) / 1000
+      const cy = ((ymin + ymax) / 2) / 1000
+      if (!Number.isFinite(cx) || !Number.isFinite(cy)) return null
+      return { x: cx.toFixed(2), y: cy.toFixed(2) }
+    }
     if (g.text_content) {
       const role = g.text_role && g.text_role !== 'none' ? ` (${g.text_role})` : ''
-      gfxPieces.push(`text${role}="${g.text_content}"`)
+      const center = bboxCenterFor(g.text_role || 'caption') || bboxCenterFor('title') || bboxCenterFor('subtitle')
+      const posHint = center ? ` at [${center.x},${center.y}]` : ''
+      gfxPieces.push(`text${role}="${g.text_content}"${posHint}`)
     }
-    if (g.logo_description) gfxPieces.push(`logo=${g.logo_description}`)
+    if (g.logo_description || g.has_logo) {
+      const center = bboxCenterFor('logo') || bboxCenterFor('wordmark') || bboxCenterFor('logo_symbol')
+      const posHint = center ? ` at [${center.x},${center.y}]` : ''
+      const desc = g.logo_description || 'brand logo'
+      gfxPieces.push(`logo=${desc}${posHint}`)
+    }
     if (g.other_graphics) gfxPieces.push(`other=${g.other_graphics}`)
     if (gfxPieces.length) lines.push(`Graphics: ${gfxPieces.join(' · ')}`)
   }
@@ -229,25 +279,254 @@ function estimateEdlDuration(edl, scenes) {
   return total
 }
 
+// Extract a structured reframe from the `REFRAME [...]` directive the
+// LLM writes into `row.note`. Returns `null` when no directive is
+// present, otherwise `{ zoom, anchorX, anchorY }` with sane defaults
+// filled in for any missing component. The regex is forgiving —
+// params can appear in either order and anchor values can use `.` or
+// nothing between them — because the model isn't perfect about the
+// exact format even when we document it.
+// Extract a structured extension from the `EXTEND +<seconds>s:` directive.
+// Returns null when the directive isn't present, otherwise `{ seconds }`
+// clamped to the [0.2, capabilitySettings.footageExtend.maxExtendSec]
+// range. The cap lives in Settings → Capabilities so users can opt into
+// longer extensions (at the cost of more visible drift). Default 2.0 s.
+function parseExtendDirective(note) {
+  if (!note || typeof note !== 'string') return null
+  if (!/\bEXTEND\b/i.test(note)) return null
+  const m = /\bEXTEND\b\s*:?\s*\+?\s*([\d.]+)\s*s?/i.exec(note)
+  if (!m) return null
+  const raw = parseFloat(m[1])
+  if (!Number.isFinite(raw) || raw <= 0) return null
+  const maxSec = Number(loadCapabilitySettings()?.footageExtend?.maxExtendSec) || 2
+  const clamped = Math.max(0.2, Math.min(maxSec, raw))
+  return { seconds: Math.round(clamped * 10) / 10 }
+}
+
+// Safety net for the case where the LLM proposes a REFRAME with an
+// anchor that would clip the subject out of the post-crop window. We
+// read the scene's subject_bbox first (the hero element, guaranteed
+// by the analyzer prompt), falling back to graphics.bboxes for a
+// logo/wordmark entry when no subject_bbox is present (older
+// analysis passes). Adjust the reframe so the subject stays fully
+// inside the visible window; this runs AFTER parseReframeDirective
+// so a dropped directive (zoom without anchor, or centered anchor
+// with high zoom) isn't revived here.
+function pickSubjectBbox(scene) {
+  // 1st choice: a literal brand mark (logo / badge / wordmark). This
+  // is the tightest + most specific anchor when the proposer wants to
+  // "establish brand" — a kidney grille bbox is NOT this.
+  const bm = scene?.videoAnalysis?.brand_mark_bbox
+  if (bm && Array.isArray(bm.box_2d) && bm.box_2d.length >= 4) return bm.box_2d
+  // 2nd: the hero subject — required for every shot, but may be
+  // broader than a brand mark (a face, a product silhouette).
+  const sb = scene?.videoAnalysis?.subject_bbox
+  if (sb && Array.isArray(sb.box_2d) && sb.box_2d.length >= 4) return sb.box_2d
+  // 3rd: any logo / wordmark bbox from graphics (legacy path).
+  const gfxBboxes = scene?.videoAnalysis?.graphics?.bboxes
+  if (Array.isArray(gfxBboxes) && gfxBboxes.length > 0) {
+    const logo = gfxBboxes.find((b) => typeof b?.role === 'string' && /logo|wordmark/i.test(b.role))
+    if (logo && Array.isArray(logo.box_2d) && logo.box_2d.length >= 4) return logo.box_2d
+  }
+  return null
+}
+
+function snapReframeToLogo(reframe, scene) {
+  if (!reframe) return null
+  const raw = pickSubjectBbox(scene)
+  if (!raw) return reframe
+  const [ymin, xmin, ymax, xmax] = raw.map((n) => Number(n) / 1000)
+  if (![ymin, xmin, ymax, xmax].every((v) => Number.isFinite(v) && v >= 0 && v <= 1)) return reframe
+  // Bbox sanity: if the analyzer boxed the parent object (whole grille,
+  // whole face) rather than the tight subject (logo, eye), the centre
+  // is almost meaningless as a reframe anchor — pushing in on a
+  // 0.40×0.47 box lands "somewhere near the middle of the grille",
+  // not on a specific element. Drop the reframe so the shot plays at
+  // its native framing instead of a misleading center-ish zoom.
+  // The threshold mirrors the amber "loose bbox" warning in
+  // AnalysisView so the user sees the same bar on both views.
+  const bboxW = xmax - xmin
+  const bboxH = ymax - ymin
+  if (bboxW > 0.3 || bboxH > 0.3) return null
+  const logoW = xmax - xmin
+  const logoH = ymax - ymin
+  const subjectCx = (xmin + xmax) / 2
+  const subjectCy = (ymin + ymax) / 2
+  // Policy: respect the LLM's anchor only when it's within 0.1 of the
+  // subject center on both axes (half-meaningful deviation — e.g. it
+  // wanted rule-of-thirds). Beyond that tolerance the LLM is almost
+  // certainly wrong — guessing without looking at the analyzer's
+  // ground-truth subject position. Snap hard to the subject center in
+  // that case so the preview actually lands on the subject.
+  const anchorFar = (
+    Math.abs(reframe.anchorX - subjectCx) > 0.1
+    || Math.abs(reframe.anchorY - subjectCy) > 0.1
+  )
+  let nextAnchorX = anchorFar ? subjectCx : reframe.anchorX
+  let nextAnchorY = anchorFar ? subjectCy : reframe.anchorY
+  // If the subject doesn't fit inside the crop at this zoom, reduce
+  // zoom so the subject fills ~90 % of the crop. Clamp to 1.0–2.5 to
+  // respect the same bounds parseReframeDirective uses.
+  let nextZoom = reframe.zoom
+  const maxSubjectSpan = Math.max(logoW, logoH)
+  const cropSpan = 1 / nextZoom
+  if (maxSubjectSpan > 0.9 * cropSpan) {
+    nextZoom = Math.max(1.0, Math.min(reframe.zoom, 0.9 / maxSubjectSpan))
+  }
+  // Final clamp: anchor must keep the crop window inside [0,1] on both
+  // axes AND keep the subject bbox inside the crop. When the two
+  // constraints can't both be satisfied (subject too big for crop even
+  // after zoom reduction), we centre on the subject — better than
+  // chopping it off.
+  const halfW = 1 / nextZoom / 2
+  const halfH = 1 / nextZoom / 2
+  const axMin = Math.max(halfW, xmax - halfW)
+  const axMax = Math.min(1 - halfW, xmin + halfW)
+  const ayMin = Math.max(halfH, ymax - halfH)
+  const ayMax = Math.min(1 - halfH, ymin + halfH)
+  if (axMin <= axMax) nextAnchorX = Math.max(axMin, Math.min(axMax, nextAnchorX))
+  else nextAnchorX = subjectCx
+  if (ayMin <= ayMax) nextAnchorY = Math.max(ayMin, Math.min(ayMax, nextAnchorY))
+  else nextAnchorY = subjectCy
+  const moved = (
+    Math.abs(nextAnchorX - reframe.anchorX) > 0.02
+    || Math.abs(nextAnchorY - reframe.anchorY) > 0.02
+    || Math.abs(nextZoom - reframe.zoom) > 0.05
+  )
+  if (!moved) return reframe
+  return {
+    zoom: Math.round(nextZoom * 100) / 100,
+    anchorX: Math.round(nextAnchorX * 100) / 100,
+    anchorY: Math.round(nextAnchorY * 100) / 100,
+    snappedToLogo: true,
+  }
+}
+
+function parseReframeDirective(note) {
+  if (!note || typeof note !== 'string') return null
+  if (!/\bREFRAME\b/i.test(note)) return null
+  const zoomMatch = /\bzoom\s*=\s*([\d.]+)/i.exec(note)
+  const anchorMatch = /\banchor\s*=\s*([\d.]+)\s*,\s*([\d.]+)/i.exec(note)
+  const zoomRaw = zoomMatch ? parseFloat(zoomMatch[1]) : NaN
+  const axRaw = anchorMatch ? parseFloat(anchorMatch[1]) : NaN
+  const ayRaw = anchorMatch ? parseFloat(anchorMatch[2]) : NaN
+  // Drop the directive when zoom > 1.0 but the LLM forgot the anchor.
+  // A center-zoom is almost never the repositioning the prompt asked
+  // for — the user sees a shot that looks exactly like the original
+  // with everything cropped off the edges, which reads as a regression.
+  // We'd rather land a clean "no reframe" than apply a misleading one.
+  const hasValidZoom = Number.isFinite(zoomRaw) && zoomRaw > 1
+  const hasValidAnchor = Number.isFinite(axRaw) && Number.isFinite(ayRaw)
+  if (hasValidZoom && !hasValidAnchor) return null
+  if (!hasValidZoom && !hasValidAnchor) return null
+  // Clamp zoom to the user's configured max scale (Settings →
+  // Capabilities → Footage reframe). The knob is stored as a percentage
+  // (130 = 1.30×) so divide by 100 before clamping. Floor at 1.05 so a
+  // mis-configured 100 % setting doesn't effectively disable reframe.
+  const maxZoom = Math.max(1.05, (Number(loadCapabilitySettings()?.footageReframe?.maxScalePct) || 130) / 100)
+  const zoom = hasValidZoom ? Math.min(zoomRaw, maxZoom) : 1.2
+  const anchorX = Math.max(0, Math.min(1, axRaw))
+  const anchorY = Math.max(0, Math.min(1, ayRaw))
+  // Reject the common failure mode: the LLM agrees REFRAME is needed,
+  // includes the `anchor=` token to pass the format check, but writes
+  // 0.5,0.5 (dead center) because it didn't actually work out where
+  // the subject is. A zoom > 1.2 with a centered anchor is a pure
+  // symmetric crop — it never improves placement and frequently chops
+  // off exactly the element the rationale claims to emphasise. The
+  // snap safety net can't help when there's no subject bbox (common
+  // case: physical brand elements like a BMW badge aren't flagged as
+  // "graphics" by the analyzer). Drop the reframe and let the shot
+  // play at its native framing — better than a misleading preview.
+  const isCenteredAnchor = Math.abs(anchorX - 0.5) < 0.05 && Math.abs(anchorY - 0.5) < 0.05
+  if (zoom > 1.2 && isCenteredAnchor) return null
+  return { zoom, anchorX, anchorY }
+}
+
+// Extract a structured color correction from the `COLOR: ...` directive
+// the LLM writes into `row.note`. Returns null when no directive is
+// present, otherwise an object keyed by the app's adjustment field names
+// (which differ from the UI labels: UI says "Exposure" but the data
+// layer keys it as `brightness`). Values clamp to -100..+100 for all
+// axes except `hue`, which is -180..+180.
+//
+// The regex matches each key=value pair independently so the model can
+// emit any subset and in any order, and accepts optional '+' prefix and
+// decimal values since models love to return floats even when we ask
+// for integers. We ignore unknown keys.
+const COLOR_AXIS_MAP = {
+  // UI label → data key
+  exposure: { key: 'brightness', min: -100, max: 100 },
+  brightness: { key: 'brightness', min: -100, max: 100 },
+  contrast: { key: 'contrast', min: -100, max: 100 },
+  saturation: { key: 'saturation', min: -100, max: 100 },
+  gain: { key: 'gain', min: -100, max: 100 },
+  gamma: { key: 'gamma', min: -100, max: 100 },
+  offset: { key: 'offset', min: -100, max: 100 },
+  hue: { key: 'hue', min: -180, max: 180 },
+}
+
+function parseColorDirective(note) {
+  if (!note || typeof note !== 'string') return null
+  if (!/\bCOLOR\b\s*:/i.test(note)) return null
+  // Capture the segment after "COLOR:" up to the first period or end of
+  // line so a rationale tail ("warm sun-soaked grade") doesn't get
+  // mined for numbers.
+  const segMatch = /\bCOLOR\b\s*:\s*([^\n\.]+)/i.exec(note)
+  const segment = segMatch ? segMatch[1] : note
+  const result = {}
+  for (const [alias, { key, min, max }] of Object.entries(COLOR_AXIS_MAP)) {
+    const re = new RegExp(`\\b${alias}\\s*=\\s*([+-]?\\d+(?:\\.\\d+)?)`, 'i')
+    const m = re.exec(segment)
+    if (!m) continue
+    const raw = parseFloat(m[1])
+    if (!Number.isFinite(raw)) continue
+    const clamped = Math.max(min, Math.min(max, Math.round(raw)))
+    // Skip zero values — no reason to emit a no-op adjustment, and it
+    // keeps the merged clip settings tidy when inspecting.
+    if (clamped === 0) continue
+    result[key] = clamped
+  }
+  return Object.keys(result).length > 0 ? result : null
+}
+
 // Human-friendly descriptions of each capability for the prompt. We
 // stay deliberately prescriptive in the copy: the goal is for the
 // model to treat these as hard rules, not suggestions.
 function renderCapabilitiesBlock(capabilities) {
   const c = capabilities || {}
+  // User knobs from Settings → Capabilities flow into the prompt here
+  // so the LLM respects per-user limits (max extend seconds, max
+  // placeholder duration, content filters for gen fills). Falls back
+  // to the module defaults when settings haven't been written yet.
+  const kn = loadCapabilitySettings()
+  const maxExtendSec = Number(kn?.footageExtend?.maxExtendSec) || 2.0
+  const maxGenDurSec = Number(kn?.footageGeneration?.maxDurationSec) || 4
+  const allowProducts = kn?.footageGeneration?.allowProducts !== false
+  const allowFaces = kn?.footageGeneration?.allowFaces !== false
+  const allowText = Boolean(kn?.footageGeneration?.allowText)
+  const genFilterLines = [
+    allowProducts ? null : 'You MUST NOT propose placeholder shots whose subject is a product, packaging, or product label. Skip any idea that requires generating a product shot.',
+    allowFaces ? null : 'You MUST NOT propose placeholder shots whose subject is a human face (actors, drivers, close-ups of faces). Describe hands, silhouettes, or environment-level shots instead when brand presence calls for a human beat.',
+    allowText ? null : 'You MUST NOT propose placeholder shots that require on-screen text, titles, taglines, or wordmarks — text generation is unreliable. If a beat needs to SAY something, write the note so it\'s conveyed through imagery alone.',
+  ].filter(Boolean).map((line) => `      ${line}`).join('\n')
   const lines = []
   lines.push('# Capabilities (HARD RULES — respect exactly)')
   lines.push(c.footageGeneration
-    ? '- Footage generation: ENABLED. You MAY add 1–3 `placeholder` rows to fill structural gaps, as specified in the output schema below.'
+    ? [
+        `- Footage generation: ENABLED. You MAY add 1–3 \`placeholder\` rows to fill structural gaps, as specified in the output schema below.`,
+        `      Each placeholder shot is capped at **${maxGenDurSec.toFixed(1)} s maximum** — longer generated footage drifts. Do NOT propose placeholders longer than this.`,
+        genFilterLines || null,
+      ].filter(Boolean).join('\n')
     : '- Footage generation: DISABLED. You MUST NOT propose any `placeholder` rows. Every row in the EDL must be `kind: "original"` and reference a scene that exists in the shot log.')
   lines.push(c.footageExtend
-    ? '- Footage extend: ENABLED. You MAY flag a shot for AI extension by prefixing its note with `EXTEND +<seconds>s:` when you need a slightly longer beat than the source clip offers. Use sparingly — extensions introduce motion artefacts.'
+    ? `- Footage extend: ENABLED. You MAY flag a shot for AI extension by prefixing its note with \`EXTEND +<seconds>s:\` when you need a slightly longer beat than the source clip offers. Extensions are capped at **+${maxExtendSec.toFixed(1)} s maximum** (anything more is clamped down) — LTX i2v output degrades past that. Use sparingly and only when a beat truly needs to breathe. Example: \`EXTEND +${Math.min(1.5, maxExtendSec).toFixed(1)}s: hold on the driver's reveal for one extra beat before the cut\`.`
     : '- Footage extend: DISABLED. You MUST NOT annotate shots with EXTEND directives. If a gap needs more time, solve it by reordering or (if enabled) a placeholder, never by stretching a shot.')
-  lines.push(c.footageUpscale
-    ? '- Footage upscale: ENABLED. You MAY use shots whose native resolution looks low in the shot log; they will be upscaled downstream. Do not avoid a strong shot purely because it would need upscaling.'
-    : '- Footage upscale: DISABLED. Prefer shots with high native resolution. If the shot log mentions a shot is low-res, deprioritise it unless it is narratively critical.')
-  lines.push(c.reframe
-    ? '- Reframe: ENABLED. You MAY use shots whose native aspect ratio does not match the delivery aspect. Prefix the note with `REFRAME <direction>:` (e.g. `REFRAME to 9:16`) when you intend that.'
-    : '- Reframe: DISABLED. You MUST NOT annotate shots with REFRAME directives. Assume every shot is used at its native aspect.')
+  lines.push(c.footageReframe
+    ? '- Footage reframe: ENABLED. You MAY mark shots for re-framing (zoom + pan within the same aspect ratio) when a tighter or repositioned view would land a beat better.\n  **FORMAT (non-negotiable)**: `REFRAME zoom=<X.X> anchor=<x>,<y>: <rationale>` — zoom in 1.0–2.5, anchor both values 0–1 (0,0 = top-left, 1,1 = bottom-right, 0.5,0.5 = center). You MUST emit BOTH `zoom=` AND `anchor=` on every REFRAME. A directive missing `anchor=` is invalid and will be silently dropped — a pure zoom is a symmetric center-crop, which almost never improves brand placement and usually chops off the element you wanted to emphasise.\n  **HOW TO PICK THE ANCHOR — READ THE `BrandMark` AND `Subject` LINES OF THE SHOT LOG**:\n    * If your rationale mentions establishing the brand, logo, badge, or identity: the shot MUST have a `BrandMark: <label> centered at [x,y]` line. Copy THOSE coordinates into `anchor=`. If instead the shot says `BrandMark: none visible`, the shot has no literal logo — DO NOT propose a brand-focused REFRAME on it. Pick a different shot to establish brand.\n    * For any other REFRAME intent (push in on driver, tighten on product, emphasise reveal), use the `Subject: <label> centered at [x,y]` coordinates.\n    * If the Subject line ends with `LOOSE`, the bbox is too wide to be a reliable anchor — DO NOT reframe this shot, pick a different one.\n  Example: if `BrandMark: BMW roundel centered at [0.51,0.38]` is in the shot log, `REFRAME zoom=1.6 anchor=0.51,0.38: push in on the BMW roundel to land the brand identity` is correct. Using `anchor=0.5,0.5` on that same shot crops the roundel off the top-left.\n  **GOOD examples** (anchor derived from actual subject position):\n    * `REFRAME zoom=1.4 anchor=0.5,0.42: logo reads at 0.5,0.42 per the Graphics line — tighten on it without clipping the top`\n    * `REFRAME zoom=1.3 anchor=0.3,0.4: driver\'s face sits in the upper-left third per the Visual description; push toward it`\n    * `REFRAME zoom=1.5 anchor=0.5,0.85: tagline is bottom-center; crop in so the copy fills the screen`\n  **BAD examples** (will be dropped):\n    * `REFRAME: zoom=1.3: Opens on the logo` — no anchor, just a center zoom\n    * `REFRAME zoom=1.5 anchor=0.5,0.5: push in on the BMW grille` — Graphics line said the logo was at 0.5,0.42 but the proposal used 0.5,0.5 → logo gets cropped off the top\n  **HARD RULE (ENFORCED BY PARSER)**: any REFRAME with `zoom > 1.2` and `anchor=0.5,0.5` (or within ±0.05 of dead center on both axes) will be DROPPED automatically. The parser treats that combination as "the LLM didn\'t bother to locate the subject" — a symmetric center-crop is almost never the right answer for a reframe. If the subject truly sits dead-center in the frame AND a modest zoom is enough, just use `zoom=1.15 anchor=0.5,0.5` (light enough to stay within tolerance). Otherwise pick a real anchor or don\'t reframe at all.\n  Aspect stays at the delivery target — do NOT change aspect ratio.'
+    : '- Footage reframe: DISABLED. You MUST NOT annotate shots with REFRAME directives. Every shot plays at its native framing.')
+  lines.push(c.colorCorrection
+    ? '- Color correction: ENABLED. You MUST actively consider color grading as part of the re-edit. Whenever the target metric, framework, brand brief, or ad-concept section mentions visual qualities (e.g. "bright", "high-contrast", "warm", "cool", "vibrant", "desaturated", "moody", "clinical", "cinematic"), you SHOULD annotate the shots that fail those qualities with a corrective `COLOR:` directive — do not silently ignore the cue. Prefix the note with `COLOR:` followed by any combination of these keys (all integer values in the -100..+100 range unless noted, 0 = no change): `exposure`, `contrast`, `saturation`, `gain`, `gamma`, `offset`, `hue` (-180..+180 degrees). Example: `COLOR: exposure=+18 contrast=+22 saturation=-6: lift the blacks and punch the mids so the product reads on small screens`. Another: `COLOR: saturation=-25 gain=-8: drain the clinic scene to neutral before the product reveal`. Keep grades subtle — ±10 to ±25 on each axis is a strong edit; ±50 is destructive. Use a maximum of 4 keys per shot; leave the rest neutral. If a shot is already on-concept, omit the directive.'
+    : '- Color correction: DISABLED. You MUST NOT annotate shots with COLOR directives. Every shot plays with the source grade.')
   lines.push(c.useOriginalMusic
     ? '- Use original music stem: ENABLED. The source video\'s music has been separated via Demucs into an isolated stem. You MAY layer that music stem under ANY row of the EDL — including placeholder rows and shots that had no music in the original cut. To request this on a row, prefix the note with `AUDIO music:` (e.g. `AUDIO music: carry the main theme under this shot`).'
     : '- Use original music stem: DISABLED. Do NOT propose layering the isolated music stem freely. Music stays glued to its source shot as recorded.')
@@ -257,7 +536,56 @@ function renderCapabilitiesBlock(capabilities) {
   return lines.join('\n')
 }
 
-function buildUserPrompt({ scenes, brandBrief, extraInstructions, metric, totalDurationSec, targetDurationSec, criteria, correctionNote, capabilities }) {
+// Render the overall ad concept block. The creative strategist view of
+// the ad (concept / message / mood / audience / brand role / arc) lets
+// the proposer re-edit with the ORIGINAL intent in mind — without it,
+// the model can only infer from shots, and "subtle" ideas (a quiet
+// reveal, a callback, a metaphor) tend to get steamrolled into a
+// generic highlight reel. Returns empty string when no overall
+// analysis has been run yet; caller sections it in conditionally.
+// Render the voiceover script block — a time-stamped list of the VO
+// segments captured by the overall-analysis pass. The proposer gets
+// this when the VO capability is enabled AND the user has Auto-edit
+// turned on (the manual mode bypasses the LLM entirely and uses the
+// user's explicit picks). Without this block the LLM has no handle on
+// which phrases to keep when shortening from 30s → 15s.
+function renderVoiceoverScriptBlock(voSegments, targetDurationSec) {
+  if (!Array.isArray(voSegments) || voSegments.length === 0) return ''
+  const lines = voSegments.map((s) => {
+    const dur = Math.max(0, Number(s.endSec) - Number(s.startSec))
+    const role = s.role && s.role !== 'line' ? ` [${s.role}]` : ''
+    return `- id="${s.id}" (${Number(s.startSec).toFixed(1)}s, ${dur.toFixed(1)}s long)${role}: "${s.text}"`
+  })
+  const totalVoDur = voSegments.reduce((sum, s) => sum + Math.max(0, Number(s.endSec) - Number(s.startSec)), 0)
+  const targetLine = Number.isFinite(targetDurationSec) && targetDurationSec > 0
+    ? `Pick the subset of segments whose combined spoken duration fits in roughly ${Math.min(targetDurationSec, targetDurationSec * 0.85).toFixed(1)}s of VO time (leaving ~15 % of the target for breath / pauses between segments).`
+    : 'Pick the subset of segments that best tell the story; drop redundant lines.'
+  return `\n\n# Voiceover script (segmented from the source VO)
+Full VO is ${totalVoDur.toFixed(1)}s across ${voSegments.length} segment${voSegments.length === 1 ? '' : 's'}. ${targetLine} Keep the ORIGINAL ORDER of segments — do NOT reorder; only include or skip each one. Prefer segments that reinforce the core message and the brand role; drop legal disclaimers if the target is tight.
+
+${lines.join('\n')}
+
+In addition to the EDL, return a \`voiceoverPlan\` field at the top level of the JSON response:
+  "voiceoverPlan": { "segmentIds": ["vo-0", "vo-2", "vo-3", ...] }
+Listing the ids (preserve order) of the VO segments that should play on the timeline. If you think the full script fits, include every id. If VO should be silenced entirely, return an empty array.`
+}
+
+function renderAdConceptBlock(adConcept) {
+  if (!adConcept) return ''
+  const rows = []
+  if (adConcept.concept) rows.push(`- **Concept**: ${adConcept.concept}`)
+  if (adConcept.message) rows.push(`- **Core message**: ${adConcept.message}`)
+  if (adConcept.mood) rows.push(`- **Mood**: ${adConcept.mood}`)
+  if (adConcept.target_audience) rows.push(`- **Target audience**: ${adConcept.target_audience}`)
+  if (adConcept.brand_role) rows.push(`- **Brand role**: ${adConcept.brand_role}`)
+  if (adConcept.narrative_arc) rows.push(`- **Narrative arc**: ${adConcept.narrative_arc}`)
+  if (rows.length === 0) return ''
+  return `\n\n# Original ad intent (preserve this)
+These are the creative strategist's notes on what the ORIGINAL ad is about. Your re-edit should still land this concept, message, and mood — do not drift into a different story. If the target metric would push you to dilute the brand role or reshape the narrative arc beyond recognition, make the smaller change.
+${rows.join('\n')}`
+}
+
+function buildUserPrompt({ scenes, brandBrief, extraInstructions, metric, totalDurationSec, targetDurationSec, criteria, correctionNote, capabilities, adConcept, voSegments }) {
   const shotLog = renderShotLog(scenes)
   // Keep the budget math consistent with the shot log — if a shot
   // isn't in the log, the LLM can't reference it, so its seconds
@@ -332,11 +660,22 @@ function buildUserPrompt({ scenes, brandBrief, extraInstructions, metric, totalD
   // "reorder / trim only" instruction.
   const capabilitiesBlock = `\n\n${renderCapabilitiesBlock(capabilities)}`
 
+  // Ad-intent block. Sits right under the brand brief so the strategic
+  // read (concept / message / arc) colours every downstream decision
+  // the model makes while reading the shot log. Empty string when no
+  // overall analysis has been run.
+  const adConceptBlock = renderAdConceptBlock(adConcept)
+  // Only render the VO script block when the capability is on and
+  // there are actual segments. Otherwise nothing to pick from.
+  const voScriptBlock = (capabilities?.useOriginalVoiceover && Array.isArray(voSegments) && voSegments.length > 0)
+    ? renderVoiceoverScriptBlock(voSegments, targetDurationSec)
+    : ''
+
   return `# Goal
 Re-edit this commercial to improve its ${metric} score.${framework}
 
 # Brand brief
-${brandBrief?.trim() || '(not provided — infer from the shot log)'}${extraBlock}${capabilitiesBlock}
+${brandBrief?.trim() || '(not provided — infer from the shot log)'}${extraBlock}${adConceptBlock}${voScriptBlock}${capabilitiesBlock}
 
 # Shot log (from the current cut)
 Each shot below is a multi-line block separated by \`---\`:
@@ -351,7 +690,10 @@ Use Audio.VO to anchor narrative continuity — never split a VO line across sho
 ${shotLog}
 
 # Your task
-Propose a new edit decision list that improves ${metric}. Reorder shots, cut weak moments, promote high-value shots to prime timecodes (first and last seconds).${placeholdersAllowed ? ' You may add 1–3 NEW placeholder shots only if a structural gap truly needs one.' : ' Work only with shots that exist in the shot log — no placeholder rows.'} ${budget}
+Propose a new edit decision list that improves ${metric}. The tools available to you depend on the Capabilities block above:
+- **Always**: reorder shots, cut weak moments, promote high-value shots to prime timecodes (first and last seconds).${placeholdersAllowed ? '\n- **Placeholder rows**: add 1–3 NEW placeholder shots if a structural gap truly needs one.' : ''}${capabilities?.footageReframe ? '\n- **Reframe** (`REFRAME:` directive): tighten or reposition a shot when the current framing buries a beat.' : ''}${capabilities?.colorCorrection ? '\n- **Color grading** (`COLOR:` directive): correct shots that fight the target metric / brand mood. If the framework or brief explicitly calls for a look (bright, warm, moody, desaturated, etc), you MUST apply COLOR to the shots that miss it — reordering alone will not fix an off-concept grade.' : ''}${capabilities?.footageExtend ? '\n- **Extend** (`EXTEND +Xs:` directive): buy a little more time on a shot via AI extension.' : ''}${capabilities?.useOriginalMusic ? '\n- **Music stem** (`AUDIO music:` directive): layer the isolated music stem anywhere.' : ''}${capabilities?.useOriginalVoiceover ? '\n- **VO stem** (`AUDIO vo: "..."` directive): reuse a VO line on a different shot.' : ''}
+
+${budget}
 
 Return ONLY a JSON object in this schema:
 
@@ -404,6 +746,9 @@ export async function generateProposal({
   criteria,
   capabilities,
   sourceVideoPath,
+  adConcept,
+  voSegments,
+  voPlanOverride,
 } = {}) {
   if (!Array.isArray(scenes) || scenes.length === 0) {
     throw new Error('Shot log is empty — run Analysis first.')
@@ -466,7 +811,7 @@ export async function generateProposal({
   // so this path works for both LM Studio and the Anthropic backend
   // without the proposer knowing which is active.
   const runOnce = async (correctionNote) => {
-    const userPromptText = buildUserPrompt({ scenes, brandBrief, extraInstructions, metric: targetMetric, totalDurationSec, targetDurationSec, criteria: effectiveCriteria, correctionNote, capabilities })
+    const userPromptText = buildUserPrompt({ scenes, brandBrief, extraInstructions, metric: targetMetric, totalDurationSec, targetDurationSec, criteria: effectiveCriteria, correctionNote, capabilities, adConcept, voSegments })
     // When we have a video ready, compose the user message as a
     // content array: the prompt first (order matters — Gemini treats
     // the last text as the active instruction) then the video. The
@@ -502,12 +847,37 @@ export async function generateProposal({
     const parsed = extractJson(rawText)
     if (!parsed) throw new Error('LLM response was not valid JSON. Try re-generating.')
     const rawEdl = Array.isArray(parsed.edl) ? parsed.edl : []
+    const sceneById = new Map((scenes || []).map((s) => [s.id, s]))
     let cursor = 0
     const normalized = rawEdl.map((row, i) => {
       const rawDur = Math.max(0.1, (Number(row.newTcOut) || 0) - (Number(row.newTcIn) || 0))
       const start = cursor
       const end = cursor + rawDur
       cursor = end
+      // Parse `REFRAME [zoom=X.X] [anchor=x,y]` out of the note. We
+      // leave the note text alone so the UI keeps showing human-
+      // readable rationale; the parsed params land on `row.reframe`
+      // for the timeline to consume without a second pass.
+      let reframe = parseReframeDirective(row.note)
+      // Safety net: if the scene has an analyzed logo bbox and the
+      // LLM's anchor would clip the logo out of the post-crop window,
+      // snap the anchor (and if necessary reduce zoom) so the logo
+      // stays visible. This catches the common failure mode where the
+      // LLM says "push in on the logo" but writes anchor=0.5,0.5 when
+      // the logo is actually off-center — without this clamp, the
+      // preview would crop the logo out of frame.
+      if (reframe && row.kind !== 'placeholder') {
+        const scene = sceneById.get(row.sourceSceneId)
+        if (scene) reframe = snapReframeToLogo(reframe, scene)
+      }
+      // Same deal for `COLOR: exposure=... contrast=... ...` — the
+      // directive stays in the note as rationale, the parsed object
+      // becomes `row.colorAdjustments` for the timeline applier.
+      const colorAdjustments = parseColorDirective(row.note)
+      // `EXTEND +Xs:` — parsed into a clamped `{ seconds }` object for
+      // the timeline to slow down the clip as a preview, and for the
+      // Commit extend flow to pass to ComfyUI.
+      const extend = parseExtendDirective(row.note)
       return {
         index: i + 1,
         kind: row.kind === 'placeholder' ? 'placeholder' : 'original',
@@ -515,9 +885,41 @@ export async function generateProposal({
         newTcIn: start,
         newTcOut: end,
         note: row.note || '',
+        reframe,
+        colorAdjustments,
+        extend,
       }
     })
-    return { rationale: String(parsed.rationale || ''), edl: normalized, rawText }
+    // VO plan: if the user has taken manual control (voPlanOverride with
+    // autoEdit=false) we use their segment ids verbatim. Otherwise we
+    // accept the proposer's pick from the JSON response; if the LLM
+    // didn't emit one we fall back to "all segments" so nothing is
+    // silently dropped.
+    //
+    // We CARRY OVER any user-side knobs from the override — lead pads,
+    // per-segment timing edits — because those live in the UI and the
+    // LLM doesn't know about them. Without this carry the proposer's
+    // returned plan would erase the lead-in / lead-out that the user
+    // set, and the timeline would build VO clips trimmed to Gemini's
+    // (already-late) raw timestamps.
+    const allSegIds = Array.isArray(voSegments) ? voSegments.map((s) => s.id) : []
+    const userExtras = voPlanOverride ? {
+      leadInSec: Number.isFinite(voPlanOverride.leadInSec) ? voPlanOverride.leadInSec : undefined,
+      leadOutSec: Number.isFinite(voPlanOverride.leadOutSec) ? voPlanOverride.leadOutSec : undefined,
+      segmentEdits: voPlanOverride.segmentEdits || undefined,
+    } : {}
+    // Strip undefineds so spread doesn't clobber later fields.
+    Object.keys(userExtras).forEach((k) => userExtras[k] === undefined && delete userExtras[k])
+    let voiceoverPlan = null
+    if (voPlanOverride && voPlanOverride.autoEdit === false && Array.isArray(voPlanOverride.segmentIds)) {
+      voiceoverPlan = { autoEdit: false, segmentIds: voPlanOverride.segmentIds, ...userExtras }
+    } else if (Array.isArray(parsed?.voiceoverPlan?.segmentIds)) {
+      const validIds = parsed.voiceoverPlan.segmentIds.filter((id) => allSegIds.includes(id))
+      voiceoverPlan = { autoEdit: true, segmentIds: validIds, ...userExtras }
+    } else if (allSegIds.length > 0) {
+      voiceoverPlan = { autoEdit: true, segmentIds: allSegIds, ...userExtras }
+    }
+    return { rationale: String(parsed.rationale || ''), edl: normalized, rawText, voiceoverPlan }
   }
 
   // Try once, validate the duration estimate, re-prompt with a

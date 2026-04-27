@@ -31,6 +31,39 @@ import useAssetsStore from '../stores/assetsStore'
 import useTimelineStore from '../stores/timelineStore'
 import useProjectStore from '../stores/projectStore'
 import { resolveActiveClipPath, sceneOriginalClipPath } from './reeditVideoAnalyzer'
+import { loadCapabilitySettings } from './reeditCapabilitySettings'
+
+// Translate a `row.reframe` into the clip.transform shape the timeline
+// store expects. We don't touch crop* — zoom alone produces the visual
+// "crop" effect when scale > 100 % and the position compensates for
+// off-center anchors.
+//
+// Math: at scale S, a source pixel at normalised position (a, b) lives
+// at canvas-coord ((a - 0.5) * S * W, (b - 0.5) * S * H) relative to
+// the canvas centre (assuming the clip renders centred at position=0).
+// To place that point AT the canvas centre, translate the clip by the
+// negative of that offset:
+//   positionX = -(a - 0.5) * S * W
+//   positionY = -(b - 0.5) * S * H
+// Earlier we used `(S - 1) * W` here, which under-translates by a factor
+// of S / (S - 1) — at S = 1.8 the anchor only moved the viewport ~44 %
+// of what it should, leaving the subject off-centre.
+export function buildReframeTransform(reframe, canvasWidth, canvasHeight) {
+  if (!reframe) return null
+  const zoom = Math.max(1, Math.min(3, Number(reframe.zoom) || 1.2))
+  const anchorX = Math.max(0, Math.min(1, Number(reframe.anchorX) ?? 0.5))
+  const anchorY = Math.max(0, Math.min(1, Number(reframe.anchorY) ?? 0.5))
+  const scalePct = Math.round(zoom * 100)
+  const W = Number(canvasWidth) || 1920
+  const H = Number(canvasHeight) || 1080
+  return {
+    scaleX: scalePct,
+    scaleY: scalePct,
+    scaleLinked: true,
+    positionX: -(anchorX - 0.5) * zoom * W,
+    positionY: -(anchorY - 0.5) * zoom * H,
+  }
+}
 
 function toFileUrl(absolutePath) {
   let normalized = absolutePath.replace(/\\/g, '/')
@@ -144,7 +177,7 @@ export function buildPlaceholderSvgDataUrl({ note, index, width, height }) {
 // frame for every clip of the shared source. Extracting each scene to
 // its own file makes the asset URL unique per scene, so the filmstrip
 // works out of the box and playback needs no trim math.
-async function registerSceneAsset(sourceVideo, scene, projectDir) {
+async function registerSceneAsset(sourceVideo, scene, projectDir, edlRow = null, reframeTransform = null) {
   const assetsStore = useAssetsStore.getState()
   const originalPath = sceneOriginalClipPath(projectDir, scene)
   const activePath = resolveActiveClipPath(scene, projectDir)
@@ -191,6 +224,13 @@ async function registerSceneAsset(sourceVideo, scene, projectDir) {
   const duration = Math.max(0.1, Number(scene.tcOut) - Number(scene.tcIn))
   const hasAudio = sourceVideo.hasAudio !== false
   const activeVersion = scene.activeOptimizationVersion || null
+  // Only stash the reframe transform when we're on the original
+  // sub-clip. R-tagged optimized versions are already physically
+  // cropped on disk — adding a zoom on top would double-crop.
+  const isActiveVersionReframed = activeVersion && /^R/i.test(activeVersion)
+  const effectiveDefaultTransform = reframeTransform && !isActiveVersionReframed
+    ? reframeTransform
+    : null
   return assetsStore.addAsset({
     name: `${scene.id}${activeVersion ? ` · ${activeVersion}` : ''} · ${(sourceVideo.name || 'source').replace(/\.[^.]+$/, '')}`,
     url: toFileUrl(clipPath),
@@ -209,10 +249,35 @@ async function registerSceneAsset(sourceVideo, scene, projectDir) {
       fps: sourceVideo.fps,
       width: sourceVideo.width,
       height: sourceVideo.height,
+      // timelineStore.addClip reads this via asset.settings.defaultTransform
+      // and bakes it into the new clip.transform. Passing a transform via
+      // options.defaultTransform on addClip is silently ignored.
+      defaultTransform: effectiveDefaultTransform,
       reeditSceneId: scene.id,
       reeditSceneTcIn: scene.tcIn,
       reeditSceneTcOut: scene.tcOut,
       reeditActiveVersion: activeVersion,
+      // Tag the asset when the proposer wanted this shot re-framed
+      // AND we're currently on the original sub-clip (no committed
+      // reframe yet). The InspectorPanel uses this to decide whether
+      // to show the "Commit reframe" button. When the active version
+      // is an R-tagged optimization, the file is already reframed on
+      // disk and the button is unnecessary.
+      reeditReframePending: Boolean(
+        edlRow?.reframe
+        && !(activeVersion && /^R/i.test(activeVersion))
+      ),
+      reeditReframeHint: edlRow?.reframe || null,
+      // Extend hint + pending flag mirror the reframe ones. Pending is
+      // true while the scene still needs a commit (not yet E-tagged
+      // active); the InspectorPanel uses it to surface the Commit
+      // extend button and swapSceneActiveVersion uses the hint to
+      // reapply the slow-down preview when toggling back to Original.
+      reeditExtendPending: Boolean(
+        edlRow?.extend
+        && !(activeVersion && /^E/i.test(activeVersion))
+      ),
+      reeditExtendHint: edlRow?.extend || null,
     },
   })
 }
@@ -361,6 +426,117 @@ function cleanupStaleReeditAssets() {
 }
 
 /**
+ * Live-swap the clip on the timeline for a given scene to point at a
+ * different optimization version, WITHOUT re-applying the whole EDL.
+ * Called right after a Commit reframe finishes (auto-swap to the new
+ * R-tagged MP4) and from the InspectorPanel's version toggle (user
+ * wants to compare original preview vs committed upscale).
+ *
+ *   version === null              → original sub-clip, reframe preview
+ *                                   transform re-applied if the scene
+ *                                   had a reframe hint.
+ *   version starts with 'R'       → physical reframed MP4, identity
+ *                                   transform (the file is already
+ *                                   cropped — zoom on top would
+ *                                   double-crop).
+ *   version starts with 'V' (VACE)→ same framing as original, identity
+ *                                   transform still works if we want
+ *                                   to compare graphics-removed vs.
+ *                                   the raw shot.
+ *
+ * Returns true when something was swapped on the timeline; false when
+ * the scene has no asset on-timeline yet (caller should re-apply the
+ * EDL to materialise it).
+ */
+export function swapSceneActiveVersion({ sceneId, version, scene, projectDir, canvasWidth, canvasHeight }) {
+  if (!sceneId) return false
+  const assetsStore = useAssetsStore.getState()
+  const timelineStore = useTimelineStore.getState()
+  const projectStore = useProjectStore.getState()
+  const liveScene = scene || projectStore.currentProject?.analysis?.scenes?.find((s) => s.id === sceneId)
+  if (!liveScene) return false
+
+  const entry = version ? (liveScene.optimizations || []).find((o) => o.version === version) : null
+  const newPath = entry?.path || sceneOriginalClipPath(projectDir || projectStore.currentProjectHandle, liveScene)
+  if (!newPath) return false
+
+  // Locate the reedit asset this scene binds to. registerSceneAsset
+  // tags it with reeditSceneId + stores the reframe / extend hints,
+  // so we can reconstruct the preview transform + slow-down speed
+  // without the original EDL row.
+  const asset = (assetsStore.assets || []).find((a) => a?.settings?.reeditSceneId === sceneId)
+  if (!asset) return false
+
+  const reframeHint = asset.settings?.reeditReframeHint || null
+  const extendHint = asset.settings?.reeditExtendHint || null
+  const isReframeActive = version && /^R/i.test(version)
+  const isExtendActive = version && /^E/i.test(version)
+  // Transform only applies on top of the original sub-clip. R-tagged
+  // outputs are physically cropped (zoom on top would double-crop).
+  // E-tagged outputs use the original framing so the reframe transform
+  // could in theory still apply — but if both were set, the user would
+  // have committed both sequentially anyway, so we drop it for any
+  // optimized version for simplicity.
+  const effectiveDefaultTransform = (!version && reframeHint)
+    ? buildReframeTransform(
+        reframeHint,
+        canvasWidth || timelineStore.timelineWidth || timelineStore.width,
+        canvasHeight || timelineStore.timelineHeight || timelineStore.height,
+      )
+    : null
+
+  const newUrl = toFileUrl(newPath)
+  assetsStore.updateAsset(asset.id, {
+    url: newUrl,
+    path: newPath,
+    absolutePath: newPath,
+    settings: {
+      ...asset.settings,
+      reeditActiveVersion: version || null,
+      reeditReframePending: Boolean(reframeHint && !isReframeActive),
+      reeditExtendPending: Boolean(extendHint && !isExtendActive),
+      defaultTransform: effectiveDefaultTransform,
+    },
+  })
+
+  // Apply the new baseline transform + speed to every clip referencing
+  // this asset. VideoLayerRenderer reads `asset.url` as the source of
+  // truth, so updating the asset above is enough to swap the played
+  // MP4; transforms and speed live on the clip itself and need an
+  // explicit override — otherwise toggling original→R01 would leave
+  // the zoom from the preview pass sitting on top of an already-cropped
+  // file, and toggling original→E01 would leave the slow-down sitting
+  // on top of an already-extended MP4.
+  const clips = (timelineStore.clips || []).filter((c) => c.assetId === asset.id)
+  const baselineTransform = {
+    positionX: 0, positionY: 0,
+    scaleX: 100, scaleY: 100, scaleLinked: true,
+    rotation: 0, anchorX: 50, anchorY: 50, opacity: 100,
+    flipH: false, flipV: false,
+    cropTop: 0, cropBottom: 0, cropLeft: 0, cropRight: 0,
+    blendMode: 'normal', blur: 0,
+    ...(effectiveDefaultTransform || {}),
+  }
+  // Decide the speed for each clip. When an extend hint exists AND we
+  // are on the Original (no version), slow the source down so the
+  // visible timeline span matches sceneDur + extendSec. When we're on
+  // an E-tagged version the extended MP4 IS the final length at native
+  // speed, so reset to 1.
+  const sceneDur = Math.max(0.1, Number(liveScene.tcOut) - Number(liveScene.tcIn))
+  const extendSec = extendHint?.seconds ? Number(extendHint.seconds) : 0
+  const previewSpeed = (!version && extendSec > 0)
+    ? sceneDur / (sceneDur + extendSec)
+    : 1
+  for (const clip of clips) {
+    timelineStore.updateClipTransform?.(clip.id, baselineTransform, false)
+    if (clip.type === 'video') {
+      timelineStore.updateClipSpeed?.(clip.id, previewSpeed, false)
+    }
+  }
+  return true
+}
+
+/**
  * Called when the user swaps the source video. Anything on a video
  * track is derived from (and scoped to) the old source — leaving it
  * behind just confuses the Editor view once the new analysis runs.
@@ -388,7 +564,16 @@ export function resetReeditProjectState() {
   cleanupStaleReeditAssets()
 }
 
-export async function applyEdlToTimeline({ edl, scenes, sourceVideo, onProgress, useGeneratedVideos = true, capabilities = null } = {}) {
+export async function applyEdlToTimeline({
+  edl,
+  scenes,
+  sourceVideo,
+  onProgress,
+  useGeneratedVideos = true,
+  capabilities = null,
+  voiceoverSegments = null,
+  voiceoverPlan = null,
+} = {}) {
   if (!Array.isArray(edl) || edl.length === 0) {
     throw new Error('EDL is empty.')
   }
@@ -410,12 +595,34 @@ export async function applyEdlToTimeline({ edl, scenes, sourceVideo, onProgress,
   }
 
   // Clear clips and stale reedit-owned assets from the previous Apply
-  // before laying down the new pass. User-added assets are preserved;
-  // only the ones we tagged ourselves get removed.
-  const existingClipIds = (timelineStore.clips || [])
-    .filter((c) => c.trackId === videoTrack.id)
+  // before laying down the new pass. Two passes:
+  //
+  //   1. Wipe ALL clips from the primary video track. The re-edit
+  //      owns the full sequence on that track, and any stray user
+  //      clip would just land in the middle of our new layout anyway.
+  //   2. Wipe reedit-owned clips from EVERY audio track. Stem clips
+  //      (music / VO) carry `reeditStemKind` on their asset settings
+  //      and need to be removed so they don't stack on top of the new
+  //      pass. User-placed audio clips (their own music, SFX, etc.)
+  //      stay put. We don't delete the audio tracks themselves — the
+  //      user may have created them intentionally; takeAudioTrack()
+  //      below will reuse whichever ones are now empty.
+  const assetsSnapshot = useAssetsStore.getState().assets || []
+  const reeditAssetIds = new Set(
+    assetsSnapshot
+      .filter((a) => (
+        a?.settings?.reeditSceneId
+        || a?.settings?.reeditPlaceholder
+        || a?.settings?.reeditFrameCandidate
+        || a?.settings?.reeditGeneratedRowIndex != null
+        || a?.settings?.reeditStemKind
+      ))
+      .map((a) => a.id)
+  )
+  const clipsToRemove = (timelineStore.clips || [])
+    .filter((c) => c.trackId === videoTrack.id || reeditAssetIds.has(c.assetId))
     .map((c) => c.id)
-  for (const clipId of existingClipIds) {
+  for (const clipId of clipsToRemove) {
     timelineStore.removeClip(clipId)
   }
   cleanupStaleReeditAssets()
@@ -435,10 +642,26 @@ export async function applyEdlToTimeline({ edl, scenes, sourceVideo, onProgress,
   let skippedMissingScene = 0
   let placeholdersPlaced = 0
   const total = edl.length
+  // Earliest VO-bearing shot in the re-edit's SOURCE timing. We start
+  // the VO stem from that point so the user doesn't get 5 s of dead
+  // air at the head just because the first source shot predates the
+  // first VO line. VO lands as a SINGLE continuous clip (not split
+  // per-shot) — the narrative of the VO is its own thing, independent
+  // of how the video is reshuffled. If the user wants sync, they can
+  // split the clip manually in the timeline.
+  let earliestVoSourceTc = null
+
+  // Canvas dimensions drive the position math for reframe (see
+  // buildReframeTransform). Timeline-level settings win over the
+  // project root since the user may have picked a different aspect
+  // for this sequence specifically.
+  const canvasW = timelineStore.timelineWidth || timelineStore.width || sourceVideo.width || 1920
+  const canvasH = timelineStore.timelineHeight || timelineStore.height || sourceVideo.height || 1080
 
   for (let i = 0; i < edl.length; i++) {
     const row = edl[i]
     onProgress?.({ index: i, total, row })
+    const reframeTransform = buildReframeTransform(row?.reframe, canvasW, canvasH)
 
     // Honor per-row exclusion — the user has said "don't put this on
     // the timeline" without deleting the row from the EDL. Nothing
@@ -449,7 +672,13 @@ export async function applyEdlToTimeline({ edl, scenes, sourceVideo, onProgress,
 
     if (row.kind === 'placeholder') {
       const declaredGap = (Number(row.newTcOut) || 0) - (Number(row.newTcIn) || 0)
-      const gapDur = Math.max(0.5, declaredGap || 1.5)
+      // Clamp to the user's per-placeholder max duration. The setting
+      // lives in Settings → Capabilities → Footage generation. The
+      // proposer is supposed to honour it but local models sometimes
+      // overshoot; clipping here too guarantees the UI preview matches
+      // what would actually get generated.
+      const maxGenDur = Math.max(0.5, Number(loadCapabilitySettings()?.footageGeneration?.maxDurationSec) || 4)
+      const gapDur = Math.min(maxGenDur, Math.max(0.5, declaredGap || 1.5))
       // `useGeneratedVideos: false` lets the user preview / ship the
       // re-edit with the frame stills instead of the AI-generated
       // motion — handy when the i2v output feels off but the
@@ -458,6 +687,14 @@ export async function applyEdlToTimeline({ edl, scenes, sourceVideo, onProgress,
       const generatedPath = useGeneratedVideos ? row.genSpec?.generatedPath : null
       const candidates = Array.isArray(row.genSpec?.frameCandidates) ? row.genSpec.frameCandidates : []
 
+      // Helper — applies the row's COLOR directive (if any) to the clip
+      // the branch just added. Same merge semantics as the original-row
+      // path so the three placeholder variants stay consistent.
+      const applyRowColor = (clip) => {
+        if (clip?.id && row.colorAdjustments) {
+          timelineStore.updateClipAdjustments(clip.id, row.colorAdjustments, false)
+        }
+      }
       if (generatedPath) {
         // i2v already produced an MP4 — drop it in as a real video
         // clip. The generated duration may differ slightly from the
@@ -465,13 +702,14 @@ export async function applyEdlToTimeline({ edl, scenes, sourceVideo, onProgress,
         // trimEnd so playback doesn't try to read past EOF.
         const actualDur = Math.max(0.1, Number(row.genSpec?.durationSec) || gapDur)
         const asset = registerGeneratedAsset(sourceVideo, row, generatedPath)
-        timelineStore.addClip(videoTrack.id, asset, cursor, null, {
+        const clip = timelineStore.addClip(videoTrack.id, asset, cursor, null, {
           duration: actualDur,
           trimStart: 0,
           trimEnd: actualDur,
           saveHistory: false,
           selectAfterAdd: false,
         })
+        applyRowColor(clip)
         cursor += actualDur
       } else if (candidates.length > 0) {
         // Frames exist but no video yet — use the selected (or latest)
@@ -483,23 +721,25 @@ export async function applyEdlToTimeline({ edl, scenes, sourceVideo, onProgress,
         const selected = candidates.find((c) => c?.id === row.genSpec?.selectedFrameId)
           || candidates[candidates.length - 1]
         const asset = registerFrameAsset(sourceVideo, row, selected)
-        timelineStore.addClip(videoTrack.id, asset, cursor, null, {
+        const clip = timelineStore.addClip(videoTrack.id, asset, cursor, null, {
           duration: gapDur,
           trimStart: 0,
           trimEnd: gapDur,
           saveHistory: false,
           selectAfterAdd: false,
         })
+        applyRowColor(clip)
         cursor += gapDur
       } else {
         const asset = registerPlaceholderAsset(sourceVideo, row, gapDur)
-        timelineStore.addClip(videoTrack.id, asset, cursor, null, {
+        const clip = timelineStore.addClip(videoTrack.id, asset, cursor, null, {
           duration: gapDur,
           trimStart: 0,
           trimEnd: gapDur,
           saveHistory: false,
           selectAfterAdd: false,
         })
+        applyRowColor(clip)
         cursor += gapDur
       }
       placeholdersPlaced++
@@ -512,71 +752,202 @@ export async function applyEdlToTimeline({ edl, scenes, sourceVideo, onProgress,
     }
 
     const sceneDur = Math.max(0.1, Number(scene.tcOut) - Number(scene.tcIn))
-    const asset = await registerSceneAsset(sourceVideo, scene, projectDir)
+    // Pass the reframe transform through to the asset itself — the
+    // timeline store reads it from asset.settings.defaultTransform when
+    // building the clip's transform. registerSceneAsset drops it again
+    // on its own if the scene's active version is already R-tagged.
+    const asset = await registerSceneAsset(sourceVideo, scene, projectDir, row, reframeTransform)
+
+    // Extend preview: if the proposer requested `EXTEND +Xs:` and the
+    // scene isn't already on a committed E-tagged version, slow the
+    // clip down so the visible duration on the timeline matches the
+    // requested new length. The store recomputes `clip.duration` as
+    // `sourceSpan / speed` — so speed = sceneDur / (sceneDur + extendSec)
+    // gives us sceneDur + extendSec of visible time on the timeline.
+    // Once the user runs Commit extend, the swap helper resets speed=1
+    // against the real extended MP4.
+    const activeVersion = scene.activeOptimizationVersion || null
+    const shouldApplyExtendPreview = Boolean(
+      row?.extend?.seconds
+      && !(activeVersion && /^E/i.test(activeVersion))
+    )
+    const extendSec = shouldApplyExtendPreview ? Number(row.extend.seconds) : 0
+    const visibleSceneDur = sceneDur + extendSec
 
     // The sub-clip file starts at t=0 and already contains only the
     // scene range, so trimStart/trimEnd address the extracted file,
-    // not the original source. addClip uses them to set the clip's
-    // visible duration on the timeline.
-    timelineStore.addClip(videoTrack.id, asset, cursor, null, {
+    // not the original source. We pass the native sceneDur as the
+    // clip's source span; updateClipSpeed below takes care of stretching
+    // the visible timeline span when an extend preview is active.
+    const newClip = timelineStore.addClip(videoTrack.id, asset, cursor, null, {
       duration: sceneDur,
       trimStart: 0,
       trimEnd: sceneDur,
       saveHistory: false,
       selectAfterAdd: false,
     })
-    cursor += sceneDur
+    if (newClip?.id && shouldApplyExtendPreview && extendSec > 0) {
+      const previewSpeed = sceneDur / visibleSceneDur
+      timelineStore.updateClipSpeed(newClip.id, previewSpeed, false)
+    }
+    // Apply color correction when the proposer annotated this row with
+    // a COLOR directive (only possible when the colorCorrection
+    // capability was enabled). The store merges partial adjustment
+    // updates into the clip's existing adjustments object, so passing
+    // only the keys the LLM chose leaves every other axis at its
+    // neutral default. No-op when `row.colorAdjustments` is null.
+    if (newClip?.id && row.colorAdjustments) {
+      timelineStore.updateClipAdjustments(newClip.id, row.colorAdjustments, false)
+    }
+    // Track the earliest source-tcIn among shots that had a VO
+    // transcript. Used below as the start offset for the single VO
+    // stem clip — skips any dead air before the first VO line.
+    const sceneHadVo = Boolean(scene?.videoAnalysis?.audio?.voiceover_transcript)
+    if (sceneHadVo) {
+      const tcIn = Number(scene.tcIn)
+      if (Number.isFinite(tcIn) && (earliestVoSourceTc == null || tcIn < earliestVoSourceTc)) {
+        earliestVoSourceTc = tcIn
+      }
+    }
+    cursor += visibleSceneDur
     placed++
   }
 
   // Layer Demucs-separated stems on top of the assembled re-edit when
-  // the proposer was granted the matching capability. The stems are
-  // derived from the SOURCE video — so their natural length matches
-  // sourceVideo.duration, not the re-edit's total `cursor`. If the
-  // re-edit is shorter we truncate the stem; if it's longer (because
-  // placeholders were added), the stem plays its full length once and
-  // the remainder stays silent. For ads this is almost always "re-edit
-  // equals or is shorter than source", so the simple truncate is right.
+  // the proposer was granted the matching capability. Music and VO are
+  // laid down differently:
+  //
+  //   MUSIC  — one long clip from 0. Music bed works best as a
+  //            continuous track; splitting it per-shot creates audible
+  //            seams in any score.
+  //
+  //   VO     — per-shot clips sourced from the SAME stem, but each one
+  //            plays the source range the corresponding original shot
+  //            came from. This keeps the VO consistent with the
+  //            Gemini-captured transcript: if the analyzer said shot
+  //            `scene-004` (source tc 5.44–6.44) carries VO "...materials.",
+  //            then wherever that shot lands on the new timeline, the
+  //            VO plays that exact 1s slice of the stem — NOT whatever
+  //            the stem had at the new timeline position. Placeholders
+  //            have no source range → VO track stays silent for them.
   const stems = sourceVideo?.stems || null
-  const stemPlacements = []
-  if (stems && capabilities?.useOriginalMusic && stems.musicPath) {
-    stemPlacements.push({ kind: 'music', path: stems.musicPath })
+  const stemNaturalDur = Math.max(0.1, Number(sourceVideo?.duration) || 0)
+  const totalReeditDur = cursor > 0 ? cursor : stemNaturalDur
+
+  // Grab existing audio tracks once so we can pick off-the-shelf ones
+  // before creating new ones. Fresh projects ship with a single
+  // "Audio 1" that's empty — we're happy to reuse it for Music.
+  const takeAudioTrack = () => {
+    const state = useTimelineStore.getState()
+    const audioTracks = (state.tracks || []).filter((t) => t.type === 'audio')
+    const empty = audioTracks.find((t) => !(state.clips || []).some((c) => c.trackId === t.id))
+    if (empty) return empty
+    return state.addTrack('audio', { channels: 'stereo' })
   }
-  if (stems && capabilities?.useOriginalVoiceover && stems.vocalsPath) {
-    stemPlacements.push({ kind: 'vo', path: stems.vocalsPath })
-  }
+
   const stemsPlaced = []
-  if (stemPlacements.length > 0) {
-    const totalReeditDur = cursor > 0 ? cursor : (Number(sourceVideo.duration) || 0)
-    const stemNaturalDur = Math.max(0.1, Number(sourceVideo.duration) || totalReeditDur)
-    // Use min of the two so we never ask the renderer to play past the
-    // stem's EOF nor past the edit's end.
+
+  // Music: single continuous clip.
+  if (stems && capabilities?.useOriginalMusic && stems.musicPath) {
     const clipDur = Math.max(0.1, Math.min(totalReeditDur, stemNaturalDur))
+    const track = takeAudioTrack()
+    const asset = registerStemAsset(sourceVideo, stems.musicPath, 'music', stemNaturalDur)
+    useTimelineStore.getState().addClip(track.id, asset, 0, null, {
+      duration: clipDur,
+      trimStart: 0,
+      trimEnd: clipDur,
+      saveHistory: false,
+      selectAfterAdd: false,
+    })
+    stemsPlaced.push('music')
+  }
 
-    // Grab existing audio tracks once so we can pick off-the-shelf ones
-    // before creating new ones. Fresh projects ship with a single
-    // "Audio 1" that's empty — we're happy to reuse it for Music.
-    const takeAudioTrack = () => {
-      const state = useTimelineStore.getState()
-      const audioTracks = (state.tracks || []).filter((t) => t.type === 'audio')
-      // Prefer a completely empty track to avoid clobbering user audio;
-      // fall back to creating a new one.
-      const empty = audioTracks.find((t) => !(state.clips || []).some((c) => c.trackId === t.id))
-      if (empty) return empty
-      return state.addTrack('audio', { channels: 'stereo' })
-    }
-
-    for (const placement of stemPlacements) {
+  // VO: driven by the voiceover plan when we have one (segmented from
+  // Gemini's overall analysis, either auto-picked by the proposer or
+  // manually curated by the user), else fallback to a single
+  // continuous clip from the first VO line onwards.
+  if (stems && capabilities?.useOriginalVoiceover && stems.vocalsPath) {
+    const rawSegments = Array.isArray(voiceoverSegments) ? voiceoverSegments : []
+    // Apply user-edited timestamps + global lead pads. The analyzer's
+    // values stay canonical on `analysis.overall`; per-segment edits
+    // ride on the proposal (`voiceoverPlan.segmentEdits`) so re-running
+    // Analyze doesn't blow them away. The lead pads (leadInSec /
+    // leadOutSec on voiceoverPlan) extend every segment a touch
+    // earlier and later because Gemini's timestamps consistently
+    // arrive ~0.3-0.7 s late on phrase starts.
+    const edits = voiceoverPlan?.segmentEdits || {}
+    const leadIn = Math.max(0, Number(voiceoverPlan?.leadInSec) || 0)
+    const leadOut = Math.max(0, Number(voiceoverPlan?.leadOutSec) || 0)
+    const segments = rawSegments.map((s) => {
+      const e = edits[s.id]
+      const baseStart = e && Number.isFinite(e.startSec) ? e.startSec : Number(s.startSec)
+      const baseEnd = e && Number.isFinite(e.endSec) ? e.endSec : Number(s.endSec)
+      return {
+        ...s,
+        startSec: Math.max(0, baseStart - leadIn),
+        endSec: Math.max(baseStart - leadIn + 0.05, baseEnd + leadOut),
+      }
+    })
+    const planIds = Array.isArray(voiceoverPlan?.segmentIds) ? voiceoverPlan.segmentIds : null
+    const segmentsById = new Map(segments.map((s) => [s.id, s]))
+    // Selected segments stay in the ORDER THE PLAN LISTS THEM — the
+    // proposer can reorder if needed (though the current prompt tells
+    // it to preserve the original order, we honour whatever it returns
+    // so future re-prompts can swap lines around). Drop unknown ids.
+    const picked = planIds
+      ? planIds.map((id) => segmentsById.get(id)).filter(Boolean)
+      : segments
+    if (picked.length > 0) {
+      // Concatenate the picked segments back-to-back on the timeline
+      // (no inter-segment pauses). Each clip trims the stem to just
+      // that segment's range, so sentences stay intact and dropped
+      // segments leave no audio residue. The user can nudge gaps by
+      // dragging clips in the timeline after apply. We also clamp the
+      // running cursor to `totalReeditDur` so the VO never extends
+      // past the end of the visible video — if the picked segments add
+      // up to more speech than the re-edit can hold, the last one gets
+      // truncated rather than spilling into silence.
       const track = takeAudioTrack()
-      const asset = registerStemAsset(sourceVideo, placement.path, placement.kind, stemNaturalDur)
+      const asset = registerStemAsset(sourceVideo, stems.vocalsPath, 'vo', stemNaturalDur)
+      const tlStore = useTimelineStore.getState()
+      let voCursor = 0
+      for (const seg of picked) {
+        const fullSegDur = Math.max(0.05, Number(seg.endSec) - Number(seg.startSec))
+        if (!Number.isFinite(fullSegDur) || fullSegDur <= 0) continue
+        // Stop placing once we've filled the re-edit window. Trim the
+        // tail segment so it ends exactly at totalReeditDur.
+        const remaining = totalReeditDur - voCursor
+        if (remaining <= 0.05) break
+        const segDur = Math.min(fullSegDur, remaining)
+        tlStore.addClip(track.id, asset, voCursor, null, {
+          duration: segDur,
+          trimStart: Number(seg.startSec),
+          trimEnd: Number(seg.startSec) + segDur,
+          saveHistory: false,
+          selectAfterAdd: false,
+        })
+        voCursor += segDur
+      }
+      stemsPlaced.push('vo')
+    } else {
+      // Fallback when the project has no VO segmentation yet (pre-
+      // schema-update analyses, or VO transcript wasn't captured):
+      // one long clip trimmed to start at the earliest VO-bearing
+      // shot's source tcIn, so the user hears the VO but with the
+      // original pacing of the source ad.
+      const trimStart = Number.isFinite(earliestVoSourceTc) ? Math.max(0, earliestVoSourceTc) : 0
+      const availableStem = Math.max(0.1, stemNaturalDur - trimStart)
+      const clipDur = Math.max(0.1, Math.min(totalReeditDur, availableStem))
+      const track = takeAudioTrack()
+      const asset = registerStemAsset(sourceVideo, stems.vocalsPath, 'vo', stemNaturalDur)
       useTimelineStore.getState().addClip(track.id, asset, 0, null, {
         duration: clipDur,
-        trimStart: 0,
-        trimEnd: clipDur,
+        trimStart,
+        trimEnd: trimStart + clipDur,
         saveHistory: false,
         selectAfterAdd: false,
       })
-      stemsPlaced.push(placement.kind)
+      stemsPlaced.push('vo')
     }
   }
 

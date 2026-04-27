@@ -1,5 +1,5 @@
 import { Fragment, useEffect, useState } from 'react'
-import { Copy, Minus, Square, X } from 'lucide-react'
+import { Copy, Minus, Settings as SettingsIcon, Square, X } from 'lucide-react'
 import ComfyLauncherChip from './ComfyLauncherChip'
 import { REEDIT_MODE, REEDIT_TABS } from '../config/mode'
 
@@ -20,6 +20,7 @@ function TitleBar({
   centerInsetLeft = 0,
   centerInsetRight = 0,
   showComfyUiTab = false,
+  onOpenSettings,
 }) {
   // Under REEDIT_MODE the TitleBar surfaces the re-edit pipeline tabs in
   // pipeline order and hides the generic ComfyStudio ones. The ComfyUI
@@ -128,6 +129,21 @@ function TitleBar({
       {/* Right - Launcher chip + Window Controls (Windows style) */}
       <div className="flex items-center">
         <ComfyLauncherChip />
+        {/* Quick settings entry point next to the ComfyUI pill. Jumps
+            straight to the Launcher section so the most common use
+            (point at the run_nvidia_gpu.bat, change port, tweak
+            auto-start) is one click away instead of hunting in the
+            bottom-bar menu. */}
+        {onOpenSettings && (
+          <button
+            type="button"
+            onClick={() => onOpenSettings('launcher')}
+            className="no-drag h-7 w-7 mr-1 flex items-center justify-center rounded-md bg-sf-dark-800 hover:bg-sf-dark-700 border border-sf-dark-700 text-sf-text-muted hover:text-sf-text-primary transition-colors"
+            title="Open Settings"
+          >
+            <SettingsIcon className="w-3.5 h-3.5" />
+          </button>
+        )}
         <button
           onClick={handleMinimize}
           className="no-drag w-10 h-10 flex items-center justify-center hover:bg-sf-dark-700 transition-colors"

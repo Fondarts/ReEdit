@@ -188,12 +188,19 @@ const buildWaveformPeaks = (audioBuffer, sampleCount = DEFAULT_WAVEFORM_SAMPLES)
   const channelCount = Math.max(1, audioBuffer.numberOfChannels || 1)
   const totalSamples = Math.max(1, audioBuffer.length || 1)
   const buckets = Math.max(32, sampleCount)
-  const bucketSize = Math.max(1, Math.floor(totalSamples / buckets))
   const peaks = new Float32Array(buckets)
 
+  // Float-precision bucket boundaries (Math.floor of exact ratio at
+  // each edge) so leftover samples from totalSamples / buckets not
+  // dividing evenly spread across the LAST handful of buckets instead
+  // of dumping into the final one. With a single oversize last bucket
+  // the renderer's linear time→peak-index mapping shifts the waveform
+  // visualisation behind the actual audio playback by ~0.2-0.5 s.
   for (let i = 0; i < buckets; i++) {
-    const start = i * bucketSize
-    const end = i === buckets - 1 ? totalSamples : Math.min(totalSamples, start + bucketSize)
+    const start = Math.floor((i * totalSamples) / buckets)
+    const end = i === buckets - 1
+      ? totalSamples
+      : Math.floor(((i + 1) * totalSamples) / buckets)
     const span = Math.max(1, end - start)
     const stride = Math.max(1, Math.floor(span / 64))
     let peak = 0
@@ -326,10 +333,22 @@ function AudioWaveformBars({ clip, clipWidth, clipUrl, waveformInput = null }) {
     if (!waveform?.peaks?.length) return null
 
     const peaks = waveform.peaks
+    // Prefer the DECODED file duration over clip.sourceDuration for
+    // the peaks-index mapping. clip.sourceDuration is metadata stamped
+    // at addClip time from asset.duration — for separated stems the
+    // asset duration is the SOURCE VIDEO's duration, which may differ
+    // from the actual stem file (Demucs can output ±0.1–0.3 s vs
+    // input). Using the declared duration to index peaks computed for
+    // the real file shifts the waveform off-sync from what the audio
+    // element actually plays back. The decoded waveform.duration is
+    // ground truth and matches what trimStart/trimEnd seek to.
+    const decodedDuration = Number(waveform.duration)
     const sourceDurationFromClip = Number(clip.sourceDuration)
-    const sourceDuration = Number.isFinite(sourceDurationFromClip) && sourceDurationFromClip > 0
-      ? sourceDurationFromClip
-      : Math.max(0.001, Number(waveform.duration) || 0.001)
+    const sourceDuration = (Number.isFinite(decodedDuration) && decodedDuration > 0)
+      ? decodedDuration
+      : (Number.isFinite(sourceDurationFromClip) && sourceDurationFromClip > 0
+          ? sourceDurationFromClip
+          : 0.001)
     const trimStart = Math.max(0, Number(clip.trimStart) || 0)
     const rawTrimEnd = clip.trimEnd !== undefined && clip.trimEnd !== null
       ? Number(clip.trimEnd)
