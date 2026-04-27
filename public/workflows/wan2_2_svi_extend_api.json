@@ -1,0 +1,691 @@
+{
+  "308": {
+    "inputs": {
+      "length": 81,
+      "motion_latent_count": 1,
+      "positive": [
+        "318",
+        0
+      ],
+      "negative": [
+        "320",
+        0
+      ],
+      "anchor_samples": [
+        "309",
+        0
+      ],
+      "prev_samples": [
+        "317",
+        0
+      ]
+    },
+    "class_type": "WanImageToVideoSVIPro",
+    "_meta": {
+      "title": "WanImageToVideoSVIPro"
+    }
+  },
+  "309": {
+    "inputs": {
+      "pixels": [
+        "310",
+        0
+      ],
+      "vae": [
+        "316",
+        0
+      ]
+    },
+    "class_type": "VAEEncode",
+    "_meta": {
+      "title": "VAE Encode"
+    }
+  },
+  "310": {
+    "inputs": {
+      "batch_index": [
+        "346",
+        0
+      ],
+      "length": 1,
+      "image": [
+        "362",
+        0
+      ]
+    },
+    "class_type": "ImageFromBatch",
+    "_meta": {
+      "title": "Anchor Frame"
+    }
+  },
+  "311": {
+    "inputs": {
+      "images": [
+        "310",
+        0
+      ]
+    },
+    "class_type": "PreviewImage",
+    "_meta": {
+      "title": "Preview Image"
+    }
+  },
+  "316": {
+    "inputs": {
+      "vae_name": "wan2.1-vae.safetensors"
+    },
+    "class_type": "VAELoader",
+    "_meta": {
+      "title": "Load VAE"
+    }
+  },
+  "317": {
+    "inputs": {
+      "pixels": [
+        "362",
+        0
+      ],
+      "vae": [
+        "316",
+        0
+      ]
+    },
+    "class_type": "VAEEncode",
+    "_meta": {
+      "title": "VAE Encode"
+    }
+  },
+  "318": {
+    "inputs": {
+      "text": "the woman is dancing, and then puts her hands on around her waist",
+      "clip": [
+        "319",
+        0
+      ]
+    },
+    "class_type": "CLIPTextEncode",
+    "_meta": {
+      "title": "CLIP Text Encode (Prompt)"
+    }
+  },
+  "319": {
+    "inputs": {
+      "clip_name": "umt5_xxl_fp16.safetensors",
+      "type": "wan",
+      "device": "default"
+    },
+    "class_type": "CLIPLoader",
+    "_meta": {
+      "title": "Load CLIP"
+    }
+  },
+  "320": {
+    "inputs": {
+      "text": "ugly, horror, creepy, injured, warped, deformed, glitch, stutter, artifacts, flashes",
+      "clip": [
+        "319",
+        0
+      ]
+    },
+    "class_type": "CLIPTextEncode",
+    "_meta": {
+      "title": "CLIP Text Encode (Prompt)"
+    }
+  },
+  "323": {
+    "inputs": {
+      "cfg": 3.5,
+      "model": [
+        "337",
+        0
+      ],
+      "positive": [
+        "308",
+        0
+      ],
+      "negative": [
+        "308",
+        1
+      ]
+    },
+    "class_type": "CFGGuider",
+    "_meta": {
+      "title": "CFGGuider"
+    }
+  },
+  "325": {
+    "inputs": {
+      "noise": [
+        "326",
+        0
+      ],
+      "guider": [
+        "323",
+        0
+      ],
+      "sampler": [
+        "327",
+        0
+      ],
+      "sigmas": [
+        "329",
+        0
+      ],
+      "latent_image": [
+        "308",
+        2
+      ]
+    },
+    "class_type": "SamplerCustomAdvanced",
+    "_meta": {
+      "title": "SamplerCustomAdvanced"
+    }
+  },
+  "326": {
+    "inputs": {
+      "noise_seed": 0
+    },
+    "class_type": "RandomNoise",
+    "_meta": {
+      "title": "RandomNoise"
+    }
+  },
+  "327": {
+    "inputs": {
+      "sampler_name": "euler"
+    },
+    "class_type": "KSamplerSelect",
+    "_meta": {
+      "title": "KSamplerSelect"
+    }
+  },
+  "329": {
+    "inputs": {
+      "UNKNOWN": 0.9,
+      "sigmas": [
+        "330",
+        0
+      ]
+    },
+    "_meta": {}
+  },
+  "330": {
+    "inputs": {
+      "scheduler": "normal",
+      "steps": 7,
+      "denoise": 1,
+      "model": [
+        "331",
+        0
+      ]
+    },
+    "class_type": "BasicScheduler",
+    "_meta": {
+      "title": "High Steps"
+    }
+  },
+  "331": {
+    "inputs": {
+      "shift": 1.4,
+      "model": [
+        "332",
+        0
+      ]
+    },
+    "class_type": "ModelSamplingAuraFlow",
+    "_meta": {
+      "title": "ModelSamplingAuraFlow"
+    }
+  },
+  "332": {
+    "inputs": {
+      "model_name": "wan/wan2.2_i2v_high_noise_14B_fp16.safetensors",
+      "weight_dtype": "default",
+      "compute_dtype": "default",
+      "patch_cublaslinear": false,
+      "sage_attention": "disabled",
+      "enable_fp16_accumulation": true
+    },
+    "class_type": "DiffusionModelLoaderKJ",
+    "_meta": {
+      "title": "Diffusion Model Loader KJ"
+    }
+  },
+  "333": {
+    "inputs": {
+      "samples": [
+        "325",
+        1
+      ],
+      "vae": [
+        "316",
+        0
+      ]
+    },
+    "class_type": "VAEDecode",
+    "_meta": {
+      "title": "VAE Decode"
+    }
+  },
+  "337": {
+    "inputs": {
+      "lora_name": "svi/SVI_v2_PRO_Wan2.2-I2V-A14B_HIGH_lora_rank_128_fp16.safetensors",
+      "strength_model": 1,
+      "model": [
+        "332",
+        0
+      ]
+    },
+    "class_type": "LoraLoaderModelOnly",
+    "_meta": {
+      "title": "Load LoRA"
+    }
+  },
+  "338": {
+    "inputs": {
+      "video": "hi.mp4",
+      "force_rate": 16,
+      "custom_width": 0,
+      "custom_height": 0,
+      "frame_load_cap": 0,
+      "skip_first_frames": 0,
+      "select_every_nth": 1,
+      "format": "Wan"
+    },
+    "class_type": "VHS_LoadVideo",
+    "_meta": {
+      "title": "Load Video (Upload) 🎥🅥🅗🅢"
+    }
+  },
+  "341": {
+    "inputs": {
+      "length": 81,
+      "motion_latent_count": 1,
+      "positive": [
+        "318",
+        0
+      ],
+      "negative": [
+        "320",
+        0
+      ],
+      "anchor_samples": [
+        "344",
+        0
+      ],
+      "prev_samples": [
+        "345",
+        0
+      ]
+    },
+    "class_type": "WanImageToVideoSVIPro",
+    "_meta": {
+      "title": "WanImageToVideoSVIPro"
+    }
+  },
+  "344": {
+    "inputs": {
+      "pixels": [
+        "347",
+        0
+      ],
+      "vae": [
+        "316",
+        0
+      ]
+    },
+    "class_type": "VAEEncode",
+    "_meta": {
+      "title": "VAE Encode"
+    }
+  },
+  "345": {
+    "inputs": {
+      "pixels": [
+        "338",
+        0
+      ],
+      "vae": [
+        "316",
+        0
+      ]
+    },
+    "class_type": "VAEEncode",
+    "_meta": {
+      "title": "VAE Encode"
+    }
+  },
+  "346": {
+    "inputs": {
+      "value": 69
+    },
+    "class_type": "PrimitiveInt",
+    "_meta": {
+      "title": "Anchor Frame Index"
+    }
+  },
+  "347": {
+    "inputs": {
+      "batch_index": [
+        "346",
+        0
+      ],
+      "length": 1,
+      "image": [
+        "338",
+        0
+      ]
+    },
+    "class_type": "ImageFromBatch",
+    "_meta": {
+      "title": "Anchor Frame"
+    }
+  },
+  "348": {
+    "inputs": {
+      "cfg": 1,
+      "model": [
+        "354",
+        0
+      ],
+      "positive": [
+        "341",
+        0
+      ],
+      "negative": [
+        "341",
+        1
+      ]
+    },
+    "class_type": "CFGGuider",
+    "_meta": {
+      "title": "CFGGuider"
+    }
+  },
+  "349": {
+    "inputs": {
+      "noise_seed": 0
+    },
+    "class_type": "RandomNoise",
+    "_meta": {
+      "title": "RandomNoise"
+    }
+  },
+  "350": {
+    "inputs": {
+      "sampler_name": "euler"
+    },
+    "class_type": "KSamplerSelect",
+    "_meta": {
+      "title": "KSamplerSelect"
+    }
+  },
+  "351": {
+    "inputs": {
+      "noise": [
+        "349",
+        0
+      ],
+      "guider": [
+        "348",
+        0
+      ],
+      "sampler": [
+        "350",
+        0
+      ],
+      "sigmas": [
+        "355",
+        0
+      ],
+      "latent_image": [
+        "360",
+        0
+      ]
+    },
+    "class_type": "SamplerCustomAdvanced",
+    "_meta": {
+      "title": "SamplerCustomAdvanced"
+    }
+  },
+  "352": {
+    "inputs": {
+      "model_name": "wan/wan2.2_i2v_low_noise_14B_fp16.safetensors",
+      "weight_dtype": "default",
+      "compute_dtype": "default",
+      "patch_cublaslinear": false,
+      "sage_attention": "disabled",
+      "enable_fp16_accumulation": true
+    },
+    "class_type": "DiffusionModelLoaderKJ",
+    "_meta": {
+      "title": "Diffusion Model Loader KJ"
+    }
+  },
+  "353": {
+    "inputs": {
+      "lora_name": "svi/SVI_v2_PRO_Wan2.2-I2V-A14B_LOW_lora_rank_128_fp16.safetensors",
+      "strength_model": 1,
+      "model": [
+        "352",
+        0
+      ]
+    },
+    "class_type": "LoraLoaderModelOnly",
+    "_meta": {
+      "title": "Load LoRA"
+    }
+  },
+  "354": {
+    "inputs": {
+      "lora_name": "wan/lightx2v_I2V_14B_480p_cfg_step_distill_rank128_bf16.safetensors",
+      "strength_model": 1,
+      "model": [
+        "353",
+        0
+      ]
+    },
+    "class_type": "LoraLoaderModelOnly",
+    "_meta": {
+      "title": "Load LoRA"
+    }
+  },
+  "355": {
+    "inputs": {
+      "sigmas": "0.9000, 0.8333, 0.6250, 0.0000"
+    },
+    "class_type": "ManualSigmas",
+    "_meta": {
+      "title": "3 Steps Low Sigmas"
+    }
+  },
+  "356": {
+    "inputs": {
+      "samples": [
+        "351",
+        1
+      ],
+      "vae": [
+        "316",
+        0
+      ]
+    },
+    "class_type": "VAEDecode",
+    "_meta": {
+      "title": "VAE Decode"
+    }
+  },
+  "357": {
+    "inputs": {
+      "frame_rate": 16,
+      "loop_count": 0,
+      "filename_prefix": "extended_video",
+      "format": "video/h264-mp4",
+      "pix_fmt": "yuv420p",
+      "crf": 19,
+      "save_metadata": true,
+      "trim_to_audio": false,
+      "pingpong": false,
+      "save_output": true,
+      "images": [
+        "361",
+        2
+      ]
+    },
+    "class_type": "VHS_VideoCombine",
+    "_meta": {
+      "title": "Video Combine 🎥🅥🅗🅢"
+    }
+  },
+  "358": {
+    "inputs": {
+      "width": [
+        "365",
+        0
+      ],
+      "height": [
+        "365",
+        1
+      ],
+      "upscale_method": "bicubic",
+      "keep_proportion": "stretch",
+      "pad_color": "0, 0, 0",
+      "crop_position": "center",
+      "divisible_by": 16,
+      "device": "gpu",
+      "image": [
+        "333",
+        0
+      ]
+    },
+    "class_type": "ImageResizeKJv2",
+    "_meta": {
+      "title": "Resize Image v2"
+    }
+  },
+  "359": {
+    "inputs": {
+      "frame_rate": 16,
+      "loop_count": 0,
+      "filename_prefix": "high_noise_video",
+      "format": "video/h264-mp4",
+      "pix_fmt": "yuv420p",
+      "crf": 19,
+      "save_metadata": true,
+      "trim_to_audio": false,
+      "pingpong": false,
+      "save_output": false,
+      "images": [
+        "333",
+        0
+      ]
+    },
+    "class_type": "VHS_VideoCombine",
+    "_meta": {
+      "title": "Video Combine 🎥🅥🅗🅢"
+    }
+  },
+  "360": {
+    "inputs": {
+      "pixels": [
+        "358",
+        0
+      ],
+      "vae": [
+        "316",
+        0
+      ]
+    },
+    "class_type": "VAEEncode",
+    "_meta": {
+      "title": "VAE Encode"
+    }
+  },
+  "361": {
+    "inputs": {
+      "overlap": 5,
+      "overlap_side": "source",
+      "overlap_mode": "linear_blend",
+      "source_images": [
+        "378",
+        0
+      ],
+      "new_images": [
+        "379",
+        0
+      ]
+    },
+    "class_type": "ImageBatchExtendWithOverlap",
+    "_meta": {
+      "title": "Image Batch Extend With Overlap"
+    }
+  },
+  "362": {
+    "inputs": {
+      "upscale_method": "area",
+      "largest_size": 640,
+      "image": [
+        "338",
+        0
+      ]
+    },
+    "class_type": "ImageScaleToMaxDimension",
+    "_meta": {
+      "title": "Set High Noise Size"
+    }
+  },
+  "365": {
+    "inputs": {
+      "image": [
+        "338",
+        0
+      ]
+    },
+    "class_type": "GetImageSize",
+    "_meta": {
+      "title": "Get Image Size"
+    }
+  },
+  "378": {
+    "inputs": {
+      "text_x": 10,
+      "text_y": 2,
+      "height": -1,
+      "font_size": 32,
+      "font_color": "white",
+      "label_color": "black",
+      "font": "TTNorms-Black.otf",
+      "text": "original",
+      "direction": "overlay",
+      "image": [
+        "338",
+        0
+      ]
+    },
+    "class_type": "AddLabel",
+    "_meta": {
+      "title": "Add Label"
+    }
+  },
+  "379": {
+    "inputs": {
+      "text_x": 10,
+      "text_y": 2,
+      "height": -1,
+      "font_size": 32,
+      "font_color": "white",
+      "label_color": "black",
+      "font": "TTNorms-Black.otf",
+      "text": "extended",
+      "direction": "overlay",
+      "image": [
+        "356",
+        0
+      ]
+    },
+    "class_type": "AddLabel",
+    "_meta": {
+      "title": "Add Label"
+    }
+  }
+}

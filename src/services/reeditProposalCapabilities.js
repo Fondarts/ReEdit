@@ -35,6 +35,7 @@ export const DEFAULT_CAPABILITIES = Object.freeze({
   colorCorrection: false,
   useOriginalMusic: false,
   useOriginalVoiceover: false,
+  generateVoiceover: false,
 })
 
 export const CAPABILITY_DEFINITIONS = [
@@ -67,6 +68,11 @@ export const CAPABILITY_DEFINITIONS = [
     id: 'useOriginalVoiceover',
     label: 'Use original voiceover',
     blurb: 'Lets the proposer reuse the isolated VO stem on any shot, decoupled from where it appeared in the source.',
+  },
+  {
+    id: 'generateVoiceover',
+    label: 'Generate new voiceover',
+    blurb: 'Have Gemini write a fresh VO script (in any supported language) using the ad concept, mood, and brand role as inspiration. Synthesised by ComfyUI (F5-TTS) cloning the original speaker’s voice. Replaces the original VO when enabled — mutually exclusive with “Use original voiceover”.',
   },
 ]
 

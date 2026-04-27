@@ -33,18 +33,32 @@ import {
 import { loadLlmSettings, LLM_BACKENDS, LLM_TASKS, resolveGeminiModelForTask } from './reeditLlmClient'
 import { extractJson } from './reeditCaptioner'
 
-const SYSTEM_PROMPT = `You are a shot analyst for ad re-edit pipelines. You watch one short video clip (a single shot or cut) and return ONLY a JSON object with the fields the user asks for. No prose, no markdown fences, no preamble.`
+const SYSTEM_PROMPT = `You are a senior cinematographer analyzing one short video clip for an ad re-edit pipeline. You return ONLY a JSON object with the fields the user asks for, using precise filmmaking vocabulary throughout. No prose, no markdown fences, no preamble.
+
+GROUNDING: Describe what you SEE, not what you assume. Use the structured cinematography vocabulary below to avoid generic captions. When in doubt about a specific term, prefer 'unknown' over guessing — false precision misleads downstream models.`
 
 const USER_PROMPT = `Watch this clip end-to-end, including audio if present. Return a JSON object with exactly these fields:
 
 {
-  "visual": "2-4 sentence rich description of what happens across the shot: subject (who/what, appearance, clothing, notable features), setting (location, environment, time of day, weather, lighting character), action (what the subject is doing across the shot, blocking, gaze), and a note on mood/tone conveyed by the image. Prose, no bullet points.",
-  "camera_movement": "One of: 'static', 'handheld', 'pan_left', 'pan_right', 'tilt_up', 'tilt_down', 'push_in', 'pull_out', 'dolly', 'truck', 'crane', 'whip', 'rolling', 'aerial', 'unknown'.",
+  "visual": "2-4 sentence rich description USING CINEMATIC VOCABULARY: subject (who/what, appearance, clothing, notable features), setting (location, environment, time of day, weather, light quality), action (what the subject is doing — blocking, gaze, gestures), and the lensing/camera read (e.g. 'shallow-DOF medium close-up with a slow push-in', 'locked-off wide with deep focus', 'handheld over-the-shoulder with rack focus to the dashboard'). Use professional terms when applicable: push-in, pull-out, dolly, truck, crane, jib, whip pan, rack focus, dolly zoom, golden hour, blue hour, motivated key light, silhouette, backlit, etc. Prose, no bullet points.",
+  "cinematography": {
+    "shot_size": "One of: 'extreme_close_up' (single feature like an eye), 'close_up' (head-and-shoulders), 'medium_close_up' (chest up), 'medium' (waist up), 'medium_long' (knees up), 'long' (full body in environment), 'extreme_long' (figure tiny in landscape), 'insert' (object detail), 'two_shot' (two subjects), 'group' (3+ subjects), 'establishing' (place-setting wide), 'unknown'.",
+    "camera_angle": "One of: 'eye_level', 'high_angle', 'low_angle', 'dutch_angle' (canted/tilted horizon), 'overhead' (top-down), 'worms_eye' (extreme low looking up), 'unknown'.",
+    "camera_movement_quality": "How the camera moves PHYSICALLY. One of: 'locked_off' (tripod, static), 'handheld' (organic shake), 'steadicam' (smooth float), 'gimbal' (mechanical smooth), 'dolly_track' (smooth on rails/wheels), 'crane_jib' (vertical/arc moves), 'aerial_drone', 'vehicle_mount', 'shoulder_rig', 'unknown'.",
+    "lens_characteristic": "One of: 'wide' (24mm-equivalent or wider, environmental), 'normal' (35-50mm-equivalent, neutral), 'telephoto' (85mm+ equivalent, compressed perspective), 'macro' (extreme close detail), 'fisheye' (extreme distortion), 'unknown'.",
+    "depth_of_field": "One of: 'shallow' (subject sharp, background blurred — bokeh), 'medium' (most of frame in acceptable focus), 'deep' (foreground to background all sharp), 'unknown'.",
+    "focus_dynamics": "One of: 'locked' (focus stays on one plane), 'rack_focus' (deliberate shift between two focal planes), 'focus_pull' (continuous follow-focus on a moving subject), 'breathing' (visible focus hunt), 'soft_throughout', 'unknown'.",
+    "composition": "Primary compositional read. One of: 'centered' (subject dead-center), 'rule_of_thirds', 'symmetrical', 'leading_lines', 'frame_within_frame', 'diagonal', 'foreground_layered' (clear FG/MG/BG depth), 'negative_space', 'unknown'.",
+    "lighting_style": "One of: 'high_key' (bright, low contrast, ad-typical product), 'low_key' (dark, high contrast, dramatic shadows), 'three_point' (classic key+fill+rim), 'natural_daylight', 'golden_hour' (warm, low-angle sun), 'blue_hour' (cool dusk/dawn), 'overcast' (soft, even, no shadows), 'practical' (lit by visible lamps in scene), 'silhouette', 'backlit' (rim-lit subject), 'mixed_color' (multi-color gel/neon), 'unknown'.",
+    "color_palette": "Short comma-separated list of the 2-4 dominant colors / palette descriptors (e.g. 'warm amber, deep teal, cream highlights' or 'desaturated steel, charcoal, single pop of red').",
+    "special_techniques": ["zero or more from: 'dolly_zoom' (vertigo / Hitchcock zoom), 'whip_pan' (ultra-fast pan as a transition), 'snap_zoom' (instant zoom), 'speed_ramp', 'slow_motion', 'time_lapse', 'freeze_frame', 'split_screen', 'in_camera_transition', 'match_cut_potential' (this shot pairs naturally with another via shape/motion), 'one_take_oner' (long unbroken move), 'reverse_motion'. Empty array if none apply."]
+  },
+  "camera_movement": "One of: 'static', 'handheld', 'pan_left', 'pan_right', 'tilt_up', 'tilt_down', 'push_in', 'pull_out', 'dolly_in', 'dolly_out', 'dolly_left', 'dolly_right', 'truck_left', 'truck_right', 'pedestal_up', 'pedestal_down', 'crane', 'jib', 'arc_left', 'arc_right', 'orbit', 'whip', 'rolling', 'aerial', 'vehicle_tracking', 'unknown'.",
   "camera_movement_intensity": "One of: 'none', 'subtle', 'moderate', 'aggressive'.",
   "subject_motion": "One of: 'none', 'slow', 'moderate', 'fast', 'explosive'.",
   "subject_motion_direction": "Free text — where the main subject moves within the frame (e.g. 'left-to-right', 'toward camera', 'orbits around axis', 'stationary').",
   "objects": ["list of prominent objects/entities in the shot, concise nouns"],
-  "framing": "Shot type. One of: 'ECU', 'Close-up', 'Medium', 'Wide', 'Aerial'.",
+  "framing": "LEGACY shot type — keep filling for backward compat. One of: 'ECU', 'Close-up', 'Medium', 'Wide', 'Aerial'. Use the new cinematography.shot_size for granular value.",
   "brand": "One of: 'Logo visible', 'Product visible', 'Text/logo on-screen', 'Driver/face visible', 'None'.",
   "emotion": "One-word emotional register (e.g. triumphant, tense, calm, focused, aggressive, playful, serious, awe, freedom, technical).",
   "movement": "Overall perceived motion level (camera + subject combined). One of: 'High', 'Moderate', 'Slow', 'Static'.",
@@ -272,6 +286,13 @@ export async function analyzeSceneVideo(scene, {
 
   return {
     visual: parsed.visual || null,
+    // Structured cinematography read (CHAI-inspired — shot size,
+    // angle, lensing, focus dynamics, lighting style, special
+    // techniques). Surfaced in the proposer's shot log and used as
+    // structured context when building Commit extend prompts. The
+    // legacy fields below stay populated for backward compat with
+    // older analyses.
+    cinematography: parsed.cinematography ?? null,
     camera_movement: parsed.camera_movement || null,
     camera_movement_intensity: parsed.camera_movement_intensity || null,
     subject_motion: parsed.subject_motion || null,

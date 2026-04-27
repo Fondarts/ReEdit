@@ -20,6 +20,7 @@ const STORAGE_KEY = 'reedit.capability.settings.v1'
 export const I2V_MODEL_OPTIONS = [
   { id: 'ltx-2.3', label: 'LTX 2.3 (default — ~4 GB VRAM, fast)' },
   { id: 'wan-2.2-14b', label: 'WAN 2.2 14B (higher quality, ~24 GB VRAM)' },
+  { id: 'wan-2.2-svi', label: 'WAN 2.2 14B SVI Pro (extend-aware, video-context)' },
 ]
 
 export const UPSCALE_MODEL_OPTIONS = [

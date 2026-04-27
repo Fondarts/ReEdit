@@ -360,8 +360,13 @@ function registerGeneratedAsset(sourceVideo, row, generatedPath) {
 function registerStemAsset(sourceVideo, stemPath, kind, durationSec) {
   const assetsStore = useAssetsStore.getState()
   const labels = { music: 'Music (original stem)', vo: 'VO (original stem)' }
+  // Synth VO segments come in as `vo-gen-<segId>` so we can dedupe by
+  // path AND give the asset a friendly track-row label.
+  const niceName = labels[kind] || (typeof kind === 'string' && kind.startsWith('vo-gen-')
+    ? `VO (new) · ${kind.slice('vo-gen-'.length)}`
+    : `Stem (${kind})`)
   return assetsStore.addAsset({
-    name: labels[kind] || `Stem (${kind})`,
+    name: niceName,
     url: toFileUrl(stemPath),
     path: stemPath,
     absolutePath: stemPath,
@@ -521,16 +526,64 @@ export function swapSceneActiveVersion({ sceneId, version, scene, projectDir, ca
   // are on the Original (no version), slow the source down so the
   // visible timeline span matches sceneDur + extendSec. When we're on
   // an E-tagged version the extended MP4 IS the final length at native
-  // speed, so reset to 1.
+  // speed, so reset to 1 AND extend trim/duration to expose the full
+  // file (otherwise the clip stays sceneDur long and the AI tail is
+  // hidden behind the trim).
   const sceneDur = Math.max(0.1, Number(liveScene.tcOut) - Number(liveScene.tcIn))
   const extendSec = extendHint?.seconds ? Number(extendHint.seconds) : 0
+  const isExtendActiveVersion = isExtendActive && extendSec > 0
+  // The MP4 for an E-tagged version is `original + AI tail` long.
+  // Trust the entry's recorded extendSec when present (commit handler
+  // saves it) before falling back to the asset hint.
+  const extendedFileDur = isExtendActiveVersion
+    ? sceneDur + (Number(entry?.extendSec) || extendSec)
+    : sceneDur
   const previewSpeed = (!version && extendSec > 0)
     ? sceneDur / (sceneDur + extendSec)
     : 1
+  // Mirror the new file duration on the asset record so anything that
+  // reads asset.duration / asset.settings.duration (clip thumbs,
+  // sourceDuration on next addClip, etc.) sees the full extended length.
+  if (isExtendActiveVersion) {
+    assetsStore.updateAsset(asset.id, {
+      duration: extendedFileDur,
+      settings: {
+        ...asset.settings,
+        duration: extendedFileDur,
+        reeditActiveVersion: version || null,
+        reeditReframePending: Boolean(reframeHint && !isReframeActive),
+        reeditExtendPending: Boolean(extendHint && !isExtendActive),
+        defaultTransform: effectiveDefaultTransform,
+      },
+    })
+  }
   for (const clip of clips) {
     timelineStore.updateClipTransform?.(clip.id, baselineTransform, false)
     if (clip.type === 'video') {
       timelineStore.updateClipSpeed?.(clip.id, previewSpeed, false)
+      // For E-tagged versions the trim window has to grow to expose
+      // the AI tail. updateClipTrim recomputes duration from the new
+      // sourceDuration + trimEnd so the user sees the full clip on
+      // the timeline. For non-E versions we leave trim alone — the
+      // existing values are correct for the original sub-clip.
+      if (isExtendActiveVersion) {
+        timelineStore.updateClipTrim?.(clip.id, {
+          sourceDuration: extendedFileDur,
+          trimStart: 0,
+          trimEnd: extendedFileDur,
+          duration: extendedFileDur,
+        })
+      } else if (extendHint && !version) {
+        // Restoring Original from an E-version: shrink the clip back
+        // to the source sub-clip's range so the slow-motion preview
+        // stays at the right length.
+        timelineStore.updateClipTrim?.(clip.id, {
+          sourceDuration: sceneDur,
+          trimStart: 0,
+          trimEnd: sceneDur,
+          duration: sceneDur + extendSec,
+        })
+      }
     }
   }
   return true
@@ -573,6 +626,12 @@ export async function applyEdlToTimeline({
   capabilities = null,
   voiceoverSegments = null,
   voiceoverPlan = null,
+  // Generated VO draft from the new "Generate new voiceover" capability.
+  // Shape: { id, segments: [{id, text, role, gapBeforeSec}], synthesis: { segmentAudio: { [segId]: { path, durationSec } } } }
+  // When `capabilities.generateVoiceover` is on AND this is provided AND
+  // synthesis is done, we lay each synth WAV on the audio track instead
+  // of trimming the original demucs stem.
+  generatedVoiceover = null,
 } = {}) {
   if (!Array.isArray(edl) || edl.length === 0) {
     throw new Error('EDL is empty.')
@@ -862,11 +921,58 @@ export async function applyEdlToTimeline({
     stemsPlaced.push('music')
   }
 
-  // VO: driven by the voiceover plan when we have one (segmented from
+  // VO branch A: NEW generated voiceover (capability `generateVoiceover`).
+  // Each segment has its own synthesised WAV under
+  // `<projectDir>/.reedit/vo_generated/<draftId>/<segId>.wav` — they
+  // are independent assets, not trims of one stem. We register each
+  // WAV as its own audio asset and place sequentially with the gap
+  // metadata the LLM (or the user) authored.
+  const useGeneratedVo = Boolean(
+    capabilities?.generateVoiceover
+    && generatedVoiceover
+    && Array.isArray(generatedVoiceover.segments)
+    && generatedVoiceover.segments.length > 0
+    && generatedVoiceover.synthesis?.status === 'done'
+    && generatedVoiceover.synthesis?.segmentAudio
+  )
+  if (useGeneratedVo) {
+    const segmentAudio = generatedVoiceover.synthesis.segmentAudio || {}
+    const track = takeAudioTrack()
+    const tlStore = useTimelineStore.getState()
+    let voCursor = 0
+    for (const seg of generatedVoiceover.segments) {
+      const audio = segmentAudio[seg.id]
+      if (!audio?.path) continue
+      const gap = Math.max(0, Number(seg.gapBeforeSec) || 0)
+      if (gap > 0) {
+        const maxGap = Math.max(0, totalReeditDur - voCursor - 0.1)
+        voCursor += Math.min(gap, maxGap)
+      }
+      const remaining = totalReeditDur - voCursor
+      if (remaining <= 0.05) break
+      const dur = Math.max(0.05, Math.min(Number(audio.durationSec) || remaining, remaining))
+      // Each synth WAV is a standalone asset — keyed by its absolute
+      // path so re-applying doesn't duplicate it. registerStemAsset
+      // already de-dupes by path.
+      const asset = registerStemAsset(sourceVideo, audio.path, `vo-gen-${seg.id}`, Number(audio.durationSec) || dur)
+      tlStore.addClip(track.id, asset, voCursor, null, {
+        duration: dur,
+        trimStart: 0,
+        trimEnd: dur,
+        saveHistory: false,
+        selectAfterAdd: false,
+      })
+      voCursor += dur
+    }
+    stemsPlaced.push('vo-generated')
+  }
+  // VO branch B: ORIGINAL voiceover stem (capability `useOriginalVoiceover`).
+  // Driven by the voiceover plan when we have one (segmented from
   // Gemini's overall analysis, either auto-picked by the proposer or
   // manually curated by the user), else fallback to a single
-  // continuous clip from the first VO line onwards.
-  if (stems && capabilities?.useOriginalVoiceover && stems.vocalsPath) {
+  // continuous clip from the first VO line onwards. Skipped when the
+  // generated branch above already filled the audio track.
+  else if (stems && capabilities?.useOriginalVoiceover && stems.vocalsPath) {
     const rawSegments = Array.isArray(voiceoverSegments) ? voiceoverSegments : []
     // Apply user-edited timestamps + global lead pads. The analyzer's
     // values stay canonical on `analysis.overall`; per-segment edits
@@ -876,6 +982,7 @@ export async function applyEdlToTimeline({
     // earlier and later because Gemini's timestamps consistently
     // arrive ~0.3-0.7 s late on phrase starts.
     const edits = voiceoverPlan?.segmentEdits || {}
+    const gaps = voiceoverPlan?.segmentGaps || {}
     const leadIn = Math.max(0, Number(voiceoverPlan?.leadInSec) || 0)
     const leadOut = Math.max(0, Number(voiceoverPlan?.leadOutSec) || 0)
     const segments = rawSegments.map((s) => {
@@ -914,6 +1021,16 @@ export async function applyEdlToTimeline({
       for (const seg of picked) {
         const fullSegDur = Math.max(0.05, Number(seg.endSec) - Number(seg.startSec))
         if (!Number.isFinite(fullSegDur) || fullSegDur <= 0) continue
+        // Apply pre-segment gap from the proposer (or user-edited
+        // override). Lets the LLM push the tagline / closing line near
+        // the end of the re-edit instead of stacking everything from
+        // t=0. Capped so a runaway gap can never silence the entire
+        // timeline — leave at least 0.1 s for the segment itself.
+        const rawGap = Number(gaps?.[seg.id])
+        if (Number.isFinite(rawGap) && rawGap > 0) {
+          const maxGap = Math.max(0, totalReeditDur - voCursor - 0.1)
+          voCursor += Math.min(rawGap, maxGap)
+        }
         // Stop placing once we've filled the re-edit window. Trim the
         // tail segment so it ends exactly at totalReeditDur.
         const remaining = totalReeditDur - voCursor

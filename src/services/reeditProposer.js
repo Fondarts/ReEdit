@@ -192,6 +192,31 @@ function formatSceneBlock(scene) {
   }
   if (motionPieces.length) lines.push(`Motion: ${motionPieces.join(' · ')}`)
 
+  // Cinematography line — structured filmmaker vocabulary captured
+  // by the analyzer (CHAI-inspired taxonomy). Compresses shot_size,
+  // angle, lens, DOF, focus dynamics, lighting style, and special
+  // techniques into one scannable line so the proposer can reason
+  // about visual continuity (e.g. "follow a wide locked-off with a
+  // shallow-DOF push-in", "match shadows-to-shadows on a low-key
+  // pair"). Only emit fields that are present and non-'unknown'.
+  const cin = va.cinematography || null
+  if (cin) {
+    const cinPieces = []
+    if (cin.shot_size && cin.shot_size !== 'unknown') cinPieces.push(`shot=${cin.shot_size}`)
+    if (cin.camera_angle && cin.camera_angle !== 'unknown' && cin.camera_angle !== 'eye_level') cinPieces.push(`angle=${cin.camera_angle}`)
+    if (cin.camera_movement_quality && cin.camera_movement_quality !== 'unknown') cinPieces.push(`rig=${cin.camera_movement_quality}`)
+    if (cin.lens_characteristic && cin.lens_characteristic !== 'unknown') cinPieces.push(`lens=${cin.lens_characteristic}`)
+    if (cin.depth_of_field && cin.depth_of_field !== 'unknown') cinPieces.push(`DOF=${cin.depth_of_field}`)
+    if (cin.focus_dynamics && cin.focus_dynamics !== 'unknown' && cin.focus_dynamics !== 'locked') cinPieces.push(`focus=${cin.focus_dynamics}`)
+    if (cin.composition && cin.composition !== 'unknown') cinPieces.push(`comp=${cin.composition}`)
+    if (cin.lighting_style && cin.lighting_style !== 'unknown') cinPieces.push(`light=${cin.lighting_style}`)
+    if (cin.color_palette) cinPieces.push(`palette=${cin.color_palette}`)
+    if (Array.isArray(cin.special_techniques) && cin.special_techniques.length) {
+      cinPieces.push(`techniques=[${cin.special_techniques.join(', ')}]`)
+    }
+    if (cinPieces.length) lines.push(`Cinematography: ${cinPieces.join(' · ')}`)
+  }
+
   // Audio block only appears when the clip actually has audio — the
   // analyzer sets `audio` to null for silent shots.
   if (va.audio) {
@@ -274,7 +299,14 @@ function estimateEdlDuration(edl, scenes) {
     }
     const scene = byId.get(row?.sourceSceneId)
     if (!scene) continue
-    total += Math.max(0.1, Number(scene.tcOut) - Number(scene.tcIn))
+    let dur = Math.max(0.1, Number(scene.tcOut) - Number(scene.tcIn))
+    // EXTEND adds AI-generated continuation onto the end of the scene
+    // — count those seconds toward the budget so the corrective retry
+    // doesn't keep telling the LLM it's short when extends are
+    // already filling the gap. Already clamped at parse time to the
+    // user's max.
+    if (row?.extend?.seconds) dur += Math.max(0, Number(row.extend.seconds) || 0)
+    total += dur
   }
   return total
 }
@@ -519,7 +551,7 @@ function renderCapabilitiesBlock(capabilities) {
       ].filter(Boolean).join('\n')
     : '- Footage generation: DISABLED. You MUST NOT propose any `placeholder` rows. Every row in the EDL must be `kind: "original"` and reference a scene that exists in the shot log.')
   lines.push(c.footageExtend
-    ? `- Footage extend: ENABLED. You MAY flag a shot for AI extension by prefixing its note with \`EXTEND +<seconds>s:\` when you need a slightly longer beat than the source clip offers. Extensions are capped at **+${maxExtendSec.toFixed(1)} s maximum** (anything more is clamped down) — LTX i2v output degrades past that. Use sparingly and only when a beat truly needs to breathe. Example: \`EXTEND +${Math.min(1.5, maxExtendSec).toFixed(1)}s: hold on the driver's reveal for one extra beat before the cut\`.`
+    ? `- Footage extend: ENABLED. Flag a shot with \`EXTEND +<seconds>s:\` to add AI-generated continuation at the END of that shot. Extensions are capped at **+${maxExtendSec.toFixed(1)} s per shot** (anything more is clamped down). This is a PRIMARY tool for hitting the target duration when the source ad is shorter than the cut you're building — every shot in the EDL is a candidate for EXTEND, and you can add it to as many as needed. Prefer extending shots that can sustain a longer beat (held looks, slow camera moves, ambient establishing shots) over fast-cutting action. Example: \`EXTEND +${Math.min(1.5, maxExtendSec).toFixed(1)}s: hold on the driver's reveal for one extra beat before the cut\`.`
     : '- Footage extend: DISABLED. You MUST NOT annotate shots with EXTEND directives. If a gap needs more time, solve it by reordering or (if enabled) a placeholder, never by stretching a shot.')
   lines.push(c.footageReframe
     ? '- Footage reframe: ENABLED. You MAY mark shots for re-framing (zoom + pan within the same aspect ratio) when a tighter or repositioned view would land a beat better.\n  **FORMAT (non-negotiable)**: `REFRAME zoom=<X.X> anchor=<x>,<y>: <rationale>` — zoom in 1.0–2.5, anchor both values 0–1 (0,0 = top-left, 1,1 = bottom-right, 0.5,0.5 = center). You MUST emit BOTH `zoom=` AND `anchor=` on every REFRAME. A directive missing `anchor=` is invalid and will be silently dropped — a pure zoom is a symmetric center-crop, which almost never improves brand placement and usually chops off the element you wanted to emphasise.\n  **HOW TO PICK THE ANCHOR — READ THE `BrandMark` AND `Subject` LINES OF THE SHOT LOG**:\n    * If your rationale mentions establishing the brand, logo, badge, or identity: the shot MUST have a `BrandMark: <label> centered at [x,y]` line. Copy THOSE coordinates into `anchor=`. If instead the shot says `BrandMark: none visible`, the shot has no literal logo — DO NOT propose a brand-focused REFRAME on it. Pick a different shot to establish brand.\n    * For any other REFRAME intent (push in on driver, tighten on product, emphasise reveal), use the `Subject: <label> centered at [x,y]` coordinates.\n    * If the Subject line ends with `LOOSE`, the bbox is too wide to be a reliable anchor — DO NOT reframe this shot, pick a different one.\n  Example: if `BrandMark: BMW roundel centered at [0.51,0.38]` is in the shot log, `REFRAME zoom=1.6 anchor=0.51,0.38: push in on the BMW roundel to land the brand identity` is correct. Using `anchor=0.5,0.5` on that same shot crops the roundel off the top-left.\n  **GOOD examples** (anchor derived from actual subject position):\n    * `REFRAME zoom=1.4 anchor=0.5,0.42: logo reads at 0.5,0.42 per the Graphics line — tighten on it without clipping the top`\n    * `REFRAME zoom=1.3 anchor=0.3,0.4: driver\'s face sits in the upper-left third per the Visual description; push toward it`\n    * `REFRAME zoom=1.5 anchor=0.5,0.85: tagline is bottom-center; crop in so the copy fills the screen`\n  **BAD examples** (will be dropped):\n    * `REFRAME: zoom=1.3: Opens on the logo` — no anchor, just a center zoom\n    * `REFRAME zoom=1.5 anchor=0.5,0.5: push in on the BMW grille` — Graphics line said the logo was at 0.5,0.42 but the proposal used 0.5,0.5 → logo gets cropped off the top\n  **HARD RULE (ENFORCED BY PARSER)**: any REFRAME with `zoom > 1.2` and `anchor=0.5,0.5` (or within ±0.05 of dead center on both axes) will be DROPPED automatically. The parser treats that combination as "the LLM didn\'t bother to locate the subject" — a symmetric center-crop is almost never the right answer for a reframe. If the subject truly sits dead-center in the frame AND a modest zoom is enough, just use `zoom=1.15 anchor=0.5,0.5` (light enough to stay within tolerance). Otherwise pick a real anchor or don\'t reframe at all.\n  Aspect stays at the delivery target — do NOT change aspect ratio.'
@@ -557,17 +589,76 @@ function renderVoiceoverScriptBlock(voSegments, targetDurationSec) {
     return `- id="${s.id}" (${Number(s.startSec).toFixed(1)}s, ${dur.toFixed(1)}s long)${role}: "${s.text}"`
   })
   const totalVoDur = voSegments.reduce((sum, s) => sum + Math.max(0, Number(s.endSec) - Number(s.startSec)), 0)
+  const hasTagline = voSegments.some((s) => s.role === 'tagline')
   const targetLine = Number.isFinite(targetDurationSec) && targetDurationSec > 0
     ? `Pick the subset of segments whose combined spoken duration fits in roughly ${Math.min(targetDurationSec, targetDurationSec * 0.85).toFixed(1)}s of VO time (leaving ~15 % of the target for breath / pauses between segments).`
     : 'Pick the subset of segments that best tell the story; drop redundant lines.'
+  // Compute a target window for the closing line so the tagline lands
+  // near the end of the re-edit instead of being concatenated at the
+  // top. We aim for "last ~20 % of the timeline" — generous enough that
+  // the LLM doesn't have to nail it to the second.
+  const taglineWindowText = (Number.isFinite(targetDurationSec) && targetDurationSec > 0)
+    ? `between ${Math.max(0, targetDurationSec * 0.7).toFixed(1)}s and ${targetDurationSec.toFixed(1)}s on the timeline`
+    : 'in the final third of the re-edit'
   return `\n\n# Voiceover script (segmented from the source VO)
 Full VO is ${totalVoDur.toFixed(1)}s across ${voSegments.length} segment${voSegments.length === 1 ? '' : 's'}. ${targetLine} Keep the ORIGINAL ORDER of segments — do NOT reorder; only include or skip each one. Prefer segments that reinforce the core message and the brand role; drop legal disclaimers if the target is tight.
 
 ${lines.join('\n')}
 
+## Placement on the re-edit timeline (CRITICAL)
+By default the app concatenates picked VO segments back-to-back starting at t=0. That makes every line stack at the top of the cut and leaves the tail silent — wrong for almost every ad. Use \`segmentGaps\` to push segments later in the timeline so the VO breathes with the picture:
+
+- Each value in \`segmentGaps\` is the silence (in seconds) inserted BEFORE that segment fires. Gaps STACK on top of the previous segment's end position. \`gap=0\` means "play immediately after the previous segment ends".
+- Beat structure should drive the gaps: opening line lands early (gap≈0), middle lines breathe with the visual beats they support, **the tagline / closing line MUST land ${taglineWindowText}** so it pays off the last shot, not the first.${hasTagline ? ' One of the segments above is tagged `[tagline]` — that is the line whose placement matters most.' : ''}
+- Keep gaps realistic: 0.3-2 s between conversational lines, 1.5-6 s before a tagline so it has air. Do not insert a gap so large the VO would extend past the timeline — the placer truncates anything past the end.
+- If you are intentionally stacking everything tight (e.g. dense product-feature voiceover), it's fine to leave \`segmentGaps\` empty — but never let the tagline land in the first half of the cut.
+
 In addition to the EDL, return a \`voiceoverPlan\` field at the top level of the JSON response:
-  "voiceoverPlan": { "segmentIds": ["vo-0", "vo-2", "vo-3", ...] }
-Listing the ids (preserve order) of the VO segments that should play on the timeline. If you think the full script fits, include every id. If VO should be silenced entirely, return an empty array.`
+  "voiceoverPlan": {
+    "segmentIds": ["vo-0", "vo-2", "vo-3"],
+    "segmentGaps": { "vo-0": 0.0, "vo-2": 1.2, "vo-3": 6.5 }
+  }
+Listing the ids (preserve order) of the VO segments that should play on the timeline, plus the silence-before-each-segment in seconds. \`segmentGaps\` is a flat map keyed by id; omitted ids default to 0 (no gap). If the full script fits, include every id. If VO should be silenced entirely, return \`segmentIds: []\`.`
+}
+
+// Render the FIXED voiceover script block when the user has the
+// `generateVoiceover` capability on and selected a synthesised draft.
+// Different from the original-VO block: the proposer doesn't pick or
+// reorder anything — the user already wrote and synthesised the VO.
+// We just tell the model what will play and when so it plans visual
+// beats around it (e.g. don't put fast-cut action under a delicate
+// closing line; don't park a still hero shot under silence).
+function renderGeneratedVoiceoverBlock(generatedVoiceover) {
+  if (!generatedVoiceover || !Array.isArray(generatedVoiceover.segments) || generatedVoiceover.segments.length === 0) return ''
+  const segs = generatedVoiceover.segments
+  const audio = generatedVoiceover.synthesis?.segmentAudio || {}
+  // Compute placement: cumulative cursor, gap-before each segment,
+  // segment duration from the synthesised WAV. Falls back to a 2.4
+  // wps estimate if synth audio metadata is missing (UI may not have
+  // populated durations on a stale draft).
+  let cursor = 0
+  const lines = []
+  let totalDur = 0
+  for (const s of segs) {
+    const gap = Math.max(0, Number(s.gapBeforeSec) || 0)
+    cursor += gap
+    const dur = Number(audio[s.id]?.durationSec) || (((s.text || '').trim().split(/\s+/).filter(Boolean).length) / 2.4)
+    const start = cursor
+    const end = cursor + dur
+    cursor = end
+    totalDur = end
+    const role = s.role && s.role !== 'line' ? ` [${s.role}]` : ''
+    lines.push(`- ${start.toFixed(1)}s → ${end.toFixed(1)}s${role}: "${s.text}"`)
+  }
+  return `\n\n# Voiceover script (FIXED — already written and synthesised)
+The user has authored a NEW voiceover script and synthesised it (cloning the source speaker's voice). It is NOT a transcript of the original ad — it is the new copy that WILL play under your re-edit, exactly as listed below, in this order, with the timestamps shown. You CANNOT add, drop, reorder, or re-time these lines. Total VO occupies ${totalDur.toFixed(1)}s of the timeline; the gaps shown are deliberate breathing room — visuals fill them.
+
+${lines.join('\n')}
+
+When choosing shots:
+- Hero / static / contemplative shots tend to live under VO lines. Fast-cut action lives in the gaps.
+- The TAGLINE timestamp is non-negotiable — make sure the closing visual lands on that beat.
+- Do NOT return a \`voiceoverPlan\` field — the VO is fixed and the placer uses the script directly.`
 }
 
 function renderAdConceptBlock(adConcept) {
@@ -585,7 +676,7 @@ These are the creative strategist's notes on what the ORIGINAL ad is about. Your
 ${rows.join('\n')}`
 }
 
-function buildUserPrompt({ scenes, brandBrief, extraInstructions, metric, totalDurationSec, targetDurationSec, criteria, correctionNote, capabilities, adConcept, voSegments }) {
+function buildUserPrompt({ scenes, brandBrief, extraInstructions, metric, totalDurationSec, targetDurationSec, criteria, correctionNote, capabilities, adConcept, voSegments, generatedVoiceover }) {
   const shotLog = renderShotLog(scenes)
   // Keep the budget math consistent with the shot log — if a shot
   // isn't in the log, the LLM can't reference it, so its seconds
@@ -601,34 +692,53 @@ function buildUserPrompt({ scenes, brandBrief, extraInstructions, metric, totalD
   const placeholdersAllowed = capabilities?.footageGeneration !== false
     ? (capabilities?.footageGeneration ? true : false)
     : false
+  const extendAllowed = Boolean(capabilities?.footageExtend)
+  const userKnobs = loadCapabilitySettings()
+  const maxExtendSecForBudget = Number(userKnobs?.footageExtend?.maxExtendSec) || 2.0
   if (Number.isFinite(targetDurationSec) && targetDurationSec > 0) {
     const lo = Math.max(1, targetDurationSec * 0.85)
     const hi = targetDurationSec * 1.15
-    const needsPlaceholders = targetDurationSec > totalNatural * 1.05
-    const neededPlaceholderSec = needsPlaceholders ? targetDurationSec - totalNatural : 0
+    const gapSec = targetDurationSec - totalNatural
+    const needsMoreSec = gapSec > totalNatural * 0.05  // > 5% short
+    // Budget for what EXTEND alone can buy: max +Xs per eligible
+    // shot (capped by capability settings). Used to decide whether
+    // EXTEND can close the gap on its own or placeholders are still
+    // required on top.
+    const extendCapacitySec = extendAllowed ? eligibleScenes.length * maxExtendSecForBudget : 0
+    const extendCanCoverGap = extendAllowed && extendCapacitySec >= gapSec - 0.1
 
-    // When placeholders are disabled by capabilities, the "gap
-    // exceeds budget" advice flips: instead of telling the model to
-    // add synthetic rows, we instruct it to cap the EDL at the
-    // available footage so it doesn't propose a short cut and flag it
-    // as a budget failure.
+    // Gap-filling strategy depends on which capabilities are on.
+    // We list the available tools in priority order — EXTEND first
+    // (least disruptive to brand integrity), placeholders second
+    // (introduces synthetic footage). Both can be combined.
     let gapLine
-    if (!needsPlaceholders) {
+    if (!needsMoreSec) {
       gapLine = `You can reach the target using existing scenes alone — include enough of them that the natural durations sum to ~${targetDurationSec.toFixed(1)}s.`
+    } else if (extendAllowed && extendCanCoverGap) {
+      const avgPerShot = gapSec / Math.max(1, eligibleScenes.length)
+      gapLine = `The target exceeds available footage by ${gapSec.toFixed(1)}s. You MUST close that gap. EXTEND alone can do it: averaging +${avgPerShot.toFixed(1)}s across the ${eligibleScenes.length} included shots gets you there. In practice, pick the ${Math.max(3, Math.round(gapSec / maxExtendSecForBudget))} shots that most benefit from breathing room and tag each with \`EXTEND +${maxExtendSecForBudget.toFixed(1)}s:\` (or smaller increments spread across more shots). The MAXIMUM extension per shot is +${maxExtendSecForBudget.toFixed(1)}s — stay at or below that.${placeholdersAllowed ? ` Placeholders are also available if you prefer to fill some of the gap with NEW shots — pick whichever combination best serves the metric.` : ''}`
+    } else if (extendAllowed && placeholdersAllowed) {
+      const placeholderSec = Math.max(0, gapSec - extendCapacitySec)
+      gapLine = `The target exceeds available footage by ${gapSec.toFixed(1)}s. You MUST close that gap with a combination of: (a) EXTEND directives — up to +${maxExtendSecForBudget.toFixed(1)}s per shot, total capacity ${extendCapacitySec.toFixed(1)}s across all ${eligibleScenes.length} shots; and (b) ~${Math.max(2, Math.round(placeholderSec / 2))} placeholder rows averaging ~2s each to cover the remaining ${placeholderSec.toFixed(1)}s. Do NOT return a short EDL.`
     } else if (placeholdersAllowed) {
-      gapLine = `The target exceeds available footage by ${neededPlaceholderSec.toFixed(1)}s. You MUST add ~${Math.max(2, Math.round(neededPlaceholderSec / 2))} placeholder rows averaging ~2s each. Without enough placeholders, you will NOT reach the budget.`
+      gapLine = `The target exceeds available footage by ${gapSec.toFixed(1)}s. You MUST add ~${Math.max(2, Math.round(gapSec / 2))} placeholder rows averaging ~2s each. Without enough placeholders, you will NOT reach the budget.`
+    } else if (extendAllowed) {
+      gapLine = `The target exceeds available footage by ${gapSec.toFixed(1)}s AND placeholder rows are disabled. Use EXTEND aggressively: tag every shot that can sustain it with up to \`EXTEND +${maxExtendSecForBudget.toFixed(1)}s:\` until the sum reaches the target. Available extend capacity is ${extendCapacitySec.toFixed(1)}s across ${eligibleScenes.length} shots — that is ${extendCapacitySec >= gapSec ? 'enough' : 'NOT enough; the final EDL will fall ' + (gapSec - extendCapacitySec).toFixed(1) + 's short of target, which is acceptable in this case'}.`
     } else {
-      gapLine = `The target exceeds available footage by ${neededPlaceholderSec.toFixed(1)}s AND placeholder rows are DISABLED by capabilities. Use every eligible scene — the final EDL will be ${totalNatural.toFixed(1)}s, which is below the target; that is expected. Do not attempt to hit the target with non-original rows.`
+      gapLine = `The target exceeds available footage by ${gapSec.toFixed(1)}s AND both placeholder rows AND extend are DISABLED. Use every eligible scene — the final EDL will be ${totalNatural.toFixed(1)}s, which is below the target; that is expected. Do not attempt to hit the target with non-original rows.`
     }
+
+    const tools = []
+    tools.push('source-scene durations')
+    if (extendAllowed) tools.push(`EXTEND seconds (max +${maxExtendSecForBudget.toFixed(1)}s per shot)`)
+    if (placeholdersAllowed) tools.push('placeholder rows')
 
     const lines = [
       `**HARD BUDGET — ${targetDurationSec.toFixed(1)}s total (acceptable ${lo.toFixed(1)}–${hi.toFixed(1)}s).**`,
       `You have ${eligibleScenes.length} scenes, ${totalNatural.toFixed(1)}s of source footage, average ${avgDur.toFixed(2)}s per shot.`,
-      'Each row plays at the SOURCE scene\'s natural length shown in the shot log — you cannot stretch or shrink a clip.',
+      `Each row's on-timeline duration = source-scene length${extendAllowed ? ' + any EXTEND seconds you flag (capped at +' + maxExtendSecForBudget.toFixed(1) + 's per shot)' : ''}.`,
       gapLine,
-      placeholdersAllowed
-        ? 'Before returning, SUM the natural durations of your chosen rows + placeholder durations. If the sum is under the lower bound, ADD more rows until you are in range. Do not return an EDL that is short.'
-        : 'Before returning, SUM the natural durations of your chosen rows. Include every eligible scene once unless you have a strong reason to skip it.',
+      `Before returning, SUM the on-timeline durations of every row (${tools.join(' + ')}). If the sum is below ${lo.toFixed(1)}s, ADD more material until you're in range. Do not return a short EDL.`,
       correctionNote ? `\n**CORRECTION REQUIRED**: ${correctionNote}` : null,
     ].filter(Boolean)
     budget = lines.join('\n')
@@ -665,11 +775,16 @@ function buildUserPrompt({ scenes, brandBrief, extraInstructions, metric, totalD
   // the model makes while reading the shot log. Empty string when no
   // overall analysis has been run.
   const adConceptBlock = renderAdConceptBlock(adConcept)
-  // Only render the VO script block when the capability is on and
-  // there are actual segments. Otherwise nothing to pick from.
-  const voScriptBlock = (capabilities?.useOriginalVoiceover && Array.isArray(voSegments) && voSegments.length > 0)
-    ? renderVoiceoverScriptBlock(voSegments, targetDurationSec)
-    : ''
+  // VO script block: when `generateVoiceover` is on AND a synthesised
+  // draft was passed, the FIXED block wins (proposer doesn't pick or
+  // reorder; the user already authored the new script). When
+  // `useOriginalVoiceover` is on, render the pickable original-VO
+  // block. Otherwise nothing.
+  const voScriptBlock = (capabilities?.generateVoiceover && generatedVoiceover && Array.isArray(generatedVoiceover.segments) && generatedVoiceover.segments.length > 0)
+    ? renderGeneratedVoiceoverBlock(generatedVoiceover)
+    : (capabilities?.useOriginalVoiceover && Array.isArray(voSegments) && voSegments.length > 0)
+      ? renderVoiceoverScriptBlock(voSegments, targetDurationSec)
+      : ''
 
   return `# Goal
 Re-edit this commercial to improve its ${metric} score.${framework}
@@ -682,16 +797,17 @@ Each shot below is a multi-line block separated by \`---\`:
 - Visual: factual description of what happens on screen.
 - Chips: brand presence · emotion · framing · overall movement.
 - Motion: camera movement (with intensity) and subject motion (with direction).
+- Cinematography: precise filmmaker terms — shot size, angle, rig, lens, DOF, focus dynamics, composition, lighting style, colour palette, special techniques. Omitted when the analyzer couldn't categorise the shot.
 - Audio: verbatim voiceover (VO), music description, SFX list, ambient bed. Omitted on silent clips.
 - Graphics: on-screen text with its role (title, tagline, caption, legal_disclaimer, etc.) and logos present. Omitted on clean frames.
 - Pacing: shot boundary character (cut_type) and tempo feel.
-Use Audio.VO to anchor narrative continuity — never split a VO line across shots arbitrarily. Use Pacing + music tempo to size shot durations. Use Graphics to decide which shots MUST carry brand elements (logo, tagline, legal disclaimer) and which ones can be replaced.
+Use Audio.VO to anchor narrative continuity — never split a VO line across shots arbitrarily. Use Pacing + music tempo to size shot durations. Use Graphics to decide which shots MUST carry brand elements (logo, tagline, legal disclaimer) and which ones can be replaced. Use Cinematography to keep visual continuity tight: when ordering shots, alternate or match \`shot_size\` deliberately (don't bounce ECU→Wide→ECU at random), keep \`lighting_style\` consistent within a beat, and match \`composition\` lines (a leading-line shot pairs well with another that continues the line).
 
 ${shotLog}
 
 # Your task
 Propose a new edit decision list that improves ${metric}. The tools available to you depend on the Capabilities block above:
-- **Always**: reorder shots, cut weak moments, promote high-value shots to prime timecodes (first and last seconds).${placeholdersAllowed ? '\n- **Placeholder rows**: add 1–3 NEW placeholder shots if a structural gap truly needs one.' : ''}${capabilities?.footageReframe ? '\n- **Reframe** (`REFRAME:` directive): tighten or reposition a shot when the current framing buries a beat.' : ''}${capabilities?.colorCorrection ? '\n- **Color grading** (`COLOR:` directive): correct shots that fight the target metric / brand mood. If the framework or brief explicitly calls for a look (bright, warm, moody, desaturated, etc), you MUST apply COLOR to the shots that miss it — reordering alone will not fix an off-concept grade.' : ''}${capabilities?.footageExtend ? '\n- **Extend** (`EXTEND +Xs:` directive): buy a little more time on a shot via AI extension.' : ''}${capabilities?.useOriginalMusic ? '\n- **Music stem** (`AUDIO music:` directive): layer the isolated music stem anywhere.' : ''}${capabilities?.useOriginalVoiceover ? '\n- **VO stem** (`AUDIO vo: "..."` directive): reuse a VO line on a different shot.' : ''}
+- **Always**: reorder shots, cut weak moments, promote high-value shots to prime timecodes (first and last seconds).${placeholdersAllowed ? '\n- **Placeholder rows**: add 1–3 NEW placeholder shots if a structural gap truly needs one.' : ''}${capabilities?.footageReframe ? '\n- **Reframe** (`REFRAME:` directive): tighten or reposition a shot when the current framing buries a beat.' : ''}${capabilities?.colorCorrection ? '\n- **Color grading** (`COLOR:` directive): correct shots that fight the target metric / brand mood. If the framework or brief explicitly calls for a look (bright, warm, moody, desaturated, etc), you MUST apply COLOR to the shots that miss it — reordering alone will not fix an off-concept grade.' : ''}${capabilities?.footageExtend ? '\n- **Extend** (`EXTEND +Xs:` directive): add up to +' + (Number(loadCapabilitySettings()?.footageExtend?.maxExtendSec) || 2).toFixed(1) + 's of AI continuation to a shot. Use this aggressively when the target duration exceeds available footage — a +2s on each of 4 shots adds 8s without introducing new placeholders.' : ''}${capabilities?.useOriginalMusic ? '\n- **Music stem** (`AUDIO music:` directive): layer the isolated music stem anywhere.' : ''}${capabilities?.useOriginalVoiceover ? '\n- **VO stem** (`AUDIO vo: "..."` directive): reuse a VO line on a different shot.' : ''}
 
 ${budget}
 
@@ -749,6 +865,7 @@ export async function generateProposal({
   adConcept,
   voSegments,
   voPlanOverride,
+  generatedVoiceover, // { segments: [{id,text,role,gapBeforeSec}], synthesis: { segmentAudio: { [id]: { path, durationSec } } } } | null
 } = {}) {
   if (!Array.isArray(scenes) || scenes.length === 0) {
     throw new Error('Shot log is empty — run Analysis first.')
@@ -811,7 +928,7 @@ export async function generateProposal({
   // so this path works for both LM Studio and the Anthropic backend
   // without the proposer knowing which is active.
   const runOnce = async (correctionNote) => {
-    const userPromptText = buildUserPrompt({ scenes, brandBrief, extraInstructions, metric: targetMetric, totalDurationSec, targetDurationSec, criteria: effectiveCriteria, correctionNote, capabilities, adConcept, voSegments })
+    const userPromptText = buildUserPrompt({ scenes, brandBrief, extraInstructions, metric: targetMetric, totalDurationSec, targetDurationSec, criteria: effectiveCriteria, correctionNote, capabilities, adConcept, voSegments, generatedVoiceover })
     // When we have a video ready, compose the user message as a
     // content array: the prompt first (order matters — Gemini treats
     // the last text as the active instruction) then the video. The
@@ -910,14 +1027,39 @@ export async function generateProposal({
     } : {}
     // Strip undefineds so spread doesn't clobber later fields.
     Object.keys(userExtras).forEach((k) => userExtras[k] === undefined && delete userExtras[k])
+    // segmentGaps from the LLM: silence-before-each-segment in seconds,
+    // keyed by segment id. Only honoured when the proposer auto-picked
+    // (manual mode bypasses the LLM entirely). Carry user gap edits if
+    // the override has them — same pattern as segmentEdits.
+    const sanitizeGaps = (raw) => {
+      if (!raw || typeof raw !== 'object') return null
+      const out = {}
+      for (const [id, val] of Object.entries(raw)) {
+        const num = Number(val)
+        if (!Number.isFinite(num) || num < 0) continue
+        // Cap at a sane upper bound — a 30 s gap on a 30 s ad = pure
+        // silence with one VO line at the very end. Beyond that the LLM
+        // is almost certainly hallucinating.
+        out[id] = Math.min(30, num)
+      }
+      return Object.keys(out).length > 0 ? out : null
+    }
+    const overrideGaps = voPlanOverride && sanitizeGaps(voPlanOverride.segmentGaps)
+    const proposedGaps = sanitizeGaps(parsed?.voiceoverPlan?.segmentGaps)
     let voiceoverPlan = null
     if (voPlanOverride && voPlanOverride.autoEdit === false && Array.isArray(voPlanOverride.segmentIds)) {
       voiceoverPlan = { autoEdit: false, segmentIds: voPlanOverride.segmentIds, ...userExtras }
+      if (overrideGaps) voiceoverPlan.segmentGaps = overrideGaps
     } else if (Array.isArray(parsed?.voiceoverPlan?.segmentIds)) {
       const validIds = parsed.voiceoverPlan.segmentIds.filter((id) => allSegIds.includes(id))
       voiceoverPlan = { autoEdit: true, segmentIds: validIds, ...userExtras }
+      // User-edited gaps win over the LLM's pick on re-prompts; otherwise
+      // adopt whatever the LLM emitted.
+      const mergedGaps = overrideGaps || proposedGaps
+      if (mergedGaps) voiceoverPlan.segmentGaps = mergedGaps
     } else if (allSegIds.length > 0) {
       voiceoverPlan = { autoEdit: true, segmentIds: allSegIds, ...userExtras }
+      if (overrideGaps) voiceoverPlan.segmentGaps = overrideGaps
     }
     return { rationale: String(parsed.rationale || ''), edl: normalized, rawText, voiceoverPlan }
   }

@@ -534,6 +534,450 @@ function VoiceoverPanel({ analysis, voPlan, onChangeVoPlan, proposerPickedIds, c
   )
 }
 
+// VoiceoverScriptPanel — drives the `generateVoiceover` capability.
+// Lets the user generate any number of script drafts (Gemini), edit
+// segments inline, and pick one to drive the proposal. Synthesis (M2)
+// is not wired yet — the panel only handles the script side for now.
+//
+// Persistence: the parent owns `drafts` and `selectedId` and writes
+// them back to the project; this component is "controlled" so the
+// parent can save on every meaningful change.
+function VoiceoverScriptPanel({
+  analysis,
+  drafts,
+  selectedId,
+  onChangeDrafts,
+  onChangeSelectedId,
+  targetDurationSec,
+  capabilities,
+  sourceVideo,
+  projectDir,
+}) {
+  const [generating, setGenerating] = useState(false)
+  const [error, setError] = useState(null)
+  const [tone, setTone] = useState('')
+  const [extraInstructions, setExtraInstructions] = useState('')
+  const [language, setLanguage] = useState(drafts.length > 0 ? drafts[drafts.length - 1].language : 'en')
+  const [collapsed, setCollapsed] = useState(false)
+  // Per-draft synth state lives in component state (not in the
+  // persisted draft) so we can render in-flight progress without
+  // hammering saveProject. The completed result IS persisted onto the
+  // draft once the IPC returns.
+  const [synthState, setSynthState] = useState({}) // { [draftId]: { running, stage, currentSeg, totalSegs, error } }
+  const expandedDraftRef = useRef(null)
+
+  // Pull the lazy import here so we don't pay for it when the
+  // capability is off — keeps the proposal tab snappy.
+  const overall = analysis?.overall || null
+  const originalTranscript = useMemo(() => {
+    const segs = Array.isArray(overall?.voiceover_segments) ? overall.voiceover_segments : []
+    return segs.map((s) => s?.text).filter(Boolean).join(' ')
+  }, [overall?.voiceover_segments])
+
+  const handleGenerate = async () => {
+    setError(null)
+    setGenerating(true)
+    try {
+      const { generateVoiceoverScriptDraft } = await import('../../services/reeditScriptWriter')
+      const draft = await generateVoiceoverScriptDraft({
+        adConcept: overall,
+        originalTranscript,
+        targetDurationSec,
+        language,
+        tone: tone.trim(),
+        extraInstructions: extraInstructions.trim(),
+        previousDrafts: drafts,
+      })
+      const next = [...drafts, draft]
+      onChangeDrafts(next)
+      // Auto-select the newest draft only if nothing is selected yet —
+      // we don't yank the radio out from under the user when they're
+      // happy with a previous pick.
+      if (!selectedId) onChangeSelectedId(draft.id)
+      expandedDraftRef.current = draft.id
+    } catch (err) {
+      console.error('[reedit] script generation failed:', err)
+      setError(err?.message || 'Script generation failed.')
+    } finally {
+      setGenerating(false)
+    }
+  }
+
+  const handleDeleteDraft = (id) => {
+    const next = drafts.filter((d) => d.id !== id)
+    onChangeDrafts(next)
+    if (selectedId === id) onChangeSelectedId(next.length > 0 ? next[next.length - 1].id : null)
+  }
+
+  const handleEditSegment = (draftId, segId, patch) => {
+    const next = drafts.map((d) => {
+      if (d.id !== draftId) return d
+      // Mutating the segments invalidates any synthesis we already did
+      // — drop it so the user knows they need to re-synthesise. Cheap
+      // safety net; M2 will surface a "needs re-render" badge.
+      return {
+        ...d,
+        segments: d.segments.map((s) => (s.id === segId ? { ...s, ...patch } : s)),
+        synthesis: d.synthesis ? null : d.synthesis,
+      }
+    })
+    onChangeDrafts(next)
+  }
+
+  // Subscribe to ComfyUI synth progress for the current synthesising
+  // draft. The same listener handles every draft in the panel — we
+  // just dispatch by draftId.
+  useEffect(() => {
+    if (!window.electronAPI?.onSynthesizeVoiceoverProgress) return
+    const off = window.electronAPI.onSynthesizeVoiceoverProgress((payload) => {
+      const { draftId, stage, ...rest } = payload || {}
+      if (!draftId) return
+      setSynthState((prev) => ({
+        ...prev,
+        [draftId]: {
+          ...(prev[draftId] || {}),
+          running: stage !== 'done' && stage !== 'failed',
+          stage,
+          ...rest,
+        },
+      }))
+    })
+    return () => { try { off && off() } catch (_) { /* noop */ } }
+  }, [])
+
+  const handleSynthesize = async (draft) => {
+    setError(null)
+    const stems = sourceVideo?.stems
+    if (!stems?.vocalsPath) {
+      setError('Voice cloning needs the original VO stem. Run Demucs separation in the Import view first.')
+      return
+    }
+    const { pickVoiceReferenceWindow } = await import('../../services/reeditScriptWriter')
+    const window_ = pickVoiceReferenceWindow(analysis?.overall?.voiceover_segments)
+    if (!window_) {
+      setError('Could not pick a clean reference window from the original VO. Make sure the overall analysis ran successfully.')
+      return
+    }
+    setSynthState((prev) => ({
+      ...prev,
+      [draft.id]: { running: true, stage: 'starting', totalSegments: draft.segments.length },
+    }))
+    try {
+      const res = await window.electronAPI.synthesizeVoiceover({
+        draftId: draft.id,
+        projectDir,
+        segments: draft.segments.map((s) => ({ id: s.id, text: s.text, role: s.role })),
+        voiceRef: {
+          audioPath: stems.vocalsPath,
+          startSec: window_.startSec,
+          endSec: window_.endSec,
+          transcript: window_.transcript,
+        },
+        language: draft.language || 'en',
+      })
+      if (!res?.success) throw new Error(res?.error || 'Synthesis failed.')
+      // Persist synth result on the draft itself so it survives reloads.
+      const updated = drafts.map((d) => d.id === draft.id ? {
+        ...d,
+        synthesis: {
+          status: 'done',
+          completedAt: new Date().toISOString(),
+          segmentAudio: res.segmentAudio || {},
+          voiceRef: res.voiceRef || null,
+        },
+      } : d)
+      onChangeDrafts(updated)
+      setSynthState((prev) => ({ ...prev, [draft.id]: { running: false, stage: 'done' } }))
+    } catch (err) {
+      console.error('[reedit] VO synthesis failed:', err)
+      setSynthState((prev) => ({ ...prev, [draft.id]: { running: false, stage: 'failed', error: err.message } }))
+      setError(err.message || 'Synthesis failed.')
+    }
+  }
+
+  const blocked = !capabilities?.generateVoiceover
+  if (blocked) {
+    return (
+      <div className="rounded-lg border border-dashed border-sf-dark-700 bg-sf-dark-900/40 p-4 text-sm text-sf-text-muted">
+        <div className="flex items-center gap-2 mb-1">
+          <Sparkles size={14} className="text-sf-text-muted" />
+          <span className="font-medium">Generate new voiceover (capability off)</span>
+        </div>
+        <p>Enable <span className="font-mono text-sf-text-secondary">Generate new voiceover</span> in the Capabilities section below to draft a fresh script with Gemini and synthesise it via ComfyUI.</p>
+      </div>
+    )
+  }
+
+  const noOverall = !overall || (!overall.concept && !overall.message)
+
+  return (
+    <div className="rounded-lg border border-sf-accent/30 bg-sf-accent/5 p-4">
+      <div className="flex items-start justify-between gap-3 mb-3">
+        <div>
+          <div className="flex items-center gap-2 mb-1">
+            <Sparkles size={14} className="text-sf-accent" />
+            <span className="text-sm font-semibold text-sf-text-primary">Voiceover script</span>
+            <span className="text-[10px] uppercase tracking-wider text-sf-accent/80 bg-sf-accent/15 border border-sf-accent/30 rounded px-1.5 py-0.5">new</span>
+          </div>
+          <p className="text-xs text-sf-text-muted">
+            Have Gemini draft a fresh script using the ad's concept and mood. Generate as many takes as you want, edit any segment inline, then pick the one the proposer should plan around.
+          </p>
+        </div>
+        <button
+          type="button"
+          onClick={() => setCollapsed((v) => !v)}
+          className="text-xs text-sf-text-muted hover:text-sf-text-primary"
+        >
+          {collapsed ? 'Show' : 'Hide'}
+        </button>
+      </div>
+
+      {!collapsed && (
+        <>
+          {noOverall && (
+            <div className="mb-3 rounded border border-amber-500/40 bg-amber-500/5 px-3 py-2 text-xs text-amber-200">
+              Run the overall ad analysis first (Analysis tab → "Analyze") so Gemini has the concept and mood to write from.
+            </div>
+          )}
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-3 mb-3">
+            <div>
+              <label className="block text-[11px] font-medium text-sf-text-muted uppercase tracking-wider mb-1">Language</label>
+              <select
+                value={language}
+                onChange={(e) => setLanguage(e.target.value)}
+                className="w-full text-sm rounded border border-sf-dark-700 bg-sf-dark-900 px-2 py-1.5 text-sf-text-primary"
+              >
+                <option value="en">English</option>
+                <option value="es">Spanish</option>
+                <option value="pt">Portuguese</option>
+                <option value="fr">French</option>
+                <option value="it">Italian</option>
+                <option value="de">German</option>
+                <option value="ja">Japanese</option>
+                <option value="zh">Chinese (Mandarin)</option>
+              </select>
+            </div>
+            <div>
+              <label className="block text-[11px] font-medium text-sf-text-muted uppercase tracking-wider mb-1">Tone (optional)</label>
+              <input
+                type="text"
+                value={tone}
+                onChange={(e) => setTone(e.target.value)}
+                placeholder="e.g. drier, more cinematic, less salesy"
+                className="w-full text-sm rounded border border-sf-dark-700 bg-sf-dark-900 px-2 py-1.5 text-sf-text-primary placeholder:text-sf-text-muted/60"
+              />
+            </div>
+          </div>
+          <div className="mb-3">
+            <label className="block text-[11px] font-medium text-sf-text-muted uppercase tracking-wider mb-1">Extra instructions (optional)</label>
+            <textarea
+              rows={2}
+              value={extraInstructions}
+              onChange={(e) => setExtraInstructions(e.target.value)}
+              placeholder="e.g. open with a question, keep the brand name out of the first line"
+              className="w-full text-sm rounded border border-sf-dark-700 bg-sf-dark-900 px-2 py-1.5 text-sf-text-primary placeholder:text-sf-text-muted/60 resize-none"
+            />
+          </div>
+
+          <div className="flex items-center gap-2 mb-3">
+            <button
+              type="button"
+              onClick={handleGenerate}
+              disabled={generating || noOverall}
+              className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded text-sm bg-sf-accent text-white hover:bg-sf-accent/90 disabled:bg-sf-dark-700 disabled:text-sf-text-muted disabled:cursor-not-allowed"
+            >
+              {generating ? <Loader2 size={14} className="animate-spin" /> : <Wand2 size={14} />}
+              {drafts.length === 0 ? 'Generate first draft' : `Generate another draft (${drafts.length} so far)`}
+            </button>
+            {drafts.length > 0 && (
+              <span className="text-xs text-sf-text-muted">Selected draft drives the proposal below.</span>
+            )}
+          </div>
+
+          {error && (
+            <div className="mb-3 rounded border border-red-500/40 bg-red-500/5 px-3 py-2 text-xs text-red-200 flex items-start gap-2">
+              <AlertCircle size={14} className="mt-0.5 shrink-0" />
+              <span>{error}</span>
+            </div>
+          )}
+
+          {drafts.length === 0 ? (
+            <div className="rounded border border-dashed border-sf-dark-700 bg-sf-dark-900/40 px-3 py-6 text-center text-xs text-sf-text-muted">
+              No drafts yet. Click <span className="text-sf-text-secondary">Generate first draft</span> to start.
+            </div>
+          ) : (
+            <div className="space-y-2">
+              {drafts.map((draft, idx) => (
+                <ScriptDraftCard
+                  key={draft.id}
+                  draft={draft}
+                  index={idx + 1}
+                  selected={selectedId === draft.id}
+                  onSelect={() => onChangeSelectedId(draft.id)}
+                  onDelete={() => handleDeleteDraft(draft.id)}
+                  onEditSegment={(segId, patch) => handleEditSegment(draft.id, segId, patch)}
+                  onSynthesize={() => handleSynthesize(draft)}
+                  synthState={synthState[draft.id]}
+                  defaultExpanded={expandedDraftRef.current === draft.id}
+                />
+              ))}
+            </div>
+          )}
+        </>
+      )}
+    </div>
+  )
+}
+
+function ScriptDraftCard({ draft, index, selected, onSelect, onDelete, onEditSegment, onSynthesize, synthState, defaultExpanded }) {
+  const [expanded, setExpanded] = useState(Boolean(defaultExpanded))
+  const totalSpokenSec = useMemo(() => {
+    const words = draft.segments.reduce((sum, s) => sum + (s.text || '').trim().split(/\s+/).filter(Boolean).length, 0)
+    return words / 2.4 // matches SPOKEN_WORDS_PER_SEC in the writer service
+  }, [draft.segments])
+  const totalGapSec = draft.segments.reduce((sum, s) => sum + (Number(s.gapBeforeSec) || 0), 0)
+  const totalTimelineSec = totalSpokenSec + totalGapSec
+  const langLabel = (() => {
+    const map = { en: 'English', es: 'Spanish', pt: 'Portuguese', fr: 'French', it: 'Italian', de: 'German', ja: 'Japanese', zh: 'Mandarin' }
+    return map[draft.language] || draft.language
+  })()
+  const synthDone = draft.synthesis?.status === 'done'
+  const synthRunning = synthState?.running
+  const synthFailed = synthState?.stage === 'failed'
+
+  // Friendly stage label for the in-flight UI. The handler emits raw
+  // stage names ('extracting_reference', 'segment_starting', etc.); we
+  // map the noisy ones to something readable.
+  const stageLabel = (() => {
+    if (!synthState) return null
+    const { stage, index: si, total, segId } = synthState
+    if (stage === 'extracting_reference') return 'Extracting voice reference…'
+    if (stage === 'uploading_reference') return 'Uploading reference to ComfyUI…'
+    if (stage === 'segment_starting') return `Synthesising segment ${si}/${total}${segId ? ` (${segId})` : ''}…`
+    if (stage === 'segment_running') return `Rendering segment${segId ? ` ${segId}` : ''}… ${synthState.elapsedSec ?? ''}s`
+    if (stage === 'segment_done') return `Segment ${si}/${total} done`
+    if (stage === 'starting') return 'Starting…'
+    if (stage === 'done') return 'All segments synthesised'
+    if (stage === 'failed') return synthState.error || 'Synthesis failed'
+    return stage || null
+  })()
+
+  return (
+    <div className={`rounded border ${selected ? 'border-sf-accent bg-sf-accent/10' : 'border-sf-dark-700 bg-sf-dark-900/60'} overflow-hidden`}>
+      <div className="px-3 py-2 flex items-center gap-2">
+        <input
+          type="radio"
+          checked={selected}
+          onChange={onSelect}
+          className="cursor-pointer"
+        />
+        <button
+          type="button"
+          onClick={() => setExpanded((v) => !v)}
+          className="flex-1 text-left text-sm text-sf-text-primary hover:text-white"
+        >
+          <span className="font-medium">{index}. {draft.title || 'Draft'}</span>
+          <span className="ml-2 text-[11px] text-sf-text-muted">
+            {draft.segments.length} segs · ~{totalTimelineSec.toFixed(1)}s · {langLabel}
+            {synthDone ? ' · synthesised' : ''}
+          </span>
+        </button>
+        <button
+          type="button"
+          onClick={onSynthesize}
+          disabled={synthRunning}
+          className={`inline-flex items-center gap-1 px-2 py-1 rounded text-[11px] border transition-colors
+            ${synthDone
+              ? 'border-emerald-500/40 bg-emerald-500/10 text-emerald-200 hover:bg-emerald-500/20'
+              : 'border-sf-accent/40 bg-sf-accent/10 text-sf-accent hover:bg-sf-accent/20'}
+            disabled:opacity-50 disabled:cursor-not-allowed`}
+          title={synthDone ? 'Re-synthesise (overwrites existing audio)' : 'Synthesise voiceover'}
+        >
+          {synthRunning ? <Loader2 size={11} className="animate-spin" /> : <Play size={11} />}
+          {synthRunning ? 'Synthesising…' : synthDone ? 'Re-synth' : 'Synthesise'}
+        </button>
+        <button
+          type="button"
+          onClick={onDelete}
+          className="p-1 rounded text-sf-text-muted hover:text-red-300 hover:bg-red-500/10"
+          title="Delete draft"
+        >
+          <Trash2 size={14} />
+        </button>
+      </div>
+      {(stageLabel && (synthRunning || synthFailed)) && (
+        <div className={`px-3 py-1.5 text-[11px] border-t ${synthFailed ? 'border-red-500/30 bg-red-500/5 text-red-200' : 'border-sf-accent/20 bg-sf-accent/5 text-sf-accent'}`}>
+          {stageLabel}
+        </div>
+      )}
+      {expanded && (
+        <div className="px-3 pb-3 pt-1 border-t border-sf-dark-700/60 space-y-2">
+          {draft.rationale && (
+            <p className="text-[11px] italic text-sf-text-muted">{draft.rationale}</p>
+          )}
+          {draft.segments.map((seg, i) => (
+            <ScriptSegmentEditor
+              key={seg.id}
+              seg={seg}
+              index={i + 1}
+              onChange={(patch) => onEditSegment(seg.id, patch)}
+              audioPath={draft.synthesis?.segmentAudio?.[seg.id]?.path || null}
+            />
+          ))}
+        </div>
+      )}
+    </div>
+  )
+}
+
+function ScriptSegmentEditor({ seg, index, onChange, audioPath }) {
+  const audioUrl = audioPath ? `comfystudio://${encodeURIComponent(audioPath)}` : null
+  return (
+    <div className="rounded border border-sf-dark-700 bg-sf-dark-950 p-2">
+      <div className="flex items-center gap-2 mb-1.5">
+        <span className="text-[10px] uppercase tracking-wider text-sf-text-muted">#{index}</span>
+        <select
+          value={seg.role}
+          onChange={(e) => onChange({ role: e.target.value })}
+          className="text-[11px] rounded border border-sf-dark-700 bg-sf-dark-900 px-1.5 py-0.5 text-sf-text-secondary"
+        >
+          <option value="line">line</option>
+          <option value="question">question</option>
+          <option value="tagline">tagline</option>
+          <option value="legal">legal</option>
+        </select>
+        {audioUrl && (
+          <audio
+            src={audioUrl}
+            controls
+            preload="metadata"
+            className="h-6 max-w-[180px]"
+          />
+        )}
+        <label className="ml-auto inline-flex items-center gap-1 text-[10px] text-sf-text-muted">
+          gap before
+          <input
+            type="number"
+            min={0}
+            max={20}
+            step={0.1}
+            value={Number(seg.gapBeforeSec) || 0}
+            onChange={(e) => onChange({ gapBeforeSec: Math.max(0, Math.min(20, Number(e.target.value) || 0)) })}
+            className="w-14 text-[11px] rounded border border-sf-dark-700 bg-sf-dark-900 px-1.5 py-0.5 text-sf-text-secondary"
+          />
+          <span>s</span>
+        </label>
+      </div>
+      <textarea
+        rows={2}
+        value={seg.text}
+        onChange={(e) => onChange({ text: e.target.value })}
+        className="w-full text-sm rounded border border-sf-dark-700 bg-sf-dark-900 px-2 py-1 text-sf-text-primary resize-none"
+      />
+    </div>
+  )
+}
+
 function KindBadge({ kind }) {
   const isPlaceholder = kind === 'placeholder'
   return (
@@ -732,6 +1176,7 @@ function NoteCell({ note, onChange }) {
 
 function ProposalView({ onNavigate }) {
   const currentProject = useProjectStore((s) => s.currentProject)
+  const currentProjectHandle = useProjectStore((s) => s.currentProjectHandle)
   const saveProject = useProjectStore((s) => s.saveProject)
   const {
     presets,
@@ -786,6 +1231,13 @@ function ProposalView({ onNavigate }) {
     setError(null)
     setGenState({})
     setHover(null)
+    // VO drafts hang off the project, not the proposal — reload them
+    // when the project changes so opening a different project doesn't
+    // leak the previous one's drafts into this session.
+    setVoiceoverDrafts(Array.isArray(currentProject?.voiceoverDrafts?.drafts)
+      ? currentProject.voiceoverDrafts.drafts
+      : [])
+    setSelectedVoiceoverDraftId(currentProject?.voiceoverDrafts?.selectedId || null)
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [projectIdentity])
 
@@ -844,6 +1296,11 @@ function ProposalView({ onNavigate }) {
     // the previous / next phrase on most ads. The user can dial them
     // in the VO panel.
     segmentEdits: savedProposal?.voiceoverPlan?.segmentEdits || {},
+    // Per-segment silence-before-segment overrides — proposer-emitted
+    // gaps that distribute VO across the timeline (so the tagline can
+    // land near the end instead of stacking at t=0). Persisted so a
+    // re-prompt can carry them as user-side context.
+    segmentGaps: savedProposal?.voiceoverPlan?.segmentGaps || {},
     leadInSec: Number.isFinite(savedProposal?.voiceoverPlan?.leadInSec)
       ? savedProposal.voiceoverPlan.leadInSec
       : 0.5,
@@ -851,6 +1308,32 @@ function ProposalView({ onNavigate }) {
       ? savedProposal.voiceoverPlan.leadOutSec
       : 0.3,
   }))
+
+  // Voiceover script drafts (capability `generateVoiceover`). Each
+  // draft holds segments + future synthesis state. Persisted on the
+  // project so re-opening the project preserves every take the user
+  // generated, plus the radio selection that drives the proposer.
+  const [voiceoverDrafts, setVoiceoverDrafts] = useState(() => Array.isArray(currentProject?.voiceoverDrafts?.drafts)
+    ? currentProject.voiceoverDrafts.drafts
+    : [])
+  const [selectedVoiceoverDraftId, setSelectedVoiceoverDraftId] = useState(() => currentProject?.voiceoverDrafts?.selectedId || null)
+  // Save drafts on every meaningful change. saveProject merges shallowly
+  // so we always pass the full bag — drafts + selectedId together.
+  const persistVoiceoverDrafts = (nextDrafts, nextSelectedId) => {
+    setVoiceoverDrafts(nextDrafts)
+    saveProject({
+      voiceoverDrafts: {
+        drafts: nextDrafts,
+        selectedId: nextSelectedId !== undefined ? nextSelectedId : selectedVoiceoverDraftId,
+      },
+    })
+  }
+  const persistSelectedVoiceoverDraftId = (id) => {
+    setSelectedVoiceoverDraftId(id)
+    saveProject({
+      voiceoverDrafts: { drafts: voiceoverDrafts, selectedId: id },
+    })
+  }
 
   // Capability flags — global (localStorage), default all false per
   // the design conversation. Kept in local state so toggling repaints
@@ -863,7 +1346,15 @@ function ProposalView({ onNavigate }) {
     return () => window.removeEventListener('reedit-proposal-capabilities-changed', onChange)
   }, [])
   const toggleCapability = (id) => {
-    const next = saveProposalCapabilities({ [id]: !capabilities[id] })
+    const turningOn = !capabilities[id]
+    const patch = { [id]: turningOn }
+    // useOriginalVoiceover and generateVoiceover are mutually exclusive
+    // — there's exactly one VO track, so reusing the source stem and
+    // synthesising a fresh script can't both win. Flipping one ON
+    // forces the other OFF so the UI stays self-consistent.
+    if (turningOn && id === 'generateVoiceover') patch.useOriginalVoiceover = false
+    if (turningOn && id === 'useOriginalVoiceover') patch.generateVoiceover = false
+    const next = saveProposalCapabilities(patch)
     setCapabilities(next)
   }
 
@@ -922,6 +1413,17 @@ function ProposalView({ onNavigate }) {
         // off, the user's picks bypass the LLM entirely via voPlanOverride.
         voSegments: currentProject?.analysis?.overall?.voiceover_segments || null,
         voPlanOverride: voPlan,
+        // When the user has the new "Generate new voiceover" capability
+        // ON and a synthesised draft is selected, hand it to the proposer
+        // so the prompt embeds the FIXED script + timestamps and the LLM
+        // plans visuals around it. Falls back to null when not applicable
+        // — the original-VO branch then drives the prompt as before.
+        generatedVoiceover: (() => {
+          if (!capabilities?.generateVoiceover || !selectedVoiceoverDraftId) return null
+          const sel = voiceoverDrafts.find((d) => d.id === selectedVoiceoverDraftId)
+          if (!sel || sel.synthesis?.status !== 'done') return null
+          return { segments: sel.segments, synthesis: sel.synthesis }
+        })(),
       })
       setDraft(proposal)
     } catch (err) {
@@ -1053,8 +1555,25 @@ function ProposalView({ onNavigate }) {
         leadInSec: voPlan.leadInSec,
         leadOutSec: voPlan.leadOutSec,
         segmentEdits: voPlan.segmentEdits,
+        // segmentGaps: prefer user-edited gaps if present, else fall
+        // back to whatever the proposer emitted on draft.voiceoverPlan.
+        // Empty user object stays empty so a manual reset clears LLM
+        // gaps — no auto-merge.
+        segmentGaps: voPlan.segmentGaps && Object.keys(voPlan.segmentGaps).length > 0
+          ? voPlan.segmentGaps
+          : (baseFromDraft.segmentGaps || {}),
         ...(voPlan.autoEdit === false ? { segmentIds: voPlan.segmentIds } : {}),
       }
+      // Resolve the selected synthesised VO draft (if any) for the
+      // generated-VO branch in the timeline placer. Mirrors the lookup
+      // we do in generateProposal — same selectedId, same synthesis
+      // gate ("synthesis must be done").
+      const generatedVoiceover = (() => {
+        if (!capabilities?.generateVoiceover || !selectedVoiceoverDraftId) return null
+        const sel = voiceoverDrafts.find((d) => d.id === selectedVoiceoverDraftId)
+        if (!sel || sel.synthesis?.status !== 'done') return null
+        return { id: sel.id, segments: sel.segments, synthesis: sel.synthesis }
+      })()
       const result = await applyEdlToTimeline({
         edl: draft.edl,
         scenes,
@@ -1067,6 +1586,7 @@ function ProposalView({ onNavigate }) {
         capabilities,
         voiceoverSegments: currentProject?.analysis?.overall?.voiceover_segments || null,
         voiceoverPlan: effectiveVoPlan,
+        generatedVoiceover,
         onProgress: ({ index, total }) => {
           setApplyProgress({ current: index, total })
         },
@@ -1295,11 +1815,16 @@ function ProposalView({ onNavigate }) {
       <div className="flex-1 overflow-auto">
         {/* Inputs */}
         <div className="px-6 py-5 border-b border-sf-dark-800 bg-sf-dark-950">
-          <div className="max-w-4xl">
+          <div>
             <label className="block text-xs font-medium text-sf-text-muted uppercase tracking-wider mb-2">Optimize for</label>
-            <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-6 gap-2 mb-5">
+            {/* Fixed-width preset cards in a wrapping flex row. Cards
+                stay at their natural size instead of stretching to
+                fill the row, so adding more presets later just spills
+                onto a second row — and the empty trailing space is a
+                visual hint that "you can add more here". */}
+            <div className="flex flex-wrap gap-2 mb-5">
               {presets.map((m) => (
-                <div key={m.id} className="relative group/preset">
+                <div key={m.id} className="relative group/preset w-[180px] flex-shrink-0">
                   <button
                     type="button"
                     onClick={() => setMetric(m.id)}
@@ -1324,7 +1849,7 @@ function ProposalView({ onNavigate }) {
               <button
                 type="button"
                 onClick={handleOpenCreatePreset}
-                className="text-left p-3 rounded-lg border border-dashed border-sf-dark-700 bg-sf-dark-950 hover:border-sf-accent hover:bg-sf-accent/5 text-sf-text-muted hover:text-sf-text-primary transition-colors flex flex-col items-center justify-center gap-1"
+                className="w-[180px] flex-shrink-0 text-left p-3 rounded-lg border border-dashed border-sf-dark-700 bg-sf-dark-950 hover:border-sf-accent hover:bg-sf-accent/5 text-sf-text-muted hover:text-sf-text-primary transition-colors flex flex-col items-center justify-center gap-1"
                 title="Create a new preset"
               >
                 <Plus className="w-4 h-4" />
@@ -1405,6 +1930,19 @@ function ProposalView({ onNavigate }) {
                 targetDurationSec={targetDurationSec}
                 sourceVideo={sourceVideo}
               />
+              <div className="md:col-span-2">
+                <VoiceoverScriptPanel
+                  analysis={analysis}
+                  drafts={voiceoverDrafts}
+                  selectedId={selectedVoiceoverDraftId}
+                  onChangeDrafts={(next) => persistVoiceoverDrafts(next)}
+                  onChangeSelectedId={(id) => persistSelectedVoiceoverDraftId(id)}
+                  targetDurationSec={targetDurationSec}
+                  capabilities={capabilities}
+                  sourceVideo={sourceVideo}
+                  projectDir={typeof currentProjectHandle === 'string' ? currentProjectHandle : null}
+                />
+              </div>
             </div>
 
             <div className="mt-4">
@@ -1412,7 +1950,7 @@ function ProposalView({ onNavigate }) {
                 Capabilities
                 <span className="text-sf-text-muted/70 normal-case ml-2">what the proposer is allowed to do</span>
               </div>
-              <div className="grid grid-cols-1 md:grid-cols-2 gap-2">
+              <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-2">
                 {CAPABILITY_DEFINITIONS.map((cap) => {
                   const enabled = Boolean(capabilities[cap.id])
                   return (
@@ -1507,7 +2045,7 @@ function ProposalView({ onNavigate }) {
         {draft && (
           <div className="px-6 py-5">
             {/* Rationale */}
-            <div className="mb-6 max-w-4xl">
+            <div className="mb-6">
               <h2 className="text-[11px] uppercase tracking-wider text-sf-text-muted mb-2">Rationale</h2>
               <textarea
                 value={draft.rationale || ''}

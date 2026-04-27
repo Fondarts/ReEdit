@@ -375,6 +375,30 @@ contextBridge.exposeInMainWorld('electronAPI', {
   },
 
   /**
+   * Synthesise a NEW voiceover by cloning the original speaker's voice
+   * with F5-TTS via ComfyUI. Each segment in `segments` is a separate
+   * generation job; the handler runs them in series and emits progress
+   * after every one. Output WAV files land in
+   * `{projectDir}/.reedit/vo_generated/{draftId}/{segId}.wav`.
+   *
+   * @param {{
+   *   draftId: string,
+   *   projectDir: string,
+   *   segments: Array<{ id: string, text: string }>,
+   *   voiceRef: { audioPath: string, transcript: string, startSec: number, endSec: number },
+   *   language?: string,
+   *   comfyUrl?: string,
+   * }} options
+   * @returns {Promise<{success: boolean, segmentAudio?: Object, error?: string}>}
+   */
+  synthesizeVoiceover: (options) => ipcRenderer.invoke('analysis:synthesizeVoiceover', options),
+  onSynthesizeVoiceoverProgress: (cb) => {
+    const handler = (_, payload) => cb(payload)
+    ipcRenderer.on('analysis:synthesizeVoiceover:progress', handler)
+    return () => ipcRenderer.removeListener('analysis:synthesizeVoiceover:progress', handler)
+  },
+
+  /**
    * Extract audio waveform peaks via ffmpeg (Electron only)
    * @param {string} mediaInput - file:// URL, comfystudio:// URL, or absolute path
    * @param {object} options - { sampleCount?: number, sampleRate?: number }

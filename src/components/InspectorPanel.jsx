@@ -30,7 +30,7 @@ import {
 import { clearDiskCacheUrl } from './VideoLayerRenderer'
 import { swapSceneActiveVersion } from '../services/reeditEdlToTimeline'
 import { commitExtend as commitExtendService } from '../services/reeditExtend'
-import { loadCapabilitySettings } from '../services/reeditCapabilitySettings'
+import { loadCapabilitySettings, I2V_MODEL_OPTIONS } from '../services/reeditCapabilitySettings'
 import { FRAME_RATE, TRANSITION_TYPES, TRANSITION_DEFAULT_SETTINGS } from '../constants/transitions'
 import {
   DEFAULT_LETTERBOX_ASPECT,
@@ -750,6 +750,13 @@ function InspectorPanel({ isExpanded, onToggleExpanded }) {
     && reframeCommitState.sceneId === sceneIdForReframe
     && !['done', 'error'].includes(reframeCommitState.stage)
 
+  // Per-clip override for the i2v model used by Commit extend. Empty
+  // string means "use the Settings default". This UI override only
+  // applies to the next Commit extend press — it doesn't write to
+  // global settings, so the user can A/B WAN vs LTX on a single shot
+  // without losing their default for everything else.
+  const [extendModelOverride, setExtendModelOverride] = useState('')
+
   // Extend commit — mirrors reframeCommitState in shape. Kept
   // separate so a reframe + extend on the same clip don't clobber each
   // other's progress / error UI.
@@ -916,11 +923,30 @@ function InspectorPanel({ isExpanded, onToggleExpanded }) {
     const width = Number(selectedAsset?.settings?.width) || Number(sourceVideo?.width) || 1920
     const height = Number(selectedAsset?.settings?.height) || Number(sourceVideo?.height) || 1080
     const fps = Number(selectedAsset?.settings?.fps) || Number(sourceVideo?.fps) || 25
-    // Use the LLM's rationale (the note after `EXTEND +Xs:`) as the
-    // prompt so the continuation keeps the beat. The asset doesn't
-    // carry the note directly, so we hand a generic motion prompt;
-    // future work: save the note on asset.settings.reeditExtendNote.
-    const promptText = `Continue the shot naturally; hold ${extendSec.toFixed(1)}s longer with matching motion, lighting, and subject.`
+    // SVI Pro needs to know how long the source clip is so it can
+    // size the output (= source frames + extend frames at 16 fps)
+    // and place the anchor at the right index. The other paths only
+    // generate the tail so they don't need this. Pull from scene
+    // metadata first, fall back to asset.settings.duration.
+    const liveProject = useProjectStore.getState().currentProject
+    const sceneForExtend = liveProject?.analysis?.scenes?.find((s) => s.id === sceneIdForReframe)
+    const sourceDurationSec = sceneForExtend
+      ? Math.max(0.1, Number(sceneForExtend.tcOut) - Number(sceneForExtend.tcIn))
+      : Number(selectedAsset?.settings?.duration) || 1
+    // Build the i2v prompt from the analyzer's visual description of
+    // this shot when we have it. The Gemini analyzer (or LM Studio /
+    // Claude when those are the active backend) writes a 2–4 sentence
+    // factual description of subject + setting + action into
+    // `scene.videoAnalysis.visual`, which is the closest thing to a
+    // shot brief that the model has seen. Feeding that as the prompt
+    // keeps the AI continuation on-shot rather than drifting toward a
+    // generic placeholder. We append a short directive to anchor the
+    // continuation in the SAME scene so the model doesn't try to start
+    // a new beat.
+    const sceneVisual = String(sceneForExtend?.videoAnalysis?.visual || sceneForExtend?.caption || '').trim()
+    const promptText = sceneVisual
+      ? `${sceneVisual} The scene continues seamlessly for an additional ${extendSec.toFixed(1)} seconds — same subject, same camera move, same lighting, no cut.`
+      : `Continue the shot naturally; hold ${extendSec.toFixed(1)}s longer with matching motion, lighting, and subject.`
 
     setExtendCommitState({ stage: 'starting', error: null, sceneId: sceneIdForReframe })
     try {
@@ -928,14 +954,26 @@ function InspectorPanel({ isExpanded, onToggleExpanded }) {
         sceneId: sceneIdForReframe,
         projectDir,
         extendSec,
+        sourceDurationSec,
         width, height, fps,
         promptText,
+        // Honour the per-clip override when the user picked one in the
+        // Inspector dropdown; falling back to the global Settings
+        // default lives inside the service.
+        modelOverride: extendModelOverride || null,
       })
       if (!res?.success) {
         setExtendCommitState({ stage: 'error', error: res?.error || 'Unknown error.', sceneId: sceneIdForReframe })
         return
       }
-      setExtendCommitState({ stage: 'done', outputPath: res.outputPath, version: res.version, sceneId: sceneIdForReframe, error: null })
+      setExtendCommitState({
+        stage: 'done',
+        outputPath: res.outputPath,
+        version: res.version,
+        sceneId: sceneIdForReframe,
+        modelId: res.modelId || extendModelOverride || null,
+        error: null,
+      })
 
       // Persist the new E-tagged entry into the scene's stack + flip
       // active to it. Same shape as the reframe handler so the version
@@ -2128,7 +2166,22 @@ function InspectorPanel({ isExpanded, onToggleExpanded }) {
             {canCommitExtend && (
               <div className="rounded-lg border border-purple-500/30 bg-purple-500/5 p-2 flex flex-col gap-1.5">
                 <div className="text-[10px] text-sf-text-secondary leading-snug">
-                  This shot is previewing a +{Number(extendHint?.seconds || 0).toFixed(1)}s extension via slow-motion. Committing generates a real continuation with LTX i2v and concats it with the original, then swaps it in as a new version.
+                  This shot is previewing a +{Number(extendHint?.seconds || 0).toFixed(1)}s extension via slow-motion. Committing generates a real continuation in ComfyUI and (for LTX / WAN base) concats it with the original; SVI Pro emits the concatenated video itself.
+                </div>
+                <div className="flex items-center gap-1.5">
+                  <span className="text-[10px] text-sf-text-muted whitespace-nowrap">Model</span>
+                  <select
+                    value={extendModelOverride}
+                    onChange={(e) => setExtendModelOverride(e.target.value)}
+                    disabled={extendRunning}
+                    className="flex-1 text-[10px] bg-sf-dark-900 border border-sf-dark-700 rounded px-1.5 py-1 text-sf-text-primary hover:border-sf-dark-500 focus:outline-none focus:border-sf-accent disabled:opacity-50"
+                    title="Pick the i2v model just for this commit. Empty falls back to the global default in Settings → Capabilities."
+                  >
+                    <option value="">Use Settings default ({(I2V_MODEL_OPTIONS.find((m) => m.id === loadCapabilitySettings()?.footageExtend?.model)?.label) || 'LTX 2.3'})</option>
+                    {I2V_MODEL_OPTIONS.map((m) => (
+                      <option key={m.id} value={m.id}>{m.label}</option>
+                    ))}
+                  </select>
                 </div>
                 {extendCommitState.stage === 'error' && extendCommitState.sceneId === sceneIdForReframe ? (
                   <div className="text-[10px] text-sf-error leading-snug">
@@ -2136,7 +2189,11 @@ function InspectorPanel({ isExpanded, onToggleExpanded }) {
                   </div>
                 ) : extendCommitState.stage === 'done' && extendCommitState.sceneId === sceneIdForReframe ? (
                   <div className="text-[10px] text-emerald-300 leading-snug">
-                    Committed as {extendCommitState.version}.
+                    Committed as {extendCommitState.version}{extendCommitState.modelId ? ` · ${extendCommitState.modelId}` : ''}.
+                  </div>
+                ) : extendRunning && extendCommitState.modelId ? (
+                  <div className="text-[10px] text-purple-200/80 leading-snug">
+                    Running {extendCommitState.modelId} ({extendCommitState.mode || 'image-input'} mode)
                   </div>
                 ) : null}
                 <button
@@ -2147,7 +2204,7 @@ function InspectorPanel({ isExpanded, onToggleExpanded }) {
                     ${extendRunning
                       ? 'bg-sf-dark-800 text-sf-text-muted cursor-not-allowed'
                       : 'bg-purple-600 hover:bg-purple-500 text-white'}`}
-                  title="Send this shot to ComfyUI for an AI-generated continuation and concat the result with the original."
+                  title="Send this shot to ComfyUI for an AI-generated continuation."
                 >
                   {extendRunning ? (
                     <>
@@ -3932,7 +3989,22 @@ function InspectorPanel({ isExpanded, onToggleExpanded }) {
             {canCommitExtend && (
               <div className="rounded-lg border border-purple-500/30 bg-purple-500/5 p-2 flex flex-col gap-1.5">
                 <div className="text-[10px] text-sf-text-secondary leading-snug">
-                  This shot is previewing a +{Number(extendHint?.seconds || 0).toFixed(1)}s extension via slow-motion. Committing generates a real continuation with LTX i2v and concats it with the original, then swaps it in as a new version.
+                  This shot is previewing a +{Number(extendHint?.seconds || 0).toFixed(1)}s extension via slow-motion. Committing generates a real continuation in ComfyUI and (for LTX / WAN base) concats it with the original; SVI Pro emits the concatenated video itself.
+                </div>
+                <div className="flex items-center gap-1.5">
+                  <span className="text-[10px] text-sf-text-muted whitespace-nowrap">Model</span>
+                  <select
+                    value={extendModelOverride}
+                    onChange={(e) => setExtendModelOverride(e.target.value)}
+                    disabled={extendRunning}
+                    className="flex-1 text-[10px] bg-sf-dark-900 border border-sf-dark-700 rounded px-1.5 py-1 text-sf-text-primary hover:border-sf-dark-500 focus:outline-none focus:border-sf-accent disabled:opacity-50"
+                    title="Pick the i2v model just for this commit. Empty falls back to the global default in Settings → Capabilities."
+                  >
+                    <option value="">Use Settings default ({(I2V_MODEL_OPTIONS.find((m) => m.id === loadCapabilitySettings()?.footageExtend?.model)?.label) || 'LTX 2.3'})</option>
+                    {I2V_MODEL_OPTIONS.map((m) => (
+                      <option key={m.id} value={m.id}>{m.label}</option>
+                    ))}
+                  </select>
                 </div>
                 {extendCommitState.stage === 'error' && extendCommitState.sceneId === sceneIdForReframe ? (
                   <div className="text-[10px] text-sf-error leading-snug">
@@ -3940,7 +4012,11 @@ function InspectorPanel({ isExpanded, onToggleExpanded }) {
                   </div>
                 ) : extendCommitState.stage === 'done' && extendCommitState.sceneId === sceneIdForReframe ? (
                   <div className="text-[10px] text-emerald-300 leading-snug">
-                    Committed as {extendCommitState.version}.
+                    Committed as {extendCommitState.version}{extendCommitState.modelId ? ` · ${extendCommitState.modelId}` : ''}.
+                  </div>
+                ) : extendRunning && extendCommitState.modelId ? (
+                  <div className="text-[10px] text-purple-200/80 leading-snug">
+                    Running {extendCommitState.modelId} ({extendCommitState.mode || 'image-input'} mode)
                   </div>
                 ) : null}
                 <button
@@ -3951,7 +4027,7 @@ function InspectorPanel({ isExpanded, onToggleExpanded }) {
                     ${extendRunning
                       ? 'bg-sf-dark-800 text-sf-text-muted cursor-not-allowed'
                       : 'bg-purple-600 hover:bg-purple-500 text-white'}`}
-                  title="Send this shot to ComfyUI for an AI-generated continuation and concat the result with the original."
+                  title="Send this shot to ComfyUI for an AI-generated continuation."
                 >
                   {extendRunning ? (
                     <>

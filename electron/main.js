@@ -2214,6 +2214,85 @@ async function copyFileOverwrite(src, dst) {
   }
 }
 
+// Drop the API workflow JSON we submitted to ComfyUI next to its
+// output MP4 so the user can drag it back into ComfyUI later for
+// inspection / iteration. We write TWO files:
+//   - `<base>.workflow.json`      → the BARE API workflow at the top
+//                                   level. ComfyUI's drag-to-load
+//                                   expects either UI format
+//                                   (`nodes` array) or flat API format
+//                                   (object with node-id keys); an
+//                                   envelope around it makes the canvas
+//                                   come up empty.
+//   - `<base>.workflow.meta.json` → small sidecar with our metadata
+//                                   (version, sceneId, modelId,
+//                                   promptId, submittedAt). For
+//                                   debugging / sweeping by hand.
+// Returns the workflow JSON path so the renderer can show it / open
+// it in OS file manager.
+async function saveWorkflowAlongsideOutput(outputMp4Path, workflow, extras = {}) {
+  if (!outputMp4Path) {
+    console.warn('[saveWorkflow] no outputMp4Path; skipping')
+    return null
+  }
+  if (!workflow || typeof workflow !== 'object') {
+    console.warn('[saveWorkflow] no workflow object; skipping. type=', typeof workflow)
+    return null
+  }
+  const dir = path.dirname(outputMp4Path)
+  const base = path.basename(outputMp4Path).replace(/\.[^.]+$/, '')
+  const workflowPath = path.join(dir, `${base}.workflow.json`)
+  const metaPath = path.join(dir, `${base}.workflow.meta.json`)
+
+  // Serialise the bare workflow first — that's the file ComfyUI can
+  // load directly. If JSON.stringify fails on it (rare; no cycles in
+  // a flat API workflow but be defensive), the whole save aborts.
+  let workflowText
+  try {
+    workflowText = JSON.stringify(workflow, null, 2)
+  } catch (err) {
+    console.warn('[saveWorkflow] workflow JSON.stringify failed:', err?.message || err)
+    return null
+  }
+  if (!workflowText || workflowText.length < 10) {
+    console.warn('[saveWorkflow] serialised workflow is suspiciously empty (len=' + (workflowText?.length ?? 0) + ')')
+    return null
+  }
+
+  const meta = {
+    kind: extras.kind || 'reedit',
+    version: extras.version || null,
+    sceneId: extras.sceneId || null,
+    modelId: extras.modelId || null,
+    promptId: extras.promptId || null,
+    submittedAt: new Date().toISOString(),
+    workflowFile: path.basename(workflowPath),
+  }
+
+  try {
+    await fs.mkdir(dir, { recursive: true })
+    await fs.writeFile(workflowPath, workflowText, 'utf8')
+    const st = await fs.stat(workflowPath).catch(() => null)
+    if (!st || st.size <= 2) {
+      console.warn(`[saveWorkflow] file written but on-disk size is ${st?.size ?? 'missing'} bytes: ${workflowPath}`)
+      return null
+    }
+    // Sidecar metadata. Best-effort — failing to write it doesn't
+    // invalidate the workflow file, which is what the user actually
+    // needs to reopen in ComfyUI.
+    try {
+      await fs.writeFile(metaPath, JSON.stringify(meta, null, 2), 'utf8')
+    } catch (metaErr) {
+      console.warn('[saveWorkflow] meta sidecar failed (non-fatal):', metaErr?.message || metaErr)
+    }
+    console.log(`[saveWorkflow] wrote ${st.size} bytes to ${workflowPath}`)
+    return workflowPath
+  } catch (err) {
+    console.warn('[saveWorkflow] fs.writeFile failed:', err?.message || err, 'path=', workflowPath)
+    return null
+  }
+}
+
 // Composite the VACE output onto the original clip using the
 // generated binary mask as a matte. The goal here is to keep every
 // pixel that wasn't masked pixel-identical to the source: Wan VACE
@@ -2639,12 +2718,18 @@ ipcMain.handle('analysis:optimizeFootage', async (event, options) => {
     // Composite failed — fall back to exposing the raw VACE output so
     // the user still has something usable, and surface the error.
     emit('note', { message: `Composite step failed: ${compRes.error}. Returning raw VACE output.` })
-    emit('done', { promptId, outputPath: vaceRawPath, version: versionTag })
-    return { success: true, promptId, outputPath: vaceRawPath, inProjectDir: true, composited: false, compositeError: compRes.error, version: versionTag }
+    const workflowJsonPath = await saveWorkflowAlongsideOutput(vaceRawPath, workflow, {
+      kind: 'optimize-vace', version: versionTag, sceneId, modelId: 'wan-vace', promptId,
+    })
+    emit('done', { promptId, outputPath: vaceRawPath, version: versionTag, workflowJsonPath })
+    return { success: true, promptId, outputPath: vaceRawPath, workflowJsonPath, inProjectDir: true, composited: false, compositeError: compRes.error, version: versionTag }
   }
 
-  emit('done', { promptId, outputPath: finalPath, version: versionTag })
-  return { success: true, promptId, outputPath: finalPath, inProjectDir: true, composited: true, vaceRawPath, version: versionTag }
+  const workflowJsonPath = await saveWorkflowAlongsideOutput(finalPath, workflow, {
+    kind: 'optimize-vace', version: versionTag, sceneId, modelId: 'wan-vace', promptId,
+  })
+  emit('done', { promptId, outputPath: finalPath, version: versionTag, workflowJsonPath })
+  return { success: true, promptId, outputPath: finalPath, workflowJsonPath, inProjectDir: true, composited: true, vaceRawPath, version: versionTag }
 })
 
 // ============================================
@@ -2884,15 +2969,23 @@ ipcMain.handle('analysis:commitReframe', async (event, options) => {
     await copyFileOverwrite(outputFile, finalPath)
   } catch (err) {
     emit('note', { message: `Could not copy final to project dir (${err.message}); using ComfyUI output path.` })
-    emit('done', { promptId, outputPath: outputFile, version: versionTag, inProjectDir: false })
-    return { success: true, promptId, outputPath: outputFile, version: versionTag, inProjectDir: false, kind: 'reframe' }
+    const workflowJsonPathFallback = await saveWorkflowAlongsideOutput(outputFile, workflow, {
+      kind: 'reframe', version: versionTag, sceneId, modelId: 'realesrgan-upscale', promptId,
+    })
+    emit('done', { promptId, outputPath: outputFile, version: versionTag, inProjectDir: false, workflowJsonPath: workflowJsonPathFallback })
+    return { success: true, promptId, outputPath: outputFile, workflowJsonPath: workflowJsonPathFallback, version: versionTag, inProjectDir: false, kind: 'reframe' }
   }
 
-  emit('done', { promptId, outputPath: finalPath, version: versionTag, inProjectDir: true })
+  const workflowJsonPath = await saveWorkflowAlongsideOutput(finalPath, workflow, {
+    kind: 'reframe', version: versionTag, sceneId, modelId: 'realesrgan-upscale', promptId,
+  })
+
+  emit('done', { promptId, outputPath: finalPath, version: versionTag, inProjectDir: true, workflowJsonPath })
   return {
     success: true,
     promptId,
     outputPath: finalPath,
+    workflowJsonPath,
     version: versionTag,
     inProjectDir: true,
     kind: 'reframe',
@@ -2919,20 +3012,31 @@ ipcMain.handle('analysis:commitReframe', async (event, options) => {
 ipcMain.handle('analysis:commitExtend', async (event, options) => {
   const {
     sceneId, projectDir, extendSec,
-    workflow, loadImageNodeId,
+    workflow, loadImageNodeId, loadVideoNodeId,
+    modelId,
     comfyUrl: comfyUrlOpt,
   } = options || {}
   if (!sceneId) return { success: false, error: 'sceneId required.' }
   if (!projectDir) return { success: false, error: 'projectDir required.' }
-  if (!workflow || typeof workflow !== 'object') return { success: false, error: 'workflow (patched LTX i2v JSON) required.' }
-  if (!loadImageNodeId) return { success: false, error: 'loadImageNodeId required so we can inject the last-frame image name.' }
+  if (!workflow || typeof workflow !== 'object') return { success: false, error: 'workflow JSON required.' }
+  // Two execution modes depending on the model:
+  //   - last-frame mode (LTX, base WAN): we extract one frame from the
+  //     source clip and inject it into a LoadImage node; ComfyUI
+  //     generates only the tail, we ffmpeg-concat it onto the original.
+  //   - whole-clip mode (WAN SVI Pro): we upload the source MP4 and
+  //     inject it into a LoadVideo node; the workflow itself emits the
+  //     concatenated original+extended video — no concat in main.js.
+  const isVideoInputMode = Boolean(loadVideoNodeId) && !loadImageNodeId
+  if (!isVideoInputMode && !loadImageNodeId) {
+    return { success: false, error: 'Either loadImageNodeId (LTX/WAN base) or loadVideoNodeId (SVI) is required.' }
+  }
   const comfyUrl = comfyUrlOpt || 'http://localhost:8000'
   const wantExtendSec = Math.max(0.2, Math.min(2, Number(extendSec) || 1))
 
   const emit = (stage, extra = {}) => {
     try { event.sender.send('analysis:commitExtend:progress', { sceneId, stage, ...extra }) } catch (_) { /* renderer closed */ }
   }
-  emit('starting')
+  emit('starting', { modelId, mode: isVideoInputMode ? 'svi-video-input' : 'image-input' })
 
   const projectDirFwd = projectDir.replace(/\\/g, '/')
   const sourceClipPath = path.join(projectDirFwd, '.reedit', 'clips', `${sceneId}.mp4`)
@@ -2965,56 +3069,70 @@ ipcMain.handle('analysis:commitExtend', async (event, options) => {
   const versionTag = `E${String(nextVersion).padStart(2, '0')}`
   emit('note', { message: `Writing version ${versionTag}.` })
 
-  // Step 1 — extract last frame as PNG. `-sseof -0.05` seeks to 50 ms
-  // before EOF which reliably lands on the last decoded frame (plain
-  // `-sseof -0` returns nothing on some containers). We use PNG for a
-  // lossless handoff to ComfyUI's LoadImage node.
-  emit('extracting_last_frame')
-  const lastFrameLocalPath = path.join(projectOptimizedDir, `${sceneId}_${versionTag}_last_frame.png`)
-  await new Promise((resolve, reject) => {
-    const args = [
-      '-hide_banner', '-nostats',
-      '-sseof', '-0.05',
-      '-i', sourceClipPath,
-      '-frames:v', '1',
-      '-q:v', '2',
-      '-y', lastFrameLocalPath,
-    ]
-    const proc = spawn(ffmpegPath, args, { windowsHide: true })
-    let stderr = ''
-    proc.stderr.on('data', (d) => { stderr += d.toString() })
-    proc.on('close', (code) => {
-      if (code === 0) resolve()
-      else reject(new Error(`ffmpeg last-frame extract failed (${code}): ${stderr.slice(-300)}`))
-    })
-    proc.on('error', reject)
-  }).catch((err) => { throw err })
-
-  // Step 2 — copy the PNG into ComfyUI's input dir so LoadImage can
-  // reach it by filename without needing an /upload round-trip.
+  // Resolve ComfyUI's input dir once — both modes copy a file in.
   emit('uploading')
   const comfyInputDir = await resolveComfyInputDir(comfyUrl)
   if (!comfyInputDir) {
     return { success: false, error: `Could not determine ComfyUI input dir from ${comfyUrl}/system_stats — is ComfyUI running?` }
   }
   const prefix = `reedit_${sanitizeForFilename(path.basename(projectDir))}_${sanitizeForFilename(sceneId)}_${versionTag}`
-  const comfyInputName = `${prefix}_last_frame.png`
-  const comfyInputFullPath = path.join(comfyInputDir, comfyInputName)
-  try {
-    await copyFileOverwrite(lastFrameLocalPath, comfyInputFullPath)
-  } catch (err) {
-    return { success: false, error: `Failed to copy last frame into ComfyUI input dir: ${err.message}` }
-  }
 
-  // Step 3 — inject the uploaded image name into the workflow's
-  // LoadImage node. The renderer pre-patched everything else (prompt,
-  // size, fps, duration, seed) because those come from the LTX i2v
-  // template loader in reeditGenerate.js.
+  // Patch the workflow with the right input filename. SVI mode uploads
+  // the source clip as a video; the other paths upload the last frame
+  // as a PNG and let the workflow produce only the tail.
   const patchedWorkflow = JSON.parse(JSON.stringify(workflow))
-  if (patchedWorkflow[loadImageNodeId]?.inputs) {
-    patchedWorkflow[loadImageNodeId].inputs.image = comfyInputName
+  let lastFrameLocalPath = null
+
+  if (isVideoInputMode) {
+    // SVI Pro path — copy the source sub-clip MP4 into ComfyUI's
+    // input dir and point the LoadVideo node at it. No frame extract.
+    const comfyInputName = `${prefix}_source.mp4`
+    const comfyInputFullPath = path.join(comfyInputDir, comfyInputName)
+    try {
+      await copyFileOverwrite(sourceClipPath, comfyInputFullPath)
+    } catch (err) {
+      return { success: false, error: `Failed to copy source clip into ComfyUI input dir: ${err.message}` }
+    }
+    if (patchedWorkflow[loadVideoNodeId]?.inputs) {
+      patchedWorkflow[loadVideoNodeId].inputs.video = comfyInputName
+    } else {
+      return { success: false, error: `Workflow has no node ${loadVideoNodeId} to inject the input video into.` }
+    }
   } else {
-    return { success: false, error: `Workflow has no node ${loadImageNodeId} to inject the input image into.` }
+    // LTX / WAN base — extract the last frame, upload as PNG.
+    emit('extracting_last_frame')
+    lastFrameLocalPath = path.join(projectOptimizedDir, `${sceneId}_${versionTag}_last_frame.png`)
+    await new Promise((resolve, reject) => {
+      const args = [
+        '-hide_banner', '-nostats',
+        '-sseof', '-0.05',
+        '-i', sourceClipPath,
+        '-frames:v', '1',
+        '-q:v', '2',
+        '-y', lastFrameLocalPath,
+      ]
+      const proc = spawn(ffmpegPath, args, { windowsHide: true })
+      let stderr = ''
+      proc.stderr.on('data', (d) => { stderr += d.toString() })
+      proc.on('close', (code) => {
+        if (code === 0) resolve()
+        else reject(new Error(`ffmpeg last-frame extract failed (${code}): ${stderr.slice(-300)}`))
+      })
+      proc.on('error', reject)
+    }).catch((err) => { throw err })
+
+    const comfyInputName = `${prefix}_last_frame.png`
+    const comfyInputFullPath = path.join(comfyInputDir, comfyInputName)
+    try {
+      await copyFileOverwrite(lastFrameLocalPath, comfyInputFullPath)
+    } catch (err) {
+      return { success: false, error: `Failed to copy last frame into ComfyUI input dir: ${err.message}` }
+    }
+    if (patchedWorkflow[loadImageNodeId]?.inputs) {
+      patchedWorkflow[loadImageNodeId].inputs.image = comfyInputName
+    } else {
+      return { success: false, error: `Workflow has no node ${loadImageNodeId} to inject the input image into.` }
+    }
   }
 
   emit('queued_submit')
@@ -3068,83 +3186,516 @@ ipcMain.handle('analysis:commitExtend', async (event, options) => {
   }
 
   // Step 4 — find the generated tail MP4 in the history outputs.
-  // LTX's SaveVideo / VHS_VideoCombine nodes report via `videos` or
-  // `gifs` depending on version; accept either.
+  // ComfyUI's history packs MP4-style outputs under different keys
+  // depending on the node implementation:
+  //   - VHS_VideoCombine → `gifs`
+  //   - SaveVideo (built-in LTX/WAN) → `videos` OR `images` (the
+  //     filename ending in .mp4 lands in `images` in some builds)
+  // We only accept files with video extensions — without this filter
+  // a `PreviewImage` node (e.g. SVI's anchor-frame preview at node
+  // 311) would land first in the iteration and we'd return its PNG
+  // as the "output", which the renderer then can't play.
+  const VIDEO_RE = /\.(mp4|mov|webm|mkv|gif|avi|m4v)$/i
+  const isVideoFile = (filename) => VIDEO_RE.test(String(filename || ''))
   let tailOutputFile = null
+  let tailOutputFilename = null
   for (const out of Object.values(result.outputs || {})) {
     const candidates = [
       ...(Array.isArray(out?.videos) ? out.videos : []),
       ...(Array.isArray(out?.gifs) ? out.gifs : []),
+      ...(Array.isArray(out?.images) ? out.images : []),
     ]
     for (const c of candidates) {
-      if (c?.fullpath) { tailOutputFile = c.fullpath; break }
+      // Skip preview images / non-video outputs.
+      if (c?.filename && !isVideoFile(c.filename)) continue
+      if (c?.fullpath && !isVideoFile(c.fullpath)) continue
+      if (c?.fullpath) {
+        tailOutputFile = c.fullpath
+        tailOutputFilename = c.filename || null
+        break
+      }
+      if (c?.filename) {
+        // Some history payloads omit `fullpath` and only give the
+        // filename + subfolder. Resolve against ComfyUI's output dir.
+        tailOutputFilename = c.filename
+        const subfolder = c.subfolder || ''
+        const comfyOutputDir = comfyInputDir.replace(/\/input\/?$/, '/output').replace(/\\input\\?$/, '\\output')
+        const candidatePath = path.join(comfyOutputDir, subfolder, c.filename)
+        if (fsSync.existsSync(candidatePath)) {
+          tailOutputFile = candidatePath
+          break
+        }
+      }
     }
     if (tailOutputFile) break
   }
+
+  // Last-ditch fallback: scan the ComfyUI output dir for the most
+  // recent file matching our prefix. Useful when the history payload
+  // returned no usable filename info (some custom-node SaveVideo
+  // implementations don't populate the standard fields).
   if (!tailOutputFile) {
-    return { success: false, error: 'Workflow completed but no video output was reported in history.' }
+    try {
+      const comfyOutputDir = comfyInputDir.replace(/\/input\/?$/, '/output').replace(/\\input\\?$/, '\\output')
+      const reeditExtendDir = path.join(comfyOutputDir, 'reedit_extend')
+      let scanDir = comfyOutputDir
+      try { await fs.access(reeditExtendDir); scanDir = reeditExtendDir } catch (_) { /* fall back to root */ }
+      const entries = await fs.readdir(scanDir).catch(() => [])
+      let newestPath = null
+      let newestMtime = 0
+      for (const name of entries) {
+        if (!name.toLowerCase().endsWith('.mp4')) continue
+        if (!name.includes(sanitizeForFilename(sceneId))) continue
+        const full = path.join(scanDir, name)
+        try {
+          const st = await fs.stat(full)
+          if (st.mtimeMs > newestMtime) { newestMtime = st.mtimeMs; newestPath = full }
+        } catch (_) { /* ignore */ }
+      }
+      if (newestPath) {
+        tailOutputFile = newestPath
+        emit('note', { message: `Recovered output from disk scan (history payload was empty): ${path.basename(newestPath)}` })
+      }
+    } catch (_) { /* ignore */ }
   }
 
-  // Copy the tail into the project dir so we don't depend on ComfyUI's
-  // output folder sticking around between runs.
-  const tailLocalPath = path.join(projectOptimizedDir, `${sceneId}_${versionTag}_tail.mp4`)
-  try {
-    await copyFileOverwrite(tailOutputFile, tailLocalPath)
-  } catch (err) {
-    return { success: false, error: `Could not copy ComfyUI tail output: ${err.message}` }
+  if (!tailOutputFile) {
+    return {
+      success: false,
+      error: `Workflow completed but no video output was reported in history. Check ComfyUI's output dir for a file matching ${sceneId}_${versionTag}* and re-run if it isn't there.`,
+    }
   }
 
-  // Step 5 — concat original + tail via the concat demuxer. Writing the
-  // list file with forward-slash paths + -safe 0 avoids the Windows
-  // path-escape minefield that `-f concat` is known for. We re-encode
-  // to libx264 so mismatched codec params from the LTX output don't
-  // trip the demuxer — a stream-copy concat only works when timebase,
-  // codec, and GOP match, which isn't guaranteed here.
   emit('finalizing')
-  const listFilePath = path.join(projectOptimizedDir, `${sceneId}_${versionTag}_concat.txt`)
-  const toListLine = (p) => `file '${p.replace(/\\/g, '/').replace(/'/g, "'\\''")}'`
-  const listBody = `${toListLine(sourceClipPath)}\n${toListLine(tailLocalPath)}\n`
-  await fs.writeFile(listFilePath, listBody, 'utf8')
   const finalPath = path.join(projectOptimizedDir, `${sceneId}_${versionTag}.mp4`)
-  await new Promise((resolve, reject) => {
-    const args = [
-      '-hide_banner', '-nostats',
-      '-f', 'concat', '-safe', '0',
-      '-i', listFilePath,
-      '-c:v', 'libx264', '-preset', 'veryfast', '-crf', '18',
-      '-pix_fmt', 'yuv420p',
-      '-c:a', 'aac', '-b:a', '192k',
-      '-movflags', '+faststart',
-      '-y', finalPath,
-    ]
-    const proc = spawn(ffmpegPath, args, { windowsHide: true })
-    let stderr = ''
-    proc.stderr.on('data', (d) => { stderr += d.toString() })
-    proc.on('close', (code) => {
-      if (code === 0) resolve()
-      else reject(new Error(`ffmpeg concat failed (${code}): ${stderr.slice(-300)}`))
-    })
-    proc.on('error', reject)
-  }).catch((err) => { throw err })
+  let tailLocalPath = null
 
-  // Best-effort cleanup of the scratch list file; the tail + frame get
-  // kept in the project dir so the user can inspect them if something
-  // looks off about the join.
-  try { await fs.unlink(listFilePath) } catch (_) { /* ignore */ }
+  if (isVideoInputMode) {
+    // SVI Pro mode: ComfyUI already emitted the concatenated
+    // original+extended video. Probe the output dims and, if they
+    // don't match the source exactly (the workflow's
+    // ImageResizeKJv2 rounds to multiples of 8/16 for VAE alignment,
+    // so a 1920×1080 source typically comes out 1920×1080 or
+    // 1920×1072), ffmpeg-rescale the whole video to the source's
+    // dimensions. Without this the visible original→extended seam
+    // shows a small but jarring height/width jump.
+    const sviStagePath = path.join(projectOptimizedDir, `${sceneId}_${versionTag}_svi_raw.mp4`)
+    try {
+      await copyFileOverwrite(tailOutputFile, sviStagePath)
+    } catch (err) {
+      return { success: false, error: `Could not copy ComfyUI SVI output: ${err.message}` }
+    }
+    const sviMeta = await probeVideoMeta(sviStagePath)
+    const dimsMatch = sviMeta?.width === meta.width && sviMeta?.height === meta.height
+    if (dimsMatch) {
+      // Already exact — just rename to the final path so we don't
+      // leave the staging file behind.
+      try {
+        await fs.rename(sviStagePath, finalPath)
+      } catch (_) {
+        // Fallback to copy + best-effort delete.
+        await copyFileOverwrite(sviStagePath, finalPath)
+        try { await fs.unlink(sviStagePath) } catch (_) { /* ignore */ }
+      }
+    } else {
+      // Re-encode with explicit scale to source dims. CRF 18 is
+      // visually lossless for this kind of small dimension fix.
+      emit('note', { message: `SVI output ${sviMeta?.width || '?'}×${sviMeta?.height || '?'} → rescaling to source ${meta.width}×${meta.height}` })
+      await new Promise((resolve, reject) => {
+        const args = [
+          '-hide_banner', '-nostats',
+          '-i', sviStagePath,
+          '-vf', `scale=${meta.width}:${meta.height}:flags=lanczos,setsar=1`,
+          '-c:v', 'libx264', '-preset', 'veryfast', '-crf', '18',
+          '-pix_fmt', 'yuv420p',
+          '-c:a', 'copy',
+          '-movflags', '+faststart',
+          '-y', finalPath,
+        ]
+        const proc = spawn(ffmpegPath, args, { windowsHide: true })
+        let stderr = ''
+        proc.stderr.on('data', (d) => { stderr += d.toString() })
+        proc.on('close', (code) => {
+          if (code === 0) resolve()
+          else reject(new Error(`ffmpeg rescale failed (${code}): ${stderr.slice(-300)}`))
+        })
+        proc.on('error', reject)
+      }).catch((err) => { throw err })
+      try { await fs.unlink(sviStagePath) } catch (_) { /* ignore */ }
+    }
+  } else {
+    // LTX / WAN base mode: ComfyUI gave us only the tail. Concat it
+    // onto the source sub-clip with the demuxer.
+    tailLocalPath = path.join(projectOptimizedDir, `${sceneId}_${versionTag}_tail.mp4`)
+    try {
+      await copyFileOverwrite(tailOutputFile, tailLocalPath)
+    } catch (err) {
+      return { success: false, error: `Could not copy ComfyUI tail output: ${err.message}` }
+    }
+    const listFilePath = path.join(projectOptimizedDir, `${sceneId}_${versionTag}_concat.txt`)
+    const toListLine = (p) => `file '${p.replace(/\\/g, '/').replace(/'/g, "'\\''")}'`
+    const listBody = `${toListLine(sourceClipPath)}\n${toListLine(tailLocalPath)}\n`
+    await fs.writeFile(listFilePath, listBody, 'utf8')
+    await new Promise((resolve, reject) => {
+      const args = [
+        '-hide_banner', '-nostats',
+        '-f', 'concat', '-safe', '0',
+        '-i', listFilePath,
+        '-c:v', 'libx264', '-preset', 'veryfast', '-crf', '18',
+        '-pix_fmt', 'yuv420p',
+        '-c:a', 'aac', '-b:a', '192k',
+        '-movflags', '+faststart',
+        '-y', finalPath,
+      ]
+      const proc = spawn(ffmpegPath, args, { windowsHide: true })
+      let stderr = ''
+      proc.stderr.on('data', (d) => { stderr += d.toString() })
+      proc.on('close', (code) => {
+        if (code === 0) resolve()
+        else reject(new Error(`ffmpeg concat failed (${code}): ${stderr.slice(-300)}`))
+      })
+      proc.on('error', reject)
+    }).catch((err) => { throw err })
+    try { await fs.unlink(listFilePath) } catch (_) { /* ignore */ }
+  }
 
-  emit('done', { promptId, outputPath: finalPath, version: versionTag, extendSec: wantExtendSec, inProjectDir: true })
+  const workflowJsonPath = await saveWorkflowAlongsideOutput(finalPath, patchedWorkflow, {
+    kind: 'extend', version: versionTag, sceneId, modelId: modelId || null, promptId,
+  })
+
+  emit('done', { promptId, outputPath: finalPath, version: versionTag, extendSec: wantExtendSec, inProjectDir: true, workflowJsonPath, modelId })
   return {
     success: true,
     promptId,
     outputPath: finalPath,
+    workflowJsonPath,
     version: versionTag,
     inProjectDir: true,
     kind: 'extend',
     extendSec: wantExtendSec,
     tailPath: tailLocalPath,
     lastFramePath: lastFrameLocalPath,
+    modelId: modelId || null,
   }
 })
+
+// ============================================
+// Voiceover synthesis (F5-TTS via ComfyUI)
+// ============================================
+//
+// Renderer hands us a draftId + the script segments (text only) + a
+// reference window (start/end seconds + transcript) carved from the
+// original Demucs vocals stem. We:
+//   1. Extract the reference WAV from the stem at the requested range
+//      (ffmpeg, mono 24kHz — what F5-TTS expects).
+//   2. Upload it + a paired .txt file (the EXACT transcript Gemini
+//      produced) into ComfyUI's input dir.
+//   3. For each segment, queue an F5TTSAudio→SaveAudio workflow that
+//      synthesises that line. Run them in series — F5-TTS holds the
+//      model in VRAM after the first job, so back-to-back is fast.
+//   4. After each job, copy the FLAC ComfyUI wrote into our project
+//      under .reedit/vo_generated/<draftId>/<segId>.wav (re-encode to
+//      WAV via ffmpeg so the renderer's <audio> element handles it).
+//
+// Progress events fire after every stage so the UI can show "rendering
+// segment 3/5" with the segment label.
+ipcMain.handle('analysis:synthesizeVoiceover', async (event, options) => {
+  const {
+    draftId,
+    projectDir,
+    segments,
+    voiceRef,
+    language = 'en',
+    comfyUrl: comfyUrlOpt,
+  } = options || {}
+  if (!draftId) return { success: false, error: 'draftId required.' }
+  if (!projectDir) return { success: false, error: 'projectDir required.' }
+  if (!Array.isArray(segments) || segments.length === 0) return { success: false, error: 'segments[] required.' }
+  if (!voiceRef || !voiceRef.audioPath) return { success: false, error: 'voiceRef.audioPath required (path to the source VO stem).' }
+  if (!Number.isFinite(voiceRef.startSec) || !Number.isFinite(voiceRef.endSec) || voiceRef.endSec <= voiceRef.startSec) {
+    return { success: false, error: 'voiceRef.startSec / endSec must be valid and endSec > startSec.' }
+  }
+  if (!voiceRef.transcript || !String(voiceRef.transcript).trim()) {
+    return { success: false, error: 'voiceRef.transcript required (exact spoken text of the reference window).' }
+  }
+  const comfyUrl = comfyUrlOpt || 'http://localhost:8000'
+
+  const emit = (stage, extra = {}) => {
+    try { event.sender.send('analysis:synthesizeVoiceover:progress', { draftId, stage, ...extra }) } catch (_) { /* renderer closed */ }
+  }
+  emit('starting', { totalSegments: segments.length })
+
+  const projectDirFwd = projectDir.replace(/\\/g, '/')
+  const draftDir = path.join(projectDirFwd, '.reedit', 'vo_generated', sanitizeForFilename(draftId, 60))
+  try { await fs.mkdir(draftDir, { recursive: true }) } catch (err) {
+    return { success: false, error: `Could not create output dir: ${err.message}` }
+  }
+
+  // Stage 1: extract the reference WAV. F5-TTS works best with a mono
+  // 24 kHz / 16-bit clip; transcoding here also strips any DC offset
+  // from the Demucs output and ensures the file is small enough to
+  // upload (a 12 s mono 24kHz WAV is under 600 KB).
+  emit('extracting_reference', {
+    startSec: Number(voiceRef.startSec).toFixed(2),
+    endSec: Number(voiceRef.endSec).toFixed(2),
+  })
+  const refWavLocalPath = path.join(draftDir, '_voice_ref.wav')
+  const refTxtLocalPath = path.join(draftDir, '_voice_ref.txt')
+  const refDuration = Number(voiceRef.endSec) - Number(voiceRef.startSec)
+  try {
+    await new Promise((resolve, reject) => {
+      const args = [
+        '-hide_banner', '-nostats', '-y',
+        '-ss', String(Number(voiceRef.startSec).toFixed(3)),
+        '-t', String(refDuration.toFixed(3)),
+        '-i', voiceRef.audioPath,
+        '-ac', '1',           // F5-TTS expects mono
+        '-ar', '24000',       // its training sample rate
+        '-c:a', 'pcm_s16le',  // 16-bit PCM
+        refWavLocalPath,
+      ]
+      const proc = spawn(ffmpegPath, args, { windowsHide: true })
+      let stderr = ''
+      proc.stderr.on('data', (d) => { stderr += d.toString() })
+      proc.on('close', (code) => {
+        if (code === 0) resolve()
+        else reject(new Error(`ffmpeg reference extract failed (${code}): ${stderr.slice(-300)}`))
+      })
+      proc.on('error', reject)
+    })
+  } catch (err) {
+    return { success: false, error: err.message }
+  }
+  // Paired .txt with the exact transcript — F5TTSAudio looks it up by
+  // basename match (sample.wav → sample.txt).
+  try {
+    await fs.writeFile(refTxtLocalPath, String(voiceRef.transcript).trim(), 'utf-8')
+  } catch (err) {
+    return { success: false, error: `Could not write reference transcript: ${err.message}` }
+  }
+
+  // Stage 2: upload the reference pair into ComfyUI's input dir. We
+  // copy directly to the local filesystem rather than using the
+  // /upload/image endpoint because (a) it's audio not image, (b) we
+  // need the .txt sibling and the upload endpoint only handles single
+  // files, and (c) ComfyUI runs on the same machine in our setup.
+  emit('uploading_reference')
+  const comfyInputDir = await resolveComfyInputDir(comfyUrl)
+  if (!comfyInputDir) {
+    return { success: false, error: `Could not determine ComfyUI input dir from ${comfyUrl}/system_stats — is ComfyUI running?` }
+  }
+  // Per-draft filename prevents two parallel synthesises from
+  // clobbering each other. Sanitize to keep ComfyUI's path picker happy.
+  const refBaseName = `reedit_voref_${sanitizeForFilename(draftId, 40)}`
+  const comfyRefWavPath = path.join(comfyInputDir, `${refBaseName}.wav`)
+  const comfyRefTxtPath = path.join(comfyInputDir, `${refBaseName}.txt`)
+  try {
+    await copyFileOverwrite(refWavLocalPath, comfyRefWavPath)
+    await copyFileOverwrite(refTxtLocalPath, comfyRefTxtPath)
+  } catch (err) {
+    return { success: false, error: `Failed to copy reference pair into ComfyUI input dir: ${err.message}` }
+  }
+  const referenceFilename = `${refBaseName}.wav`
+
+  // Stage 3: synthesise each segment in series. F5TTSAudio caches the
+  // model in VRAM between calls so back-to-back jobs run in 2-4 s once
+  // the first finishes (~10-20 s including model load).
+  const segmentAudio = {}
+  const VIDEO_AUDIO_RE = /\.(wav|flac|mp3|ogg|m4a|opus)$/i
+  for (let i = 0; i < segments.length; i++) {
+    const seg = segments[i]
+    if (!seg?.id || !seg?.text || !String(seg.text).trim()) {
+      emit('segment_skipped', { index: i + 1, total: segments.length, segId: seg?.id, reason: 'empty text' })
+      continue
+    }
+    emit('segment_starting', { index: i + 1, total: segments.length, segId: seg.id, role: seg.role || 'line' })
+
+    const filenamePrefix = `reedit_vo_${sanitizeForFilename(draftId, 30)}/${sanitizeForFilename(seg.id, 30)}`
+    const seed = Math.floor(Math.random() * 1e9)
+    // Workflow is small enough that building it inline keeps main.js
+    // self-contained — no need to import the renderer-side helper.
+    const F5_AUDIO_NODE_ID = '1'
+    const F5_SAVE_NODE_ID = '2'
+    const F5_LANGUAGE_MODELS = {
+      en: { model: 'F5v1', model_type: 'F5TTS_v1_Base' },
+      zh: { model: 'F5v1', model_type: 'F5TTS_v1_Base' },
+      es: { model: 'F5-ES', model_type: 'F5TTS_Base' },
+      fr: { model: 'F5-FR', model_type: 'F5TTS_Base' },
+      de: { model: 'F5-DE', model_type: 'F5TTS_Base' },
+      it: { model: 'F5-IT', model_type: 'F5TTS_Base' },
+      ja: { model: 'F5-JP', model_type: 'F5TTS_Base' },
+      pt: { model: 'F5v1', model_type: 'F5TTS_v1_Base' },
+    }
+    const langModel = F5_LANGUAGE_MODELS[language] || F5_LANGUAGE_MODELS.en
+    const segmentWorkflow = {
+      [F5_AUDIO_NODE_ID]: {
+        class_type: 'F5TTSAudio',
+        inputs: {
+          sample: referenceFilename,
+          speech: String(seg.text).trim(),
+          seed,
+          model: langModel.model,
+          vocoder: 'auto',
+          speed: 1.0,
+          model_type: langModel.model_type,
+        },
+      },
+      [F5_SAVE_NODE_ID]: {
+        class_type: 'SaveAudio',
+        inputs: {
+          audio: [F5_AUDIO_NODE_ID, 0],
+          filename_prefix: filenamePrefix,
+        },
+      },
+    }
+
+    let promptId
+    try {
+      const submitRes = await net.fetch(`${comfyUrl}/prompt`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ prompt: segmentWorkflow }),
+      })
+      if (!submitRes.ok) {
+        const body = await submitRes.text().catch(() => '')
+        return { success: false, error: `ComfyUI rejected segment "${seg.id}" (${submitRes.status}): ${body.slice(0, 400)}` }
+      }
+      const submitJson = await submitRes.json()
+      promptId = submitJson?.prompt_id
+      if (!promptId) return { success: false, error: `ComfyUI returned no prompt_id for segment "${seg.id}".` }
+    } catch (err) {
+      return { success: false, error: `Could not reach ComfyUI at ${comfyUrl}: ${err.message}` }
+    }
+
+    // Poll /history for completion. F5-TTS jobs are short (a few
+    // seconds for the second+ segment, up to a minute on cold start).
+    const MAX_POLL_MS = 5 * 60 * 1000
+    const POLL_EVERY_MS = 1500
+    const startedAt = Date.now()
+    let resultEntry
+    while (true) {
+      if (Date.now() - startedAt > MAX_POLL_MS) {
+        return { success: false, error: `Timed out waiting for segment "${seg.id}" after ${MAX_POLL_MS / 60000} min.` }
+      }
+      try {
+        const histRes = await net.fetch(`${comfyUrl}/history/${promptId}`)
+        if (histRes.ok) {
+          const hist = await histRes.json()
+          const entry = hist?.[promptId]
+          if (entry?.status?.completed) { resultEntry = entry; break }
+          if (entry?.status?.status_str === 'error') {
+            const msgs = (entry.status.messages || []).map((m) => JSON.stringify(m)).join(' | ')
+            return { success: false, error: `ComfyUI reported synth error on segment "${seg.id}": ${msgs.slice(0, 600)}` }
+          }
+        }
+      } catch (err) {
+        emit('poll_warn', { segId: seg.id, message: err.message })
+      }
+      emit('segment_running', { segId: seg.id, elapsedSec: Math.round((Date.now() - startedAt) / 1000) })
+      await new Promise((r) => setTimeout(r, POLL_EVERY_MS))
+    }
+
+    // Extract the saved audio path from the history outputs. SaveAudio
+    // emits under `audio` in newer ComfyUI; fall back to `images` and
+    // filter by extension as we do for the video flows.
+    let savedFilename = null
+    let savedSubfolder = ''
+    for (const out of Object.values(resultEntry.outputs || {})) {
+      const candidates = [
+        ...(Array.isArray(out?.audio) ? out.audio : []),
+        ...(Array.isArray(out?.images) ? out.images : []),
+        ...(Array.isArray(out?.gifs) ? out.gifs : []),
+      ]
+      for (const c of candidates) {
+        if (!c?.filename) continue
+        if (!VIDEO_AUDIO_RE.test(c.filename)) continue
+        savedFilename = c.filename
+        savedSubfolder = c.subfolder || ''
+        break
+      }
+      if (savedFilename) break
+    }
+    if (!savedFilename) {
+      return { success: false, error: `Could not locate output audio in ComfyUI history for segment "${seg.id}".` }
+    }
+    const comfyOutputDir = comfyInputDir.replace(/[\/\\]input[\/\\]?$/, (m) => m.replace('input', 'output'))
+    const sourceAudioPath = path.join(comfyOutputDir, savedSubfolder, savedFilename)
+
+    // Convert whatever F5/SaveAudio emitted (FLAC by default) into a
+    // PCM WAV under the project — keeps downstream playback / ffmpeg
+    // pipelines simple. Also probes duration for the UI / placer.
+    const finalWavPath = path.join(draftDir, `${seg.id}.wav`)
+    try {
+      await new Promise((resolve, reject) => {
+        const args = [
+          '-hide_banner', '-nostats', '-y',
+          '-i', sourceAudioPath,
+          '-ac', '1',
+          '-ar', '24000',
+          '-c:a', 'pcm_s16le',
+          finalWavPath,
+        ]
+        const proc = spawn(ffmpegPath, args, { windowsHide: true })
+        let stderr = ''
+        proc.stderr.on('data', (d) => { stderr += d.toString() })
+        proc.on('close', (code) => {
+          if (code === 0) resolve()
+          else reject(new Error(`ffmpeg WAV transcode failed (${code}): ${stderr.slice(-300)}`))
+        })
+        proc.on('error', reject)
+      })
+    } catch (err) {
+      return { success: false, error: err.message }
+    }
+    let durationSec = null
+    try {
+      const meta = await probeAudioDuration(finalWavPath)
+      if (Number.isFinite(meta)) durationSec = meta
+    } catch (_) { /* non-fatal */ }
+
+    segmentAudio[seg.id] = {
+      path: finalWavPath,
+      durationSec,
+      seed,
+    }
+    emit('segment_done', { index: i + 1, total: segments.length, segId: seg.id, path: finalWavPath, durationSec })
+  }
+
+  emit('done', { segmentCount: Object.keys(segmentAudio).length })
+  return {
+    success: true,
+    segmentAudio,
+    voiceRef: {
+      audioPath: refWavLocalPath,
+      transcript: voiceRef.transcript,
+      startSec: voiceRef.startSec,
+      endSec: voiceRef.endSec,
+    },
+  }
+})
+
+// Lightweight probe: asks ffprobe for an audio file's duration in
+// seconds. Used by the synth handler to populate UI durations.
+async function probeAudioDuration(filePath) {
+  return new Promise((resolve, reject) => {
+    const proc = spawn(ffprobePath, [
+      '-v', 'error',
+      '-show_entries', 'format=duration',
+      '-of', 'default=nw=1:nk=1',
+      filePath,
+    ], { windowsHide: true })
+    let stdout = ''
+    let stderr = ''
+    proc.stdout.on('data', (d) => { stdout += d.toString() })
+    proc.stderr.on('data', (d) => { stderr += d.toString() })
+    proc.on('close', (code) => {
+      if (code !== 0) return reject(new Error(`ffprobe failed: ${stderr.slice(-200)}`))
+      const dur = parseFloat(stdout.trim())
+      resolve(Number.isFinite(dur) ? dur : null)
+    })
+    proc.on('error', reject)
+  })
+}
 
 // ============================================
 // Audio stem separation (VO + Music via Demucs)

@@ -4,7 +4,7 @@ import {
   Plus, Video, Type, Image as ImageIcon,
   Sparkles, GripVertical, Magnet, ArrowRightLeft, Square, X, Check, Pencil,
   Diamond, Zap, AlertTriangle, Loader2, ChevronLeft, ChevronRight, Maximize2, Flag, Scissors, Clock,
-  Copy, ClipboardPaste, Trash2,
+  Copy, ClipboardPaste, Trash2, FolderOpen,
 } from 'lucide-react'
 import useTimelineStore from '../stores/timelineStore'
 import useProjectStore from '../stores/projectStore'
@@ -2999,8 +2999,35 @@ function Timeline({ onOpenAudioGenerate }) {
       case 'split':
         handleSplitClipAtPlayhead(clip)
         break
+      case 'reveal-in-explorer': {
+        // Pop the OS file manager open at the clip's underlying file.
+        // The asset usually has the absolute path; fall back to clip.url
+        // when the asset lookup fails (legacy clips imported via blob).
+        const asset = clip.assetId ? assets.find((a) => a.id === clip.assetId) : null
+        const target = asset?.absolutePath || asset?.path || (() => {
+          // Best-effort decode of comfystudio:// URLs back to a real path.
+          const url = clip.url || asset?.url || ''
+          const m = /^comfystudio:\/\/(.+)$/i.exec(String(url))
+          if (m) {
+            try { return decodeURIComponent(m[1]) } catch (_) { return null }
+          }
+          const f = /^file:\/\/\/?(.+)$/i.exec(String(url))
+          if (f) {
+            try { return decodeURIComponent(f[1]) } catch (_) { return null }
+          }
+          return null
+        })()
+        if (target && window.electronAPI?.showItemInFolder) {
+          window.electronAPI.showItemInFolder(target).catch((err) => {
+            console.warn('Reveal in folder failed:', err)
+          })
+        } else {
+          console.warn('No file path resolvable for clip', clip.id)
+        }
+        break
+      }
     }
-    
+
     setMaskSubmenuOpen(false)
     setClipContextMenu(null)
   }
@@ -6066,9 +6093,37 @@ function Timeline({ onOpenAudioGenerate }) {
             <span>Paste at Playhead</span>
             <span className="ml-auto text-sf-text-muted text-[10px]">Ctrl+V</span>
           </button>
-          
+
+          {(() => {
+            // Reveal-in-OS only makes sense for clips backed by a real
+            // file (video / image / audio with an absolute path). Text /
+            // adjustment / overlay clips have no on-disk source.
+            const contextClip = clips.find((c) => c.id === clipContextMenu.clipId)
+            if (!contextClip) return null
+            const ctxAsset = contextClip.assetId ? assets.find((a) => a.id === contextClip.assetId) : null
+            const hasFile = Boolean(
+              ctxAsset?.absolutePath
+              || ctxAsset?.path
+              || /^(comfystudio|file):\/\//i.test(String(contextClip.url || ctxAsset?.url || ''))
+            )
+            if (!hasFile) return null
+            return (
+              <>
+                <div className="h-px bg-sf-dark-600 my-1" />
+                <button
+                  onClick={() => handleContextMenuAction('reveal-in-explorer')}
+                  className="w-full px-3 py-1.5 text-left text-xs text-sf-text-primary hover:bg-sf-dark-700 flex items-center gap-2 transition-colors"
+                  title="Open the OS file manager at this clip's source file"
+                >
+                  <FolderOpen className="w-3 h-3" />
+                  <span>Reveal in Explorer</span>
+                </button>
+              </>
+            )
+          })()}
+
           <div className="h-px bg-sf-dark-600 my-1" />
-          
+
           <button
             onClick={() => handleContextMenuAction('delete')}
             className="w-full px-3 py-1.5 text-left text-xs text-sf-error hover:bg-sf-error/20 flex items-center gap-2 transition-colors"
