@@ -74,6 +74,19 @@ function buildUserPrompt({ adConcept, originalTranscript, targetDurationSec, lan
   const wordBudget = Math.max(8, Math.round(SPOKEN_WORDS_PER_SEC * spokenBudgetSec))
   const totalTimelineSec = Math.max(spokenBudgetSec + 1, targetSec * 0.9)
   const taglineDeadline = Math.max(0, targetSec - 0.8)
+  // Segment-count guidance scales with the timeline. Short pre-rolls
+  // can land in 2 punchy lines; longer films need a beat structure
+  // (intro → story → close). Bands tuned to keep ~3-5s of speech per
+  // segment which is the sweet spot for ad reads.
+  const segCount = (targetSec <= 12)
+    ? { min: 2, max: 3, prefer: 2 }
+    : (targetSec <= 22)
+      ? { min: 2, max: 4, prefer: 3 }
+      : (targetSec <= 35)
+        ? { min: 3, max: 5, prefer: 4 }
+        : (targetSec <= 50)
+          ? { min: 4, max: 6, prefer: 5 }
+          : { min: 5, max: 8, prefer: 6 }
   const conceptLines = []
   if (adConcept?.concept) conceptLines.push(`- Creative concept: ${adConcept.concept}`)
   if (adConcept?.message) conceptLines.push(`- Core message: ${adConcept.message}`)
@@ -122,7 +135,7 @@ ${refBlock}${toneBlock}${extraBlock}${previousBlock}
 Write all \`text\` values in ${lang}. Punctuation, contractions, and idioms should feel native — do NOT translate stiffly from English.
 
 # Structure rules
-- Break the script into **2–4 SEGMENTS** (preferably 3). The most powerful ads use few words and let the picture do the rest — prefer 3 punchy segments over 5 talky ones. NEVER more than 5.
+- Break the script into **${segCount.min}–${segCount.max} SEGMENTS** (preferably ${segCount.prefer}). The most powerful ads use few words and let the picture do the rest — prefer fewer punchy segments over a wall of voiceover. NEVER more than ${segCount.max}.
 - Each segment is one self-contained line that reads naturally on a single breath.
 - The LAST segment MUST be the tagline / closing signature (\`role: "tagline"\`). Make it short, declarative, brand-forward.
 - Other segments are \`role: "line"\` (default), \`role: "question"\` (rhetorical hook), or \`role: "legal"\` (rare, only if the brief truly requires a disclaimer).

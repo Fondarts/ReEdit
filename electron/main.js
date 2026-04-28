@@ -3406,24 +3406,47 @@ ipcMain.handle('analysis:synthesizeVoiceover', async (event, options) => {
     segments,
     voiceRef,
     language = 'en',
+    // Voice source mode:
+    //   'clone' (default) — F5-TTS clones the speaker from voiceRef
+    //   'kokoro' — Kokoro-TTS synthesises with a named voice id; voiceRef
+    //              is ignored, the only required extra is `kokoroVoice`.
+    voiceMode = 'clone',
+    // Kokoro voice id (e.g. 'af_bella', 'am_adam'). Required when
+    // voiceMode === 'kokoro'. The display-language (English / Spanish /
+    // etc.) is derived from the id's first letter — no extra param needed.
+    kokoroVoice = null,
+    // Advanced F5-TTS knobs surfaced from the renderer. Defaults match
+    // the model's recommended settings; the panel exposes them as a
+    // small "Advanced" row.
+    nfeSteps = 32,    // 16-64 useful range; higher = sharper / slower
+    speed = 1.0,       // 0.85 fast … 1.0 default … 1.2 slower / more deliberate
     comfyUrl: comfyUrlOpt,
   } = options || {}
   if (!draftId) return { success: false, error: 'draftId required.' }
   if (!projectDir) return { success: false, error: 'projectDir required.' }
   if (!Array.isArray(segments) || segments.length === 0) return { success: false, error: 'segments[] required.' }
-  if (!voiceRef || !voiceRef.audioPath) return { success: false, error: 'voiceRef.audioPath required (path to the source VO stem).' }
-  if (!Number.isFinite(voiceRef.startSec) || !Number.isFinite(voiceRef.endSec) || voiceRef.endSec <= voiceRef.startSec) {
-    return { success: false, error: 'voiceRef.startSec / endSec must be valid and endSec > startSec.' }
-  }
-  if (!voiceRef.transcript || !String(voiceRef.transcript).trim()) {
-    return { success: false, error: 'voiceRef.transcript required (exact spoken text of the reference window).' }
+  // Mode-specific validation. Clone needs a reference window; Kokoro
+  // needs a voice id only.
+  const isKokoro = voiceMode === 'kokoro'
+  if (isKokoro) {
+    if (!kokoroVoice || typeof kokoroVoice !== 'string') {
+      return { success: false, error: 'kokoroVoice id required (e.g. "af_bella") when voiceMode="kokoro".' }
+    }
+  } else {
+    if (!voiceRef || !voiceRef.audioPath) return { success: false, error: 'voiceRef.audioPath required (path to the source VO stem).' }
+    if (!Number.isFinite(voiceRef.startSec) || !Number.isFinite(voiceRef.endSec) || voiceRef.endSec <= voiceRef.startSec) {
+      return { success: false, error: 'voiceRef.startSec / endSec must be valid and endSec > startSec.' }
+    }
+    if (!voiceRef.transcript || !String(voiceRef.transcript).trim()) {
+      return { success: false, error: 'voiceRef.transcript required (exact spoken text of the reference window).' }
+    }
   }
   const comfyUrl = comfyUrlOpt || 'http://localhost:8000'
 
   const emit = (stage, extra = {}) => {
     try { event.sender.send('analysis:synthesizeVoiceover:progress', { draftId, stage, ...extra }) } catch (_) { /* renderer closed */ }
   }
-  emit('starting', { totalSegments: segments.length })
+  emit('starting', { totalSegments: segments.length, voiceMode })
 
   const projectDirFwd = projectDir.replace(/\\/g, '/')
   const draftDir = path.join(projectDirFwd, '.reedit', 'vo_generated', sanitizeForFilename(draftId, 60))
@@ -3431,71 +3454,72 @@ ipcMain.handle('analysis:synthesizeVoiceover', async (event, options) => {
     return { success: false, error: `Could not create output dir: ${err.message}` }
   }
 
-  // Stage 1: extract the reference WAV. F5-TTS works best with a mono
-  // 24 kHz / 16-bit clip; transcoding here also strips any DC offset
-  // from the Demucs output and ensures the file is small enough to
-  // upload (a 12 s mono 24kHz WAV is under 600 KB).
-  emit('extracting_reference', {
-    startSec: Number(voiceRef.startSec).toFixed(2),
-    endSec: Number(voiceRef.endSec).toFixed(2),
-  })
-  const refWavLocalPath = path.join(draftDir, '_voice_ref.wav')
-  const refTxtLocalPath = path.join(draftDir, '_voice_ref.txt')
-  const refDuration = Number(voiceRef.endSec) - Number(voiceRef.startSec)
-  try {
-    await new Promise((resolve, reject) => {
-      const args = [
-        '-hide_banner', '-nostats', '-y',
-        '-ss', String(Number(voiceRef.startSec).toFixed(3)),
-        '-t', String(refDuration.toFixed(3)),
-        '-i', voiceRef.audioPath,
-        '-ac', '1',           // F5-TTS expects mono
-        '-ar', '24000',       // its training sample rate
-        '-c:a', 'pcm_s16le',  // 16-bit PCM
-        refWavLocalPath,
-      ]
-      const proc = spawn(ffmpegPath, args, { windowsHide: true })
-      let stderr = ''
-      proc.stderr.on('data', (d) => { stderr += d.toString() })
-      proc.on('close', (code) => {
-        if (code === 0) resolve()
-        else reject(new Error(`ffmpeg reference extract failed (${code}): ${stderr.slice(-300)}`))
-      })
-      proc.on('error', reject)
-    })
-  } catch (err) {
-    return { success: false, error: err.message }
-  }
-  // Paired .txt with the exact transcript — F5TTSAudio looks it up by
-  // basename match (sample.wav → sample.txt).
-  try {
-    await fs.writeFile(refTxtLocalPath, String(voiceRef.transcript).trim(), 'utf-8')
-  } catch (err) {
-    return { success: false, error: `Could not write reference transcript: ${err.message}` }
-  }
-
-  // Stage 2: upload the reference pair into ComfyUI's input dir. We
-  // copy directly to the local filesystem rather than using the
-  // /upload/image endpoint because (a) it's audio not image, (b) we
-  // need the .txt sibling and the upload endpoint only handles single
-  // files, and (c) ComfyUI runs on the same machine in our setup.
-  emit('uploading_reference')
+  // Resolve ComfyUI's input dir up-front for both modes — Kokoro
+  // doesn't need an upload but we still call /prompt + /history so we
+  // need a valid Comfy URL.
   const comfyInputDir = await resolveComfyInputDir(comfyUrl)
   if (!comfyInputDir) {
     return { success: false, error: `Could not determine ComfyUI input dir from ${comfyUrl}/system_stats — is ComfyUI running?` }
   }
-  // Per-draft filename prevents two parallel synthesises from
-  // clobbering each other. Sanitize to keep ComfyUI's path picker happy.
-  const refBaseName = `reedit_voref_${sanitizeForFilename(draftId, 40)}`
-  const comfyRefWavPath = path.join(comfyInputDir, `${refBaseName}.wav`)
-  const comfyRefTxtPath = path.join(comfyInputDir, `${refBaseName}.txt`)
-  try {
-    await copyFileOverwrite(refWavLocalPath, comfyRefWavPath)
-    await copyFileOverwrite(refTxtLocalPath, comfyRefTxtPath)
-  } catch (err) {
-    return { success: false, error: `Failed to copy reference pair into ComfyUI input dir: ${err.message}` }
+
+  // Reference extract + upload only runs for clone mode. Kokoro skips
+  // straight to per-segment synthesis with the chosen voice id.
+  let referenceFilename = null
+  if (!isKokoro) {
+    // Stage 1: extract the reference WAV. F5-TTS works best with a mono
+    // 24 kHz / 16-bit clip; transcoding here also strips any DC offset
+    // from the Demucs output and ensures the file is small enough to
+    // upload (a 12 s mono 24kHz WAV is under 600 KB).
+    emit('extracting_reference', {
+      startSec: Number(voiceRef.startSec).toFixed(2),
+      endSec: Number(voiceRef.endSec).toFixed(2),
+    })
+    const refWavLocalPath = path.join(draftDir, '_voice_ref.wav')
+    const refTxtLocalPath = path.join(draftDir, '_voice_ref.txt')
+    const refDuration = Number(voiceRef.endSec) - Number(voiceRef.startSec)
+    try {
+      await new Promise((resolve, reject) => {
+        const args = [
+          '-hide_banner', '-nostats', '-y',
+          '-ss', String(Number(voiceRef.startSec).toFixed(3)),
+          '-t', String(refDuration.toFixed(3)),
+          '-i', voiceRef.audioPath,
+          '-ac', '1',
+          '-ar', '24000',
+          '-c:a', 'pcm_s16le',
+          refWavLocalPath,
+        ]
+        const proc = spawn(ffmpegPath, args, { windowsHide: true })
+        let stderr = ''
+        proc.stderr.on('data', (d) => { stderr += d.toString() })
+        proc.on('close', (code) => {
+          if (code === 0) resolve()
+          else reject(new Error(`ffmpeg reference extract failed (${code}): ${stderr.slice(-300)}`))
+        })
+        proc.on('error', reject)
+      })
+    } catch (err) {
+      return { success: false, error: err.message }
+    }
+    try {
+      await fs.writeFile(refTxtLocalPath, String(voiceRef.transcript).trim(), 'utf-8')
+    } catch (err) {
+      return { success: false, error: `Could not write reference transcript: ${err.message}` }
+    }
+
+    // Stage 2: upload the reference pair into ComfyUI's input dir.
+    emit('uploading_reference')
+    const refBaseName = `reedit_voref_${sanitizeForFilename(draftId, 40)}`
+    const comfyRefWavPath = path.join(comfyInputDir, `${refBaseName}.wav`)
+    const comfyRefTxtPath = path.join(comfyInputDir, `${refBaseName}.txt`)
+    try {
+      await copyFileOverwrite(refWavLocalPath, comfyRefWavPath)
+      await copyFileOverwrite(refTxtLocalPath, comfyRefTxtPath)
+    } catch (err) {
+      return { success: false, error: `Failed to copy reference pair into ComfyUI input dir: ${err.message}` }
+    }
+    referenceFilename = `${refBaseName}.wav`
   }
-  const referenceFilename = `${refBaseName}.wav`
 
   // Stage 3: synthesise each segment in series. F5TTSAudio caches the
   // model in VRAM between calls so back-to-back jobs run in 2-4 s once
@@ -3512,41 +3536,98 @@ ipcMain.handle('analysis:synthesizeVoiceover', async (event, options) => {
 
     const filenamePrefix = `reedit_vo_${sanitizeForFilename(draftId, 30)}/${sanitizeForFilename(seg.id, 30)}`
     const seed = Math.floor(Math.random() * 1e9)
-    // Workflow is small enough that building it inline keeps main.js
-    // self-contained — no need to import the renderer-side helper.
-    const F5_AUDIO_NODE_ID = '1'
-    const F5_SAVE_NODE_ID = '2'
-    const F5_LANGUAGE_MODELS = {
-      en: { model: 'F5v1', model_type: 'F5TTS_v1_Base' },
-      zh: { model: 'F5v1', model_type: 'F5TTS_v1_Base' },
-      es: { model: 'F5-ES', model_type: 'F5TTS_Base' },
-      fr: { model: 'F5-FR', model_type: 'F5TTS_Base' },
-      de: { model: 'F5-DE', model_type: 'F5TTS_Base' },
-      it: { model: 'F5-IT', model_type: 'F5TTS_Base' },
-      ja: { model: 'F5-JP', model_type: 'F5TTS_Base' },
-      pt: { model: 'F5v1', model_type: 'F5TTS_v1_Base' },
-    }
-    const langModel = F5_LANGUAGE_MODELS[language] || F5_LANGUAGE_MODELS.en
-    const segmentWorkflow = {
-      [F5_AUDIO_NODE_ID]: {
-        class_type: 'F5TTSAudio',
-        inputs: {
-          sample: referenceFilename,
-          speech: String(seg.text).trim(),
-          seed,
-          model: langModel.model,
-          vocoder: 'auto',
-          speed: 1.0,
-          model_type: langModel.model_type,
+    const safeSpeed = Math.max(0.7, Math.min(1.4, Number(speed) || 1.0))
+
+    let segmentWorkflow
+    let saveNodeId
+    if (isKokoro) {
+      // Kokoro path — KokoroSpeaker (id → embedding) → KokoroGenerator
+      // (text + speaker + speed + lang) → SaveAudio. The Kokoro voice
+      // id's first letter encodes language: a=american, b=british,
+      // j=japanese, z=mandarin, e=spanish, f=french, h=hindi, i=italian,
+      // p=brazilian portuguese. We map that to the display-name string
+      // the node expects ("English", "Spanish", etc.).
+      const KOKORO_LANG_BY_PREFIX = {
+        a: 'English',
+        b: 'English (British)',
+        j: 'Japanese',
+        z: 'Mandarin Chinese',
+        e: 'Spanish',
+        f: 'French',
+        h: 'Hindi',
+        i: 'Italian',
+        p: 'Brazilian Portuguese',
+      }
+      const prefix = String(kokoroVoice).charAt(0).toLowerCase()
+      const kokoroLang = KOKORO_LANG_BY_PREFIX[prefix] || 'English'
+      const SPEAKER_ID = '1'
+      const GENERATOR_ID = '2'
+      const SAVE_ID = '3'
+      segmentWorkflow = {
+        [SPEAKER_ID]: {
+          class_type: 'KokoroSpeaker',
+          inputs: { speaker_name: kokoroVoice },
         },
-      },
-      [F5_SAVE_NODE_ID]: {
-        class_type: 'SaveAudio',
-        inputs: {
-          audio: [F5_AUDIO_NODE_ID, 0],
-          filename_prefix: filenamePrefix,
+        [GENERATOR_ID]: {
+          class_type: 'KokoroGenerator',
+          inputs: {
+            text: String(seg.text).trim(),
+            speaker: [SPEAKER_ID, 0],
+            speed: safeSpeed,
+            lang: kokoroLang,
+          },
         },
-      },
+        [SAVE_ID]: {
+          class_type: 'SaveAudio',
+          inputs: {
+            audio: [GENERATOR_ID, 0],
+            filename_prefix: filenamePrefix,
+          },
+        },
+      }
+      saveNodeId = SAVE_ID
+    } else {
+      // F5-TTS clone path. Kept inline (no shared helper) so main.js
+      // stays self-contained.
+      const F5_LANGUAGE_MODELS = {
+        en: { model: 'F5v1', model_type: 'F5TTS_v1_Base' },
+        zh: { model: 'F5v1', model_type: 'F5TTS_v1_Base' },
+        es: { model: 'F5-ES', model_type: 'F5TTS_Base' },
+        fr: { model: 'F5-FR', model_type: 'F5TTS_Base' },
+        de: { model: 'F5-DE', model_type: 'F5TTS_Base' },
+        it: { model: 'F5-IT', model_type: 'F5TTS_Base' },
+        ja: { model: 'F5-JP', model_type: 'F5TTS_Base' },
+        pt: { model: 'F5v1', model_type: 'F5TTS_v1_Base' },
+      }
+      const langModel = F5_LANGUAGE_MODELS[language] || F5_LANGUAGE_MODELS.en
+      // Clamp NFE — 16 is the practical floor before audio degrades;
+      // 64 is the practical ceiling before quality returns plateau.
+      const safeNfe = Math.max(16, Math.min(64, Math.round(Number(nfeSteps) || 32)))
+      const F5_AUDIO_NODE_ID = '1'
+      const F5_SAVE_NODE_ID = '2'
+      segmentWorkflow = {
+        [F5_AUDIO_NODE_ID]: {
+          class_type: 'F5TTSAudioAdvanced',
+          inputs: {
+            sample: referenceFilename,
+            speech: String(seg.text).trim(),
+            seed,
+            model: langModel.model,
+            vocoder: 'auto',
+            speed: safeSpeed,
+            model_type: langModel.model_type,
+            nfe_step: safeNfe,
+          },
+        },
+        [F5_SAVE_NODE_ID]: {
+          class_type: 'SaveAudio',
+          inputs: {
+            audio: [F5_AUDIO_NODE_ID, 0],
+            filename_prefix: filenamePrefix,
+          },
+        },
+      }
+      saveNodeId = F5_SAVE_NODE_ID
     }
 
     let promptId
@@ -3661,12 +3742,83 @@ ipcMain.handle('analysis:synthesizeVoiceover', async (event, options) => {
     emit('segment_done', { index: i + 1, total: segments.length, segId: seg.id, path: finalWavPath, durationSec })
   }
 
-  emit('done', { segmentCount: Object.keys(segmentAudio).length })
+  // Stage 4 — concat the per-segment WAVs into one continuous track,
+  // inserting `gapBeforeSec` of silence before each segment. The
+  // timeline places this single asset on the audio track instead of N
+  // small clips — cleaner waveform, fewer clip boundaries to drag
+  // around, and the program audio mix doesn't have to thread N gaps.
+  // We keep the per-segment WAVs around for inline preview in the panel.
+  let combinedAudioPath = null
+  let combinedDurationSec = null
+  const orderedSegs = segments.filter((s) => segmentAudio[s.id])
+  if (orderedSegs.length > 0) {
+    emit('combining')
+    combinedAudioPath = path.join(draftDir, `${sanitizeForFilename(draftId, 40)}_combined.wav`)
+    // Build an ffmpeg concat list with anullsrc-padded silence per gap.
+    // Simpler approach: use the `concat` filter with all segment streams
+    // + a generated silent stream per gap, all at 24 kHz mono PCM.
+    const inputs = []
+    const filterParts = []
+    let nextStreamIdx = 0
+    let runningDurSec = 0
+    for (let i = 0; i < orderedSegs.length; i++) {
+      const seg = orderedSegs[i]
+      const audio = segmentAudio[seg.id]
+      const gap = Math.max(0, Number(seg.gapBeforeSec) || 0)
+      if (gap > 0) {
+        // Silent input via lavfi — fixed duration, mono 24 kHz.
+        inputs.push('-f', 'lavfi', '-t', gap.toFixed(3), '-i', 'anullsrc=channel_layout=mono:sample_rate=24000')
+        filterParts.push(`[${nextStreamIdx}:a]`)
+        nextStreamIdx++
+        runningDurSec += gap
+      }
+      inputs.push('-i', audio.path)
+      filterParts.push(`[${nextStreamIdx}:a]`)
+      nextStreamIdx++
+      runningDurSec += Number(audio.durationSec) || 0
+    }
+    const filterComplex = `${filterParts.join('')}concat=n=${filterParts.length}:v=0:a=1[out]`
+    try {
+      await new Promise((resolve, reject) => {
+        const args = [
+          '-hide_banner', '-nostats', '-y',
+          ...inputs,
+          '-filter_complex', filterComplex,
+          '-map', '[out]',
+          '-ac', '1',
+          '-ar', '24000',
+          '-c:a', 'pcm_s16le',
+          combinedAudioPath,
+        ]
+        const proc = spawn(ffmpegPath, args, { windowsHide: true })
+        let stderr = ''
+        proc.stderr.on('data', (d) => { stderr += d.toString() })
+        proc.on('close', (code) => {
+          if (code === 0) resolve()
+          else reject(new Error(`ffmpeg concat failed (${code}): ${stderr.slice(-300)}`))
+        })
+        proc.on('error', reject)
+      })
+      combinedDurationSec = await probeAudioDuration(combinedAudioPath).catch(() => runningDurSec)
+    } catch (err) {
+      // Non-fatal — the per-segment files still exist, the placer can
+      // fall back to N-clips placement if combinedAudioPath is null.
+      emit('combine_warn', { message: err.message })
+      combinedAudioPath = null
+    }
+  }
+
+  emit('done', { segmentCount: Object.keys(segmentAudio).length, hasCombined: Boolean(combinedAudioPath) })
   return {
     success: true,
     segmentAudio,
-    voiceRef: {
-      audioPath: refWavLocalPath,
+    combinedAudioPath,
+    combinedDurationSec,
+    // voiceRef echo only makes sense for the clone path — Kokoro uses
+    // a named voice id with no extracted reference. Returning null on
+    // the kokoro side keeps the renderer's persistence call schemaless.
+    voiceRef: isKokoro ? null : {
+      audioPath: path.join(projectDirFwd, '.reedit', 'vo_generated', sanitizeForFilename(draftId, 60), '_voice_ref.wav'),
       transcript: voiceRef.transcript,
       startSec: voiceRef.startSec,
       endSec: voiceRef.endSec,

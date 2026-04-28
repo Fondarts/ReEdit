@@ -362,9 +362,13 @@ function registerStemAsset(sourceVideo, stemPath, kind, durationSec) {
   const labels = { music: 'Music (original stem)', vo: 'VO (original stem)' }
   // Synth VO segments come in as `vo-gen-<segId>` so we can dedupe by
   // path AND give the asset a friendly track-row label.
-  const niceName = labels[kind] || (typeof kind === 'string' && kind.startsWith('vo-gen-')
-    ? `VO (new) · ${kind.slice('vo-gen-'.length)}`
-    : `Stem (${kind})`)
+  const niceName = labels[kind] || (
+    kind === 'vo-gen-combined'
+      ? 'VO (new, generated)'
+      : (typeof kind === 'string' && kind.startsWith('vo-gen-'))
+        ? `VO (new) · ${kind.slice('vo-gen-'.length)}`
+        : `Stem (${kind})`
+  )
   return assetsStore.addAsset({
     name: niceName,
     url: toFileUrl(stemPath),
@@ -936,33 +940,60 @@ export async function applyEdlToTimeline({
     && generatedVoiceover.synthesis?.segmentAudio
   )
   if (useGeneratedVo) {
-    const segmentAudio = generatedVoiceover.synthesis.segmentAudio || {}
+    const synth = generatedVoiceover.synthesis
     const track = takeAudioTrack()
     const tlStore = useTimelineStore.getState()
-    let voCursor = 0
-    for (const seg of generatedVoiceover.segments) {
-      const audio = segmentAudio[seg.id]
-      if (!audio?.path) continue
-      const gap = Math.max(0, Number(seg.gapBeforeSec) || 0)
-      if (gap > 0) {
-        const maxGap = Math.max(0, totalReeditDur - voCursor - 0.1)
-        voCursor += Math.min(gap, maxGap)
-      }
-      const remaining = totalReeditDur - voCursor
-      if (remaining <= 0.05) break
-      const dur = Math.max(0.05, Math.min(Number(audio.durationSec) || remaining, remaining))
-      // Each synth WAV is a standalone asset — keyed by its absolute
-      // path so re-applying doesn't duplicate it. registerStemAsset
-      // already de-dupes by path.
-      const asset = registerStemAsset(sourceVideo, audio.path, `vo-gen-${seg.id}`, Number(audio.durationSec) || dur)
-      tlStore.addClip(track.id, asset, voCursor, null, {
-        duration: dur,
+    // Preferred path: synth produced a single combined WAV with
+    // silences baked in. Place that as ONE clip — cleaner waveform on
+    // the timeline, fewer boundaries, and the user can drag it as a
+    // unit. Fallback to per-segment placement only when the combined
+    // file is missing (e.g. ffmpeg concat failed at synth time).
+    if (synth.combinedAudioPath) {
+      const combinedDur = Math.max(
+        0.05,
+        Math.min(
+          Number(synth.combinedDurationSec) || totalReeditDur,
+          totalReeditDur,
+        ),
+      )
+      const asset = registerStemAsset(
+        sourceVideo,
+        synth.combinedAudioPath,
+        'vo-gen-combined',
+        Number(synth.combinedDurationSec) || combinedDur,
+      )
+      tlStore.addClip(track.id, asset, 0, null, {
+        duration: combinedDur,
         trimStart: 0,
-        trimEnd: dur,
+        trimEnd: combinedDur,
         saveHistory: false,
         selectAfterAdd: false,
       })
-      voCursor += dur
+    } else {
+      // Legacy / fallback path: place each segment WAV individually.
+      const segmentAudio = synth.segmentAudio || {}
+      let voCursor = 0
+      for (const seg of generatedVoiceover.segments) {
+        const audio = segmentAudio[seg.id]
+        if (!audio?.path) continue
+        const gap = Math.max(0, Number(seg.gapBeforeSec) || 0)
+        if (gap > 0) {
+          const maxGap = Math.max(0, totalReeditDur - voCursor - 0.1)
+          voCursor += Math.min(gap, maxGap)
+        }
+        const remaining = totalReeditDur - voCursor
+        if (remaining <= 0.05) break
+        const dur = Math.max(0.05, Math.min(Number(audio.durationSec) || remaining, remaining))
+        const asset = registerStemAsset(sourceVideo, audio.path, `vo-gen-${seg.id}`, Number(audio.durationSec) || dur)
+        tlStore.addClip(track.id, asset, voCursor, null, {
+          duration: dur,
+          trimStart: 0,
+          trimEnd: dur,
+          saveHistory: false,
+          selectAfterAdd: false,
+        })
+        voCursor += dur
+      }
     }
     stemsPlaced.push('vo-generated')
   }

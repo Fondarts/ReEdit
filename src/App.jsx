@@ -24,6 +24,7 @@ import { WORKFLOW_SETUP_SECTION_ID } from './services/workflowSetupManager'
 import { REEDIT_MODE, REEDIT_FULLSCREEN_TABS, pickInitialReeditTab } from './config/mode'
 import ImportVideoView from './components/reedit/ImportVideoView'
 import AnalysisView from './components/reedit/AnalysisView'
+import OptimizationView from './components/reedit/OptimizationView'
 import ProposalView from './components/reedit/ProposalView'
 import ProjectsView from './components/reedit/ProjectsView'
 import {
@@ -432,6 +433,12 @@ function App() {
         </div>
         <div
           className="flex-1 flex flex-col min-h-0 overflow-hidden bg-sf-dark-950"
+          style={{ display: mainTab === 'optimization' ? 'flex' : 'none' }}
+        >
+          <OptimizationView onNavigate={setMainTab} />
+        </div>
+        <div
+          className="flex-1 flex flex-col min-h-0 overflow-hidden bg-sf-dark-950"
           style={{ display: mainTab === 'proposal' ? 'flex' : 'none' }}
         >
           <ProposalView onNavigate={setMainTab} />
@@ -442,7 +449,7 @@ function App() {
             entirely. Staying mounted keeps the InspectorPanel's
             "Commit reframe" progress listener alive while the user
             flips over to Analysis to queue another job. */}
-        {![ 'projects', 'import', 'analysis', 'proposal', 'export', 'stock', 'llm-assistant', 'comfyui', 'generate', 'mog' ].includes(mainTab) && (
+        {![ 'projects', 'import', 'analysis', 'optimization', 'proposal', 'export', 'stock', 'llm-assistant', 'comfyui', 'generate', 'mog' ].includes(mainTab) && (
           <>
             {/* Left Panel - Full Height Mode (spans entire left side) */}
             {leftPanelFullHeight && (

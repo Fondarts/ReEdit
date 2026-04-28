@@ -381,12 +381,24 @@ contextBridge.exposeInMainWorld('electronAPI', {
    * after every one. Output WAV files land in
    * `{projectDir}/.reedit/vo_generated/{draftId}/{segId}.wav`.
    *
+   * `voiceMode` selects the engine:
+   *   - 'clone' (default) — F5-TTS, requires `voiceRef`.
+   *   - 'kokoro' — Kokoro-TTS, requires `kokoroVoice` (e.g. 'af_bella').
+   *     `voiceRef` is ignored.
+   * `nfeSteps` (16-64, default 32) only applies to clone mode (F5).
+   * `speed` (0.7-1.4, default 1.0) is a post-time-stretch in BOTH modes;
+   * for Kokoro it's the node's `speed` input directly.
+   *
    * @param {{
    *   draftId: string,
    *   projectDir: string,
    *   segments: Array<{ id: string, text: string }>,
-   *   voiceRef: { audioPath: string, transcript: string, startSec: number, endSec: number },
+   *   voiceRef?: { audioPath: string, transcript: string, startSec: number, endSec: number },
+   *   voiceMode?: 'clone'|'kokoro',
+   *   kokoroVoice?: string,
    *   language?: string,
+   *   nfeSteps?: number,
+   *   speed?: number,
    *   comfyUrl?: string,
    * }} options
    * @returns {Promise<{success: boolean, segmentAudio?: Object, error?: string}>}

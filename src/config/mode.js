@@ -14,6 +14,7 @@ export const REEDIT_TABS = [
   { id: 'projects', label: 'Projects' },
   { id: 'import', label: 'Import' },
   { id: 'analysis', label: 'Analysis' },
+  { id: 'optimization', label: 'Optimization' },
   { id: 'proposal', label: 'Proposal' },
   { id: 'editor', label: 'Editor' },
   { id: 'export', label: 'Export' },
@@ -22,7 +23,7 @@ export const REEDIT_TABS = [
 // Tab ids that render a single full-screen workspace (no left panel /
 // inspector / timeline docked around them). The editor tab keeps the
 // Resolve-style layout; the other re-edit tabs are single-panel.
-export const REEDIT_FULLSCREEN_TABS = new Set(['projects', 'import', 'analysis', 'proposal'])
+export const REEDIT_FULLSCREEN_TABS = new Set(['projects', 'import', 'analysis', 'optimization', 'proposal'])
 
 // Decide the initial tab when a project is opened or created.
 // - No sourceVideo yet → Import.

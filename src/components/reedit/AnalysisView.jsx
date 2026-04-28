@@ -6,6 +6,7 @@ import { resolveActiveClipPath } from '../../services/reeditVideoAnalyzer'
 import { useLlmSettings } from '../../hooks/useLlmSettings'
 import { LLM_BACKENDS, BACKEND_LABELS, ANTHROPIC_MODELS, GEMINI_MODELS } from '../../services/reeditLlmClient'
 import LlmSettingsModal from './LlmSettingsModal'
+import OptimizeFootageCell, { shotHasGraphics, OPTIMIZE_STAGE_LABEL } from './OptimizeFootageCell'
 
 // Build the comfystudio:// URL on the renderer. Mirrors what
 // `media:getFileUrl` does in main.js (`encodeURIComponent(path)`), so
@@ -210,204 +211,6 @@ function DescriptionCell({ scene }) {
   )
 }
 
-// Decides whether a shot has graphics worth removing. We treat
-// `graphics: null` as "Gemini said nothing overlayed" — hide the
-// button. Anything with text, a logo, or "other_graphics" gets the
-// action. The hint object alone isn't enough to show the button: a
-// row with hint but no text/logo would mean Gemini hallucinated
-// removal metadata for a shot that doesn't need it.
-function shotHasGraphics(scene) {
-  const g = scene.videoAnalysis?.graphics
-  if (!g) return false
-  if (g.has_text_on_screen || g.text_content) return true
-  if (g.has_logo || g.logo_description) return true
-  if (g.other_graphics) return true
-  return false
-}
-
-// Human-readable labels for the progress stages emitted by main.js.
-// Keep these short — the cell is narrow (170 px) and the user already
-// knows the scene id from the row.
-const OPTIMIZE_STAGE_LABEL = {
-  starting: 'Starting…',
-  generating_mask: 'Masking…',
-  mask_log: 'Masking…',
-  uploading: 'Uploading…',
-  queued_submit: 'Submitting…',
-  queued: 'Queued',
-  running: 'Generating…',
-  poll_warn: 'Generating…',
-  compositing: 'Compositing…',
-  note: null,
-  done: 'Done',
-  error: 'Failed',
-}
-
-function OptimizeFootageCell({ scene, state, onRun, disabled, previewState, onPreview, onSetActiveVersion }) {
-  if (!shotHasGraphics(scene)) {
-    return <span className="text-sf-text-muted text-[10px] italic">—</span>
-  }
-
-  const stage = state?.stage
-  const running = stage && !['done', 'error'].includes(stage)
-  const label = OPTIMIZE_STAGE_LABEL[stage] || (stage ? stage : 'Optimize')
-  const previewRunning = previewState?.stage === 'running'
-
-  // Persisted optimization stack (survives project reload). The local
-  // `state` above only reflects in-flight UI; once the run persists it
-  // ends up here so the dropdown keeps working after refresh.
-  const stack = Array.isArray(scene.optimizations) ? scene.optimizations : []
-  const hasHistory = stack.length > 0
-  const active = scene.activeOptimizationVersion || null
-  const activeEntry = active ? stack.find((o) => o.version === active) : null
-
-  // Version dropdown — only shown when there's at least one completed
-  // optimization. Includes the "Original" option so the user can jump
-  // back to the source sub-clip at any time.
-  const versionDropdown = hasHistory ? (
-    <select
-      value={active || ''}
-      onChange={(e) => onSetActiveVersion?.(scene.id, e.target.value || null)}
-      className="text-[10px] bg-sf-dark-900 border border-sf-dark-700 rounded px-1 py-0.5 text-sf-text-secondary hover:border-sf-dark-500 focus:outline-none focus:border-sf-accent"
-      title="Switch which clip the rest of the pipeline uses for this shot"
-    >
-      <option value="">Original</option>
-      {stack.map((o) => {
-        // Add a short hint so the dropdown tells the user what kind
-        // of pass produced each version at a glance. VACE outputs
-        // erase on-screen graphics; reframe outputs bake a zoom/crop.
-        const kindHint = o.kind === 'reframe' || /^R/i.test(String(o.version))
-          ? 'reframe'
-          : 'graphics removed'
-        return (
-          <option key={o.version} value={o.version}>
-            {o.version} — {kindHint}
-          </option>
-        )
-      })}
-    </select>
-  ) : null
-
-  // Regenerate-mask button: always available. Runs make_mask.py
-  // alone and reveals the finished `<id>_mask.mp4` in the OS file
-  // manager. No cache — each click overwrites the previous mask, so
-  // the user can iterate padding / threshold / persistence tweaks
-  // without deleting files by hand. Disabled only while another
-  // action on this row is in flight.
-  const previewButton = (
-    <button
-      type="button"
-      onClick={onPreview}
-      disabled={disabled || previewRunning || running}
-      className={`inline-flex items-center gap-1 px-2 py-0.5 rounded text-[10px] border transition-colors
-        ${(disabled || previewRunning || running)
-          ? 'border-sf-dark-700 bg-sf-dark-900 text-sf-text-muted/60 cursor-not-allowed'
-          : 'border-sf-dark-700 bg-sf-dark-900 hover:bg-sf-dark-800 text-sf-text-secondary hover:text-sf-text-primary hover:border-sf-accent/60'}`}
-      title="Regenerate the mask (make_mask.py). Skips VACE + composite. Opens the mask folder when done."
-    >
-      {previewRunning ? (
-        <Loader2 className="w-3 h-3 animate-spin" />
-      ) : (
-        <RotateCcw className="w-3 h-3" />
-      )}
-      {previewRunning ? 'Regenerating…' : 'Regenerate mask'}
-    </button>
-  )
-
-  if (stage === 'error') {
-    return (
-      <div className="flex flex-col gap-1">
-        <div className="inline-flex items-center gap-1.5 text-[11px] text-sf-error" title={state?.error}>
-          <AlertCircle className="w-3.5 h-3.5" />
-          <span className="truncate">Failed</span>
-        </div>
-        {state?.error && (
-          <div className="text-[10px] text-sf-error/80 leading-snug break-words">{state.error}</div>
-        )}
-        <button
-          type="button"
-          onClick={onRun}
-          className="text-[10px] text-sf-accent hover:underline text-left"
-        >
-          Retry
-        </button>
-        {previewButton}
-      </div>
-    )
-  }
-
-  if (running) {
-    const elapsed = state?.elapsedSec
-    return (
-      <div className="flex flex-col gap-1">
-        <div className="inline-flex items-center gap-1.5 text-[11px] text-sf-text-secondary">
-          <Loader2 className="w-3.5 h-3.5 animate-spin" />
-          <span>{label}{elapsed ? ` · ${elapsed}s` : ''}</span>
-        </div>
-        {previewButton}
-      </div>
-    )
-  }
-
-  // Persisted done state: scene has optimizations in the stack even if
-  // the transient `state` is stale (project reloaded since the last run).
-  if (hasHistory) {
-    return (
-      <div className="flex flex-col gap-1">
-        <div className="inline-flex items-center gap-1.5 text-[11px] text-emerald-300">
-          <CheckCircle2 className="w-3.5 h-3.5" />
-          <span>
-            {active ? `Active: ${active}` : 'Active: Original'}
-          </span>
-        </div>
-        <div className="inline-flex items-center gap-1.5">
-          <span className="text-[10px] text-sf-text-muted">Version:</span>
-          {versionDropdown}
-        </div>
-        {activeEntry?.path && (
-          <button
-            type="button"
-            onClick={() => window.electronAPI?.showItemInFolder?.(activeEntry.path)}
-            className="text-[10px] text-sf-accent hover:underline text-left truncate"
-            title={activeEntry.path}
-          >
-            Reveal active
-          </button>
-        )}
-        <button
-          type="button"
-          onClick={onRun}
-          className="text-[10px] text-sf-text-muted hover:text-sf-text-primary text-left"
-        >
-          Generate new version
-        </button>
-        {previewButton}
-      </div>
-    )
-  }
-
-  return (
-    <div className="flex flex-col gap-1">
-      <button
-        type="button"
-        onClick={onRun}
-        disabled={disabled}
-        className={`inline-flex items-center gap-1.5 px-2 py-1 rounded-md text-[11px] border transition-colors
-          ${disabled
-            ? 'border-sf-dark-700 bg-sf-dark-900 text-sf-text-muted/60 cursor-not-allowed'
-            : 'border-sf-dark-700 bg-sf-dark-900 hover:bg-sf-dark-800 text-sf-text-primary hover:border-sf-accent/60'}`}
-        title="Remove on-screen text / logos with Wan VACE"
-      >
-        <Wand2 className="w-3.5 h-3.5" />
-        Optimize
-      </button>
-      {previewButton}
-      {previewState?.stage === 'error' && previewState.error && (
-        <div className="text-[10px] text-sf-error/80 leading-snug break-words">{previewState.error}</div>
-      )}
-    </div>
-  )
-}
 
 function AnalysisView() {
   const currentProject = useProjectStore((s) => s.currentProject)
@@ -1034,7 +837,6 @@ function AnalysisView() {
                 <th className="text-left px-3 py-2 font-medium w-[110px]">Emotion</th>
                 <th className="text-left px-3 py-2 font-medium w-[90px]">Framing</th>
                 <th className="text-left px-3 py-2 font-medium w-[90px]">Motion</th>
-                <th className="text-left px-3 py-2 font-medium w-[170px]">Optimize</th>
               </tr>
             </thead>
             <tbody>
@@ -1140,17 +942,6 @@ function AnalysisView() {
                     <td className="px-3 py-2"><Chip tone="emotion">{s.emotion}</Chip></td>
                     <td className="px-3 py-2"><Chip tone="framing">{s.framing}</Chip></td>
                     <td className="px-3 py-2"><Chip tone="movement">{s.movement}</Chip></td>
-                    <td className="px-3 py-2">
-                      <OptimizeFootageCell
-                        scene={scene}
-                        state={optimizeState[scene.id]}
-                        onRun={() => runOptimizeFootage(scene)}
-                        previewState={previewState[scene.id]}
-                        onPreview={() => runPreviewMask(scene)}
-                        onSetActiveVersion={setSceneActiveVersion}
-                        disabled={!projectDir}
-                      />
-                    </td>
                   </tr>
                 )
               })}
