@@ -404,6 +404,48 @@ contextBridge.exposeInMainWorld('electronAPI', {
    * @returns {Promise<{success: boolean, segmentAudio?: Object, error?: string}>}
    */
   synthesizeVoiceover: (options) => ipcRenderer.invoke('analysis:synthesizeVoiceover', options),
+
+  /**
+   * Synthesise a music track via ACE-Step 1.5 in ComfyUI. Output lands
+   * at `<projectDir>/.reedit/music_generated/<draftId>.mp3` (or .wav).
+   *
+   * @param {{
+   *   draftId: string,
+   *   projectDir: string,
+   *   tags: string,            // genre / instruments / mood prompt
+   *   lyrics?: string,         // optional — empty for instrumentals
+   *   durationSec?: number,    // 4-240, default 30
+   *   bpm?: number,            // 40-220, default 120
+   *   language?: string,       // 'en'|'es'|... default 'en'
+   *   keyscale?: string,       // e.g. 'C major', default 'C major'
+   *   timesignature?: string,  // '2'|'3'|'4'|'6', default '4'
+   *   cfgScale?: number, temperature?: number, topP?: number,
+   *   seed?: number, comfyUrl?: string,
+   * }} options
+   */
+  synthesizeMusic: (options) => ipcRenderer.invoke('analysis:synthesizeMusic', options),
+  onSynthesizeMusicProgress: (cb) => {
+    const handler = (_, payload) => cb(payload)
+    ipcRenderer.on('analysis:synthesizeMusic:progress', handler)
+    return () => ipcRenderer.removeListener('analysis:synthesizeMusic:progress', handler)
+  },
+
+  /**
+   * Import an auxiliary asset (extra footage / graphics / music / VO)
+   * by copying it into the project's `.reedit/additional/<category>/`
+   * folder and probing its metadata. Returns an asset entry ready to
+   * be appended to `project.additionalAssets[<category>]`.
+   *
+   * @param {{ sourcePath: string, category: 'extraFootage'|'graphics'|'music'|'voiceover', projectDir: string }} options
+   * @returns {Promise<{success: boolean, asset?: object, error?: string}>}
+   */
+  importAdditionalAsset: (options) => ipcRenderer.invoke('import:additionalAsset', options),
+  /**
+   * Delete an additional asset's underlying file. The caller still has
+   * to update `project.additionalAssets` to drop the entry.
+   * @param {{ assetPath: string }} options
+   */
+  deleteAdditionalAsset: (options) => ipcRenderer.invoke('import:deleteAdditionalAsset', options),
   onSynthesizeVoiceoverProgress: (cb) => {
     const handler = (_, payload) => cb(payload)
     ipcRenderer.on('analysis:synthesizeVoiceover:progress', handler)

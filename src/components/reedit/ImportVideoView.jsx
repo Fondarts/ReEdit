@@ -3,6 +3,7 @@ import { Upload, Loader2, CheckCircle2, AlertCircle, Mic, Music, ExternalLink, R
 import useProjectStore from '../../stores/projectStore'
 import useTimelineStore from '../../stores/timelineStore'
 import { resetReeditProjectState } from '../../services/reeditEdlToTimeline'
+import AdditionalMaterialSection from './AdditionalMaterialSection'
 
 // Renderer-side metadata check via the HTML5 <video> element. This runs
 // through Chromium's demuxer, which covers the same formats the app will
@@ -191,12 +192,12 @@ function ImportVideoView({ onVideoImported }) {
 
   return (
     <div
-      className="flex-1 flex items-center justify-center bg-sf-dark-950 text-sf-text-primary p-8"
+      className="flex-1 flex flex-col items-center bg-sf-dark-950 text-sf-text-primary p-8 overflow-y-auto"
       onDragOver={handleDragOver}
       onDragLeave={handleDragLeave}
       onDrop={handleDrop}
     >
-      <div className="max-w-lg w-full text-center">
+      <div className="max-w-lg w-full text-center mb-8">
         <div className="w-16 h-16 rounded-full bg-sf-dark-800 border border-sf-dark-700 flex items-center justify-center mx-auto mb-6">
           {loading ? (
             <Loader2 className="w-7 h-7 text-sf-accent animate-spin" />
@@ -256,6 +257,19 @@ function ImportVideoView({ onVideoImported }) {
           </div>
         )}
       </div>
+
+      {/* Additional material — only renders once a source video has
+          been imported. Rationale: until the project has a source we
+          haven't picked an aspect ratio / fps, and an isolated extra
+          asset has nothing to attach to anyway. The section sits in
+          its own wider container (~max-w-4xl) since the source-video
+          dropzone is intentionally narrow but the 4-category grid
+          benefits from the breathing room. */}
+      {existing && (
+        <div className="max-w-4xl w-full">
+          <AdditionalMaterialSection />
+        </div>
+      )}
     </div>
   )
 }

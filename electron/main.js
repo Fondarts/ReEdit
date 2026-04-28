@@ -1907,9 +1907,9 @@ const COLOR_HSV_RANGES = {
 }
 
 // Dilate kernel size used by make_mask.py. 25 keeps the mask tight
-// around the graphic itself; the composite feather (σ=15) now does
-// most of the work softening the patch edge, so we can afford to stop
-// over-expanding the mask into background pixels.
+// around the graphic itself; the composite feather (σ=8 — see the
+// optimizeFootage handler call) does the rest of the edge softening,
+// so we don't over-expand the mask into background pixels.
 const MASK_DILATE_KERNEL = '25'
 
 // Max per-blob area as a percent of the frame. Above this, a connected
@@ -1944,6 +1944,28 @@ const KNOWN_ROI_POSITIONS = new Set([
 // `graphics.removal_hint.bboxes` (where the model sometimes puts it
 // because it's reasoning about "how to remove" this shot). Returns []
 // if neither is present or valid.
+// Heuristic flag: does this bbox label / role suggest a physical
+// in-world object rather than a post-production overlay? We use this
+// as a defensive filter against analyses generated before the schema
+// split (when Gemini was instructed to mix overlays + physical marks
+// in the same array). The patterns target the way the model usually
+// describes physical marks in free-text labels.
+function looksLikePhysicalMark(b) {
+  if (!b) return false
+  const text = `${b.label || ''} ${b.role || ''}`.toLowerCase()
+  if (!text.trim()) return false
+  // Whole-phrase signals — explicit "physical X" wording.
+  if (text.includes('physical')) return true
+  // Object-attached mark patterns — "logo on the [body part]",
+  // "[mark] on the hood/door/grille/bumper/dashboard/...".
+  if (/\b(?:logo|badge|mark|emblem|wordmark|roundel|swoosh|h-mark|monogram)\s+on\s+(?:the|a)\s+\w/.test(text)) return true
+  if (/\bon\s+(?:the|a)\s+(?:hood|grille|grill|bumper|door|fender|wheel|trunk|tailgate|dashboard|steering wheel|shoe|jersey|shirt|cap|helmet|jacket|bag|bottle|can|product)\b/.test(text)) return true
+  // Specific physical-only items — almost never overlays.
+  if (/\b(?:kidney grille|kidney grill|license plate|number plate|registration plate|grille|grill|nose badge|hood badge|trunk badge)\b/.test(text)) return true
+  if (/\b(?:embossed|engraved|stitched|printed on|painted on|label on)\b/.test(text)) return true
+  return false
+}
+
 function extractBboxes(graphics) {
   if (!graphics || typeof graphics !== 'object') return []
   const direct = Array.isArray(graphics.bboxes) ? graphics.bboxes : null
@@ -1952,6 +1974,15 @@ function extractBboxes(graphics) {
   const out = []
   for (const b of source) {
     if (!b) continue
+    // CRITICAL filter — physical brand marks (kidney grilles, badges,
+    // license plates, product labels) MUST NOT feed the inpaint mask
+    // or VACE paints over real geometry. Two layers:
+    //   1. Explicit `kind: "physical"` flag from new analyses → drop.
+    //   2. Heuristic content match on label/role → drop. Catches old
+    //      analyses + occasional model drift where Gemini wrote
+    //      "physical license plate" but forgot to set the kind field.
+    if (b.kind === 'physical') continue
+    if (looksLikePhysicalMark(b)) continue
     const box = Array.isArray(b) ? b : b.box_2d
     if (!Array.isArray(box) || box.length !== 4) continue
     const nums = box.map((n) => Number(n))
@@ -1965,7 +1996,7 @@ function extractBboxes(graphics) {
     // erase the whole shot).
     if (ymax - ymin < 5 || xmax - xmin < 5) continue
     if ((ymax - ymin) * (xmax - xmin) > 900000) continue  // >90% of frame
-    out.push({ box_2d: [ymin, xmin, ymax, xmax], role: b.role || null, label: b.label || null })
+    out.push({ box_2d: [ymin, xmin, ymax, xmax], role: b.role || null, kind: b.kind || 'overlay', label: b.label || null })
   }
   return out
 }
@@ -2706,7 +2737,13 @@ ipcMain.handle('analysis:optimizeFootage', async (event, options) => {
     vacePath: vaceRawPath,
     maskPath: localMaskPath,
     outputPath: finalPath,
-    feather: 45,
+    // σ=8 keeps the mask edge soft enough to hide the seam between
+    // VACE pixels and the original, but tight enough that the matte
+    // stays localised to the graphic. Earlier values (σ=45) blurred
+    // the mask so much it spilled across most of the frame, making
+    // VACE bleed into untouched regions and looking like the whole
+    // shot got re-rendered — the opposite of "preserve the original".
+    feather: 8,
     // Force the composite length to the original clip's frame count.
     // Wan VACE sometimes returns +1 frame on shots where our wanFrames
     // snap differs from numFrames; without this cap that trailing
@@ -3380,6 +3417,113 @@ ipcMain.handle('analysis:commitExtend', async (event, options) => {
 })
 
 // ============================================
+// Additional assets — import + probe
+// ============================================
+//
+// Files the user drops on the "Additional material" section in Import
+// (extra footage, graphics, music, voiceover) get copied into
+// `<projectDir>/.reedit/additional/<category>/<sanitized-filename>` so
+// the project stays portable. The handler probes media metadata so the
+// renderer can show duration / dims / codec without re-decoding.
+ipcMain.handle('import:additionalAsset', async (event, options) => {
+  const { sourcePath, category, projectDir } = options || {}
+  if (!sourcePath) return { success: false, error: 'sourcePath required.' }
+  if (!projectDir) return { success: false, error: 'projectDir required.' }
+  const allowed = new Set(['extraFootage', 'graphics', 'music', 'voiceover'])
+  if (!allowed.has(category)) {
+    return { success: false, error: `Unknown category "${category}". Expected one of: ${[...allowed].join(', ')}.` }
+  }
+  try {
+    const st = await fs.stat(sourcePath)
+    if (!st.isFile()) return { success: false, error: 'Source path is not a file.' }
+  } catch (err) {
+    return { success: false, error: `Source file unreadable: ${err.message}` }
+  }
+
+  const ext = path.extname(sourcePath).toLowerCase()
+  const baseName = path.basename(sourcePath, ext)
+  // Sanitise the name and de-dup if the same filename was already
+  // imported (rare — most additional-material drops are unique — but
+  // would otherwise silently overwrite an earlier entry).
+  const sanitized = sanitizeForFilename(baseName, 80)
+  const destDir = path.join(projectDir.replace(/\\/g, '/'), '.reedit', 'additional', category)
+  try { await fs.mkdir(destDir, { recursive: true }) } catch (err) {
+    return { success: false, error: `Could not create destination dir: ${err.message}` }
+  }
+  let destPath = path.join(destDir, `${sanitized}${ext}`)
+  let suffix = 1
+  while (true) {
+    try {
+      await fs.access(destPath)
+      destPath = path.join(destDir, `${sanitized}_${suffix}${ext}`)
+      suffix++
+    } catch {
+      break // does not exist — safe to write here
+    }
+  }
+
+  try {
+    await copyFileOverwrite(sourcePath, destPath)
+  } catch (err) {
+    return { success: false, error: `Copy failed: ${err.message}` }
+  }
+
+  // Probe metadata. For video / audio we use ffprobe; for images we
+  // skip the probe and let the renderer's <img> element discover dims
+  // on first paint. Failures are non-fatal — the entry still imports.
+  const isVideo = ['extraFootage'].includes(category)
+  const isAudio = ['music', 'voiceover'].includes(category)
+  let meta = { duration: null, width: null, height: null, fps: null, hasAudio: null, videoCodec: null, audioCodec: null }
+  if (isVideo) {
+    const probed = await probeVideoMeta(destPath)
+    if (probed) {
+      meta.duration = probed.duration
+      meta.width = probed.width
+      meta.height = probed.height
+      meta.fps = probed.fps
+    }
+    // Re-probe via the broader audio-aware ffprobe to capture hasAudio.
+    try {
+      const dur = await probeAudioDuration(destPath)
+      if (Number.isFinite(dur) && !meta.duration) meta.duration = dur
+    } catch (_) { /* ignore */ }
+  } else if (isAudio) {
+    try {
+      const dur = await probeAudioDuration(destPath)
+      if (Number.isFinite(dur)) meta.duration = dur
+    } catch (_) { /* ignore */ }
+  }
+
+  return {
+    success: true,
+    asset: {
+      id: `add-${category}-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`,
+      name: path.basename(destPath),
+      originalName: path.basename(sourcePath),
+      path: destPath,
+      category,
+      mime: ext.replace(/^\./, ''),
+      ...meta,
+      importedAt: new Date().toISOString(),
+    },
+  }
+})
+
+// Delete an additional asset's underlying file. Caller is responsible
+// for also removing the entry from `project.additionalAssets`.
+ipcMain.handle('import:deleteAdditionalAsset', async (event, options) => {
+  const { assetPath } = options || {}
+  if (!assetPath) return { success: false, error: 'assetPath required.' }
+  try {
+    await fs.unlink(assetPath)
+    return { success: true }
+  } catch (err) {
+    if (err.code === 'ENOENT') return { success: true } // already gone
+    return { success: false, error: err.message }
+  }
+})
+
+// ============================================
 // Voiceover synthesis (F5-TTS via ComfyUI)
 // ============================================
 //
@@ -3848,6 +3992,324 @@ async function probeAudioDuration(filePath) {
     proc.on('error', reject)
   })
 }
+
+// ============================================
+// Music generation (ACE-Step 1.5 via ComfyUI)
+// ============================================
+//
+// Renderer hands us a draftId + a tags prompt (genre / instruments /
+// mood) + optional lyrics + duration / language / key / bpm. We:
+//   1. Build the ACE-Step 1.5 split-4b workflow as API JSON — same
+//      graph as the comfy-core template (UNETLoader → DualCLIPLoader
+//      → TextEncodeAceStepAudio1.5 → KSampler → VAEDecodeAudio →
+//      SaveAudioMP3).
+//   2. Submit + poll /history.
+//   3. Locate the saved MP3 in ComfyUI's output dir, copy into
+//      `<projectDir>/.reedit/music_generated/<draftId>.mp3`, probe
+//      its duration, return the path.
+//
+// Models required (the user's ComfyUI must have them or auto-download
+// must be enabled):
+//   - models/diffusion_models/acestep_v1.5_turbo.safetensors
+//   - models/vae/ace_1.5_vae.safetensors
+//   - models/text_encoders/qwen_0.6b_ace15.safetensors
+//   - models/text_encoders/qwen_4b_ace15.safetensors
+ipcMain.handle('analysis:synthesizeMusic', async (event, options) => {
+  const {
+    draftId,
+    projectDir,
+    tags,
+    lyrics = '',
+    durationSec = 30,
+    bpm = 120,
+    language = 'en',
+    keyscale = 'C major',
+    timesignature = '4',
+    cfgScale = 2.0,
+    temperature = 0.85,
+    topP = 0.9,
+    seed: seedOpt,
+    comfyUrl: comfyUrlOpt,
+  } = options || {}
+  if (!draftId) return { success: false, error: 'draftId required.' }
+  if (!projectDir) return { success: false, error: 'projectDir required.' }
+  if (!tags || !String(tags).trim()) return { success: false, error: 'tags (genre/style prompt) required.' }
+  const comfyUrl = comfyUrlOpt || 'http://localhost:8000'
+
+  const emit = (stage, extra = {}) => {
+    try { event.sender.send('analysis:synthesizeMusic:progress', { draftId, stage, ...extra }) } catch (_) { /* renderer closed */ }
+  }
+  emit('starting')
+
+  const projectDirFwd = projectDir.replace(/\\/g, '/')
+  const outDir = path.join(projectDirFwd, '.reedit', 'music_generated')
+  try { await fs.mkdir(outDir, { recursive: true }) } catch (err) {
+    return { success: false, error: `Could not create music output dir: ${err.message}` }
+  }
+
+  const comfyInputDir = await resolveComfyInputDir(comfyUrl)
+  if (!comfyInputDir) {
+    return { success: false, error: `Could not determine ComfyUI input dir from ${comfyUrl}/system_stats — is ComfyUI running?` }
+  }
+  // ComfyUI's output dir mirrors input dir's parent — same trick the
+  // VO + extend handlers use to locate written files.
+  const comfyOutputDir = comfyInputDir.replace(/[\/\\]input[\/\\]?$/, (m) => m.replace('input', 'output'))
+
+  const seed = Number.isFinite(Number(seedOpt))
+    ? Math.floor(Number(seedOpt))
+    : Math.floor(Math.random() * 1e9)
+  // ACE-Step's max useful duration is ~240 s; clamp to a sane range.
+  const safeDuration = Math.max(4, Math.min(240, Number(durationSec) || 30))
+  // ACE-Step was trained almost exclusively on full songs (the
+  // template default is 120 s). When you ask for 10-30 s the model
+  // collapses into a fade-out / outro early, leaving the back half
+  // mostly silent. Fix: synth at a longer internal duration that
+  // sits inside the training distribution, then trim with ffmpeg to
+  // the exact duration the user asked for. min(60, target * 1.5)
+  // covers the short-clip case while keeping render time bounded.
+  const internalDuration = Math.max(60, Math.min(240, safeDuration * 1.5))
+  const filenamePrefix = `reedit_music/${sanitizeForFilename(draftId, 60)}`
+
+  // Build the API-format workflow. Node ids are 1..N in topological
+  // order. Mirrors the comfy-core "audio_ace_step_1_5_split_4b"
+  // template but trimmed to what's needed for inference (no
+  // PrimitiveNodes, no MarkdownNote, etc.).
+  const workflow = {
+    '1': {
+      class_type: 'UNETLoader',
+      inputs: { unet_name: 'acestep_v1.5_turbo.safetensors', weight_dtype: 'default' },
+    },
+    '2': {
+      class_type: 'VAELoader',
+      inputs: { vae_name: 'ace_1.5_vae.safetensors' },
+    },
+    '3': {
+      class_type: 'DualCLIPLoader',
+      inputs: {
+        clip_name1: 'qwen_0.6b_ace15.safetensors',
+        clip_name2: 'qwen_4b_ace15.safetensors',
+        type: 'ace',
+        device: 'default',
+      },
+    },
+    '4': {
+      class_type: 'ModelSamplingAuraFlow',
+      inputs: { model: ['1', 0], shift: 3 },
+    },
+    '5': {
+      class_type: 'EmptyAceStep1.5LatentAudio',
+      inputs: { seconds: internalDuration, batch_size: 1 },
+    },
+    '6': {
+      class_type: 'TextEncodeAceStepAudio1.5',
+      inputs: {
+        clip: ['3', 0],
+        tags: String(tags).trim(),
+        lyrics: String(lyrics || '').trim(),
+        seed,
+        bpm: Math.max(40, Math.min(220, Number(bpm) || 120)),
+        duration: internalDuration,
+        timesignature: String(timesignature || '4'),
+        language: String(language || 'en'),
+        keyscale: String(keyscale || 'C major'),
+        generate_audio_codes: true,
+        cfg_scale: Math.max(0, Math.min(10, Number(cfgScale) || 2.0)),
+        temperature: Math.max(0, Math.min(2, Number(temperature) || 0.85)),
+        top_p: Math.max(0, Math.min(1, Number(topP) || 0.9)),
+        top_k: 0,
+        min_p: 0,
+      },
+    },
+    '7': {
+      class_type: 'ConditioningZeroOut',
+      inputs: { conditioning: ['6', 0] },
+    },
+    '8': {
+      class_type: 'KSampler',
+      inputs: {
+        model: ['4', 0],
+        positive: ['6', 0],
+        negative: ['7', 0],
+        latent_image: ['5', 0],
+        seed,
+        steps: 8,
+        cfg: 1,
+        sampler_name: 'euler',
+        scheduler: 'simple',
+        denoise: 1,
+      },
+    },
+    '9': {
+      class_type: 'VAEDecodeAudio',
+      inputs: { samples: ['8', 0], vae: ['2', 0] },
+    },
+    '10': {
+      class_type: 'SaveAudioMP3',
+      inputs: { audio: ['9', 0], filename_prefix: filenamePrefix, quality: 'V0' },
+    },
+  }
+
+  emit('queued_submit')
+  let promptId
+  try {
+    const submitRes = await net.fetch(`${comfyUrl}/prompt`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ prompt: workflow }),
+    })
+    if (!submitRes.ok) {
+      const body = await submitRes.text().catch(() => '')
+      return { success: false, error: `ComfyUI rejected the music workflow (${submitRes.status}): ${body.slice(0, 600)}` }
+    }
+    const submitJson = await submitRes.json()
+    promptId = submitJson?.prompt_id
+    if (!promptId) return { success: false, error: 'ComfyUI returned no prompt_id for music synth.' }
+  } catch (err) {
+    return { success: false, error: `Could not reach ComfyUI at ${comfyUrl}: ${err.message}` }
+  }
+  emit('queued', { promptId })
+
+  // Music synth is heavy — first run loads ~5.85 GB of weights from
+  // disk + does a long denoise pass. We poll for up to 15 minutes.
+  const MAX_POLL_MS = 15 * 60 * 1000
+  const POLL_EVERY_MS = 3000
+  const startedAt = Date.now()
+  let resultEntry
+  while (true) {
+    if (Date.now() - startedAt > MAX_POLL_MS) {
+      return { success: false, error: `Timed out waiting for music synth ${promptId} after ${MAX_POLL_MS / 60000} min.` }
+    }
+    try {
+      const histRes = await net.fetch(`${comfyUrl}/history/${promptId}`)
+      if (histRes.ok) {
+        const hist = await histRes.json()
+        const entry = hist?.[promptId]
+        if (entry?.status?.completed) { resultEntry = entry; break }
+        if (entry?.status?.status_str === 'error') {
+          const msgs = (entry.status.messages || []).map((m) => JSON.stringify(m)).join(' | ')
+          return { success: false, error: `ComfyUI reported music synth error: ${msgs.slice(0, 600)}` }
+        }
+      }
+    } catch (err) {
+      emit('poll_warn', { message: err.message })
+    }
+    emit('running', { elapsedSec: Math.round((Date.now() - startedAt) / 1000) })
+    await new Promise((r) => setTimeout(r, POLL_EVERY_MS))
+  }
+
+  // Locate the saved audio in the history outputs. SaveAudioMP3 emits
+  // under `audio` in newer ComfyUI builds; fall back to `images` and
+  // filter by extension as the VO synth does.
+  const AUDIO_RE = /\.(mp3|wav|flac|ogg|m4a|opus)$/i
+  let savedFilename = null
+  let savedSubfolder = ''
+  for (const out of Object.values(resultEntry.outputs || {})) {
+    const candidates = [
+      ...(Array.isArray(out?.audio) ? out.audio : []),
+      ...(Array.isArray(out?.images) ? out.images : []),
+      ...(Array.isArray(out?.gifs) ? out.gifs : []),
+    ]
+    for (const c of candidates) {
+      if (!c?.filename) continue
+      if (!AUDIO_RE.test(c.filename)) continue
+      savedFilename = c.filename
+      savedSubfolder = c.subfolder || ''
+      break
+    }
+    if (savedFilename) break
+  }
+  if (!savedFilename) {
+    return { success: false, error: 'Could not locate output audio in ComfyUI history for music synth.' }
+  }
+  const sourceAudioPath = path.join(comfyOutputDir, savedSubfolder, savedFilename)
+  const ext = path.extname(savedFilename) || '.mp3'
+  const finalAudioPath = path.join(outDir, `${sanitizeForFilename(draftId, 60)}${ext}`)
+
+  emit('finalizing')
+  // Trim the model output to the user-requested duration. Two
+  // tactics combined:
+  //   1. We synthd at `internalDuration` (≥60s) so ACE-Step thinks
+  //      it's writing a full song, not a 10s outro.
+  //   2. We slice from the MIDDLE of that track, not the start —
+  //      song intros tend to be low-energy (sparse hits, build-up)
+  //      while the middle has the hook / verse the ad actually
+  //      wants. Centred slice = full-energy ad bed.
+  // Light fade in + out around the slice so the cut points don't
+  // pop on the timeline.
+  if (internalDuration > safeDuration + 0.5) {
+    const sliceStart = Math.max(0, (internalDuration - safeDuration) / 2)
+    const fadeSec = Math.min(0.4, Math.max(0.1, safeDuration * 0.05))
+    const fadeOutStart = Math.max(0, safeDuration - fadeSec)
+    try {
+      await new Promise((resolve, reject) => {
+        const args = [
+          '-hide_banner', '-nostats', '-y',
+          '-ss', sliceStart.toFixed(3),
+          '-i', sourceAudioPath,
+          '-t', safeDuration.toFixed(3),
+          // Fade in at the head + fade out at the tail. Both are
+          // short enough (~5% of the slice) that the user perceives
+          // a clean cut, not a fade.
+          '-af', `afade=t=in:st=0:d=${fadeSec.toFixed(3)},afade=t=out:st=${fadeOutStart.toFixed(3)}:d=${fadeSec.toFixed(3)}`,
+          '-c:a', ext === '.mp3' ? 'libmp3lame' : 'pcm_s16le',
+          ...(ext === '.mp3' ? ['-q:a', '2'] : []),
+          finalAudioPath,
+        ]
+        const proc = spawn(ffmpegPath, args, { windowsHide: true })
+        let stderr = ''
+        proc.stderr.on('data', (d) => { stderr += d.toString() })
+        proc.on('close', (code) => {
+          if (code === 0) resolve()
+          else reject(new Error(`ffmpeg trim failed (${code}): ${stderr.slice(-300)}`))
+        })
+        proc.on('error', reject)
+      })
+    } catch (err) {
+      // Trim failed — fall back to copying the full-length file. Better
+      // to ship "30s of music when 10s was requested" than to fail.
+      emit('trim_warn', { message: err.message })
+      try { await copyFileOverwrite(sourceAudioPath, finalAudioPath) } catch (cpErr) {
+        return { success: false, error: `Could not copy synthesised music into project: ${cpErr.message}` }
+      }
+    }
+  } else {
+    try {
+      await copyFileOverwrite(sourceAudioPath, finalAudioPath)
+    } catch (err) {
+      return { success: false, error: `Could not copy synthesised music into project: ${err.message}` }
+    }
+  }
+  let durationFinal = null
+  try {
+    const dur = await probeAudioDuration(finalAudioPath)
+    if (Number.isFinite(dur)) durationFinal = dur
+  } catch (_) { /* non-fatal */ }
+
+  // Save the workflow JSON next to the MP3 so the user can drop it
+  // back into ComfyUI to inspect / iterate. Same helper the video
+  // optimize / extend handlers use.
+  let workflowJsonPath = null
+  try {
+    workflowJsonPath = await saveWorkflowAlongsideOutput(finalAudioPath, workflow, {
+      kind: 'ace-step-music',
+      draftId,
+      promptId,
+      internalDurationSec: internalDuration,
+      requestedDurationSec: safeDuration,
+    })
+  } catch (_) { /* non-fatal */ }
+
+  emit('done', { audioPath: finalAudioPath, durationSec: durationFinal, seed, internalDuration, workflowJsonPath })
+  return {
+    success: true,
+    audioPath: finalAudioPath,
+    durationSec: durationFinal,
+    seed,
+    promptId,
+    internalDuration,
+    workflowJsonPath,
+  }
+})
 
 // ============================================
 // Audio stem separation (VO + Music via Demucs)

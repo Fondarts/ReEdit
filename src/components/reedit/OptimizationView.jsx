@@ -33,6 +33,7 @@ import {
 import { resolveActiveClipPath } from '../../services/reeditVideoAnalyzer'
 import OptimizeFootageCell, { shotHasGraphics } from './OptimizeFootageCell'
 import { OriginalVoiceoverPanel, GenerateVoiceoverPanel } from './VoiceoverPanels'
+import MusicPanel from './MusicPanel'
 
 // Build a comfystudio:// URL for the renderer. Same shape as
 // AnalysisView's helper. `version` cache-busts so re-running optimize
@@ -84,6 +85,8 @@ export default function OptimizationView({ onNavigate }) {
     const patch = { [id]: turningOn }
     if (turningOn && id === 'generateVoiceover') patch.useOriginalVoiceover = false
     if (turningOn && id === 'useOriginalVoiceover') patch.generateVoiceover = false
+    if (turningOn && id === 'generateMusic') patch.useOriginalMusic = false
+    if (turningOn && id === 'useOriginalMusic') patch.generateMusic = false
     const next = saveProposalCapabilities(patch)
     setCapabilities(next)
   }
@@ -308,10 +311,45 @@ export default function OptimizationView({ onNavigate }) {
     setCapabilities(next)
   }
   const voModeBlurb = ({
-    none: 'Audio track will be silent for VO. Music (when wired up) will still play.',
+    none: 'Audio track will be silent for VO. Music will still play.',
     original: 'Reuse the isolated VO stem from the source ad. Pick segments and tweak timing below.',
     generate: 'Have Gemini draft a fresh script and synthesise it via ComfyUI cloning the source speaker.',
   })[voMode]
+
+  // Music mode mirrors the VO triplet — same UX pattern.
+  const musicMode = capabilities.generateMusic
+    ? 'generate'
+    : capabilities.useOriginalMusic
+      ? 'original'
+      : 'none'
+  const setMusicMode = (mode) => {
+    const next = saveProposalCapabilities({
+      useOriginalMusic: mode === 'original',
+      generateMusic: mode === 'generate',
+    })
+    setCapabilities(next)
+  }
+  const musicModeBlurb = ({
+    none: 'Music track will be silent. Use this when the visuals or VO carry the energy alone.',
+    original: 'Layer the isolated music stem from the source ad on the timeline.',
+    generate: 'Generate a fresh track via ComfyUI (ACE-Step 1.5) — describe genre + mood + optional lyrics.',
+  })[musicMode]
+
+  // Music drafts persist on the project under `musicDrafts.{drafts, selectedId}`.
+  const musicDrafts = Array.isArray(currentProject?.musicDrafts?.drafts)
+    ? currentProject.musicDrafts.drafts
+    : []
+  const selectedMusicDraftId = currentProject?.musicDrafts?.selectedId || null
+  const persistMusicDrafts = (nextDrafts) => {
+    saveProject({
+      musicDrafts: { drafts: nextDrafts, selectedId: selectedMusicDraftId },
+    })
+  }
+  const persistSelectedMusicDraftId = (id) => {
+    saveProject({
+      musicDrafts: { drafts: musicDrafts, selectedId: id },
+    })
+  }
 
   // Original VO stem URL — drives the play button next to the transcript.
   const stemPath = sourceVideo?.stems?.vocalsPath || null
@@ -473,18 +511,56 @@ export default function OptimizationView({ onNavigate }) {
                 )}
               </div>
 
-              {/* RIGHT — Music (placeholder until we wire the music
-                  capability + stem reuse / generation). Same shell as the
-                  VO column so the two-column grid stays balanced. */}
+              {/* RIGHT — Music. Same dropdown UX as VO: pick a mode
+                  (none / original / generate) and the matching panel
+                  surfaces below. Generate uses ACE-Step 1.5 in ComfyUI. */}
               <div className="rounded-lg border border-sf-dark-700 bg-sf-dark-900 p-3">
                 <div className="flex items-center gap-2 mb-3">
                   <Music className="w-3.5 h-3.5 text-sf-text-muted" />
                   <span className="text-xs uppercase tracking-wider text-sf-text-muted font-medium">Music</span>
-                  <span className="text-[10px] uppercase tracking-wider text-sf-text-muted/70 bg-sf-dark-800 border border-sf-dark-700 rounded px-1.5 py-0.5">soon</span>
                 </div>
-                <div className="rounded border border-dashed border-sf-dark-700 bg-sf-dark-950 px-4 py-10 text-center text-xs text-sf-text-muted italic leading-relaxed">
-                  Music controls land here next. Plan: reuse the original music stem, swap for a different track, or generate a new one.
-                </div>
+                <label className="block text-[11px] font-medium text-sf-text-muted uppercase tracking-wider mb-1">Mode</label>
+                <select
+                  value={musicMode}
+                  onChange={(e) => setMusicMode(e.target.value)}
+                  className="w-full text-sm rounded border border-sf-dark-700 bg-sf-dark-950 px-2 py-1.5 text-sf-text-primary focus:outline-none focus:border-sf-accent"
+                >
+                  <option value="original">Use original music</option>
+                  <option value="generate">Generate new music</option>
+                  <option value="none">No music</option>
+                </select>
+                <p className="text-[11px] text-sf-text-muted mt-1.5 mb-3 leading-relaxed">{musicModeBlurb}</p>
+
+                {musicMode === 'original' && (
+                  <div className="rounded border border-sf-dark-700 bg-sf-dark-950 p-2">
+                    {sourceVideo?.stems?.musicPath ? (
+                      <div className="flex items-center gap-2">
+                        <span className="text-[10px] uppercase tracking-wider text-sf-text-muted">Stem</span>
+                        <audio
+                          src={`comfystudio://${encodeURIComponent(sourceVideo.stems.musicPath)}`}
+                          controls
+                          preload="metadata"
+                          className="h-7 flex-1"
+                        />
+                      </div>
+                    ) : (
+                      <p className="text-[11px] italic text-sf-text-muted">
+                        Music stem not separated yet. Run Demucs in the Import tab to extract it.
+                      </p>
+                    )}
+                  </div>
+                )}
+                {musicMode === 'generate' && (
+                  <MusicPanel
+                    drafts={musicDrafts}
+                    selectedId={selectedMusicDraftId}
+                    onChangeDrafts={persistMusicDrafts}
+                    onChangeSelectedId={persistSelectedMusicDraftId}
+                    capabilities={capabilities}
+                    projectDir={projectDir}
+                    defaultDurationSec={targetDurationSec}
+                  />
+                )}
               </div>
             </div>
           </section>

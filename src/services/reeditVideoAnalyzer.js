@@ -77,17 +77,25 @@ const USER_PROMPT = `Watch this clip end-to-end, including audio if present. Ret
     "box_2d": [ymin, xmin, ymax, xmax],
     "label": "The LITERAL brand logo / badge / wordmark visible in the frame. Populate this ONLY when a true brand mark is visible — not design signatures. Examples of LITERAL brand marks: the round BMW roundel (blue/white quadrants), the Nike swoosh, the Coca-Cola script wordmark, the Apple logo, a stitched brand tag, an embossed badge. Design signatures that are NOT brand marks: BMW kidney grilles, Porsche body curves, a particular shoe silhouette — those are brand-associated but aren't the logo. If no literal brand mark is visible in the frame, return null. Bbox must be TIGHT (2-3 % padding around the logo only, NOT the object carrying the logo). Coordinates normalised 0-1000."
   },
+  "physical_brand_marks": [
+    {
+      "box_2d": [ymin, xmin, ymax, xmax],
+      "label": "Short description (e.g. 'BMW roundel on hood', 'Nike swoosh on shoe', 'license plate', 'Honda H-mark on grille')."
+    }
+  ],
   "graphics": {
-    "has_text_on_screen": true_or_false,
-    "text_content": "VERBATIM text overlayed on screen (titles, captions, subtitles, chyrons, UI text) as it appears, preserving line breaks with \\\\n. Null if no text.",
+    "_section_rule": "EVERY field in this object describes ONLY post-production overlays — pixels added on top of the filmed footage in the edit. Physical objects in the world (a badge welded to a car, a license plate, a logo stitched on a jersey, a label printed on a bottle) NEVER appear in this section regardless of how visible they are. Those go in the top-level physical_brand_marks array.",
+    "has_text_on_screen": "true ONLY if there is post-production text overlayed on the frame (titles, captions, subtitles, chyrons, lower-thirds, supers, legal disclaimers like 'European Model Shown' or 'Professional Driver, Closed Course', URLs, hashtags). License plates, signs in the world, text on physical products, t-shirts, or store fronts visible IN the filmed scene do NOT count — return false in those cases.",
+    "text_content": "VERBATIM post-production text on screen as it appears, preserving line breaks with \\\\n. Include disclaimers and small-print at the bottom of the frame. Null if no overlayed text.",
     "text_role": "One of: 'title', 'tagline', 'caption', 'subtitle', 'lower_third', 'legal_disclaimer', 'url', 'logo_wordmark', 'none'.",
-    "has_logo": true_or_false,
-    "logo_description": "Describe any logos / brand marks visible: brand name if recognisable, position (e.g. 'bottom-right corner', 'center'), size relative to frame. Null if no logo.",
-    "other_graphics": "Any other graphic elements not covered above (animated shapes, lower thirds without text, icons, badges, product shots with overlayed info). Null if none.",
+    "has_logo": "true ONLY if a brand logo was added in post on top of the footage (broadcaster bug, end-card brand mark, animated brand reveal, watermark). A roundel physically welded on a car, a swoosh stitched on clothing, or a logo printed on a product label is NOT a post overlay — return false here and put those in physical_brand_marks instead.",
+    "logo_description": "Describe ONLY post-overlay logos: position (e.g. 'bottom-right corner', 'center'), size relative to frame, animation if any. Null if no overlayed logo. Do NOT describe physical logos here.",
+    "other_graphics": "Any other POST overlays not covered above (animated shapes, motion supers without text, infographic chyrons, kinetic typography, callouts pointing at things in the frame, broadcaster watermarks). Null if none. Physical products / badges / labels go in physical_brand_marks.",
     "bboxes": [
       {
         "box_2d": [ymin, xmin, ymax, xmax],
         "role": "title | tagline | caption | subtitle | lower_third | legal_disclaimer | url | logo_wordmark | logo_symbol | icon | other",
+        "kind": "overlay | physical",
         "label": "Verbatim text inside this box, or a short description for logos/icons. Keep it under 80 chars."
       }
     ],
@@ -113,13 +121,92 @@ Rules:
 - For 'audio', if there's no audio track at all, set the whole object to null.
 - For 'graphics', if the shot has NO text and NO logo and NO overlay graphics, set the whole object to null. Otherwise fill individual sub-fields — don't omit the object just because one sub-field is absent.
 - For 'graphics.bboxes':
-  - Return ONE entry per distinct on-screen graphic element (each caption line, each logo, each icon) using its TIGHTEST bounding box as seen across the clip.
+  - **STRICT RULE: this field is ONLY for graphics that were added in POST-PRODUCTION on top of the filmed footage.** If you imagine the unedited camera footage, these pixels would NOT be there. The inpainting pipeline reads this list to remove overlays and PAINT OVER the boxed pixels — so anything physically present in the world MUST NOT be here, or the optimize pass will destroy real geometry (the car body, the product, the actor).
+  - **MUST INCLUDE** (these are post overlays):
+    - Titles, taglines, captions, subtitles, lower-thirds, supers, chyrons.
+    - Legal disclaimers ("European Model Shown", "Professional Driver, Closed Course", "Features and equipment may vary in Canada", "Drive responsibly", "Closed course on private property", small-print at the bottom of the frame).
+    - URLs / website addresses, hashtags, social handles.
+    - Broadcaster watermarks / channel bugs.
+    - Animated graphics, kinetic typography, motion supers.
+    - End-card logos / brand bugs added in post (NOT a logo painted on the actual product).
+  - **MUST NOT INCLUDE** (these are physical, in-world objects — they belong in the top-level \`physical_brand_marks\` array, NOT here):
+    - Car badges, kidney grilles, manufacturer roundels physically attached to the vehicle.
+    - License plates / number plates / registration plates.
+    - Logos stitched, embossed, printed, or painted onto clothing, equipment, or the product itself.
+    - Product labels on bottles / cans / packaging visible in the shot.
+    - Wordmarks engraved, embossed, or printed on the filmed subject.
+  - **TEST**: ask yourself "if a different production team were filming the same scene, would these pixels be there?" If yes → physical, do NOT put it here. If no (only because someone added it in post) → overlay, put it here.
   - box_2d is [ymin, xmin, ymax, xmax] normalised to 0-1000 on each axis — (0,0) is top-left, (1000,1000) is bottom-right, ymax > ymin, xmax > xmin.
-  - Be GENEROUS on box_2d — include a small padding (2-3% of the frame) around each graphic so letter outlines and anti-aliased edges sit inside. Prefer over-cover to missing pixels.
-  - Include EVERY graphic visible at any point in the clip: overlayed graphics (titles, captions, legal disclaimers, URLs, chyrons, icons) AND **PHYSICAL BRAND MARKS** that are part of the filmed subject (a car badge on a grille, a logo stitched on clothing, a label on a product bottle, a manufacturer mark on a watch face). The physical ones matter because a downstream re-editor wants to know WHERE the brand lives in the frame even if it\'s not an overlay — use role \`logo_symbol\` or \`logo_wordmark\` for these, the same as for overlays.
+  - Be GENEROUS on box_2d — include a small padding (2-3% of the frame) around each overlay so letter outlines and anti-aliased edges sit inside.
+  - Set \`kind: "overlay"\` on every entry (this list is overlays-only by definition; the field is kept for backward compatibility with older consumers).
   - If the same graphic element moves across the shot, return the UNION (the bbox that contains all its positions).
-  - If there are no overlayed graphics AND no physical brand marks at all, set bboxes to [].
+  - If the shot has NO post-production overlays at all, set bboxes to []. A shot with only a physical brand badge and no real overlays MUST return bboxes=[] here, with the badge in physical_brand_marks instead.
+- For 'physical_brand_marks':
+  - List every physical brand mark visible in the shot (badges, embossed logos, stitched marks, license plates, product labels, manufacturer roundels).
+  - These feed proposer / reframe context (where the brand lives in-frame for brand-focused crops) — they NEVER feed the inpaint pipeline.
+  - Use the same coordinate system as graphics.bboxes (ymin, xmin, ymax, xmax normalised 0-1000), with TIGHT bboxes around the mark itself.
+  - Empty array if none.
 - Return the JSON object only.`
+
+// Heuristic flag — does this label / description / role talk about a
+// physical in-world object rather than a post-production overlay? We
+// use this on BOTH the renderer side (sanitising the analyzer's raw
+// response before persisting) and the main side (extractBboxes for
+// the inpaint mask). Centralised so the patterns stay in lockstep.
+function looksLikePhysicalMarkLabel(entry) {
+  if (!entry) return false
+  const fields = [
+    entry.label, entry.role, entry.text_content, entry.logo_description, entry.other_graphics,
+    typeof entry === 'string' ? entry : '',
+  ]
+  const text = fields.filter(Boolean).join(' ').toLowerCase()
+  if (!text.trim()) return false
+  if (text.includes('physical')) return true
+  if (/\b(?:logo|badge|mark|emblem|wordmark|roundel|swoosh|h-mark|monogram)\s+on\s+(?:the|a)\s+\w/.test(text)) return true
+  if (/\bon\s+(?:the|a)\s+(?:hood|grille|grill|bumper|door|fender|wheel|trunk|tailgate|dashboard|steering wheel|shoe|jersey|shirt|cap|helmet|jacket|bag|bottle|can|product)\b/.test(text)) return true
+  if (/\b(?:kidney grille|kidney grill|license plate|number plate|registration plate|grille|grill|nose badge|hood badge|trunk badge)\b/.test(text)) return true
+  if (/\b(?:embossed|engraved|stitched|printed on|painted on|label on)\b/.test(text)) return true
+  return false
+}
+
+// Sanitise the analyzer's `graphics` object so physical brand marks
+// don't poison the optimize/inpaint pipeline regardless of how Gemini
+// drifted from the prompt. Drops physical-looking bboxes from the
+// array and nulls description fields whose text talks about physical
+// objects (so the proposer's shot log doesn't show misleading info
+// either). Returns null when, after sanitising, there's nothing left.
+function sanitizeGraphics(graphics) {
+  if (!graphics || typeof graphics !== 'object') return null
+  const cleaned = { ...graphics }
+  // Free-text fields — drop anything describing a physical mark.
+  const physicalLogo = looksLikePhysicalMarkLabel({ logo_description: cleaned.logo_description })
+  const physicalOther = looksLikePhysicalMarkLabel({ other_graphics: cleaned.other_graphics })
+  if (physicalLogo) {
+    cleaned.logo_description = null
+    cleaned.has_logo = false
+  }
+  if (physicalOther) {
+    cleaned.other_graphics = null
+  }
+  // Bbox arrays — drop physical entries from both possible locations.
+  const filterBoxes = (arr) => {
+    if (!Array.isArray(arr)) return arr
+    return arr.filter((b) => !(b?.kind === 'physical' || looksLikePhysicalMarkLabel(b)))
+  }
+  if (Array.isArray(cleaned.bboxes)) cleaned.bboxes = filterBoxes(cleaned.bboxes)
+  if (cleaned.removal_hint && Array.isArray(cleaned.removal_hint.bboxes)) {
+    cleaned.removal_hint = { ...cleaned.removal_hint, bboxes: filterBoxes(cleaned.removal_hint.bboxes) }
+  }
+  // If nothing meaningful is left in graphics, return null so the UI
+  // hides the section entirely instead of showing an empty card.
+  const hasAnything = cleaned.has_text_on_screen
+    || cleaned.text_content
+    || cleaned.has_logo
+    || cleaned.logo_description
+    || cleaned.other_graphics
+    || (Array.isArray(cleaned.bboxes) && cleaned.bboxes.length > 0)
+  return hasAnything ? cleaned : null
+}
 
 // Stream-copied sub-clips land next to the project under `.reedit/clips`
 // — same convention the EDL → timeline path uses, so ffmpeg's path
@@ -305,9 +392,10 @@ export async function analyzeSceneVideo(scene, {
     audio: parsed.audio ?? null,
     // Normalise graphics.bboxes: Gemini may emit it at the top level of
     // graphics or inside removal_hint depending on how it interprets
-    // the prompt. We keep it wherever it arrived; the main-process
-    // mask picker looks in both spots before falling back to luma/color.
-    graphics: parsed.graphics ?? null,
+    // the prompt. We sanitise the whole object so physical brand marks
+    // (which Gemini still drifts into graphics fields despite the
+    // prompt) don't survive to the optimize/inpaint pipeline.
+    graphics: sanitizeGraphics(parsed.graphics),
     // Hero subject bbox for downstream reframe decisions. REQUIRED per
     // the prompt, but we tolerate null here in case an older analysis
     // pass (pre-schema-update) is still in the project file.
@@ -318,6 +406,28 @@ export async function analyzeSceneVideo(scene, {
     // count. Used by the proposer to land "establish brand" reframes
     // on the actual logo rather than on the parent object.
     brand_mark_bbox: parsed.brand_mark_bbox ?? null,
+    // Array of physical brand marks present in the filmed footage —
+    // badges, embossed logos, license plates, stitched marks, etc.
+    // Strictly informational for the proposer / reframe pipeline; the
+    // optimize/inpaint pass MUST NOT consume these (they're not
+    // post-production overlays).
+    physical_brand_marks: (() => {
+      const declared = Array.isArray(parsed.physical_brand_marks) ? parsed.physical_brand_marks : []
+      // Migrate physical marks that Gemini still emitted inside
+      // graphics.bboxes (despite the prompt) into the correct array.
+      // The optimize pipeline reads graphics.bboxes for the inpaint
+      // mask, and a stray physical bbox there destroys real geometry.
+      const fromGraphics = []
+      const gboxes = Array.isArray(parsed.graphics?.bboxes) ? parsed.graphics.bboxes : []
+      for (const b of gboxes) {
+        if (looksLikePhysicalMarkLabel(b)) {
+          if (Array.isArray(b.box_2d)) {
+            fromGraphics.push({ box_2d: b.box_2d, label: b.label || b.role || '' })
+          }
+        }
+      }
+      return [...declared, ...fromGraphics]
+    })(),
     cut_type: parsed.cut_type || null,
     tempo_cue: parsed.tempo_cue || null,
     clipPath,

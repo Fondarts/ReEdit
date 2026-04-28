@@ -357,6 +357,75 @@ function registerGeneratedAsset(sourceVideo, row, generatedPath) {
 // sit on an audio track under the re-edit. We stamp `reeditStemKind`
 // in settings so `cleanupStaleReeditAssets` wipes old stem assets on
 // re-apply without touching the user's own audio uploads.
+// Look up an additional-asset shot by its synthetic id (the same one
+// the proposer references in `sourceSceneId` when the
+// `useAdditionalAssets` capability is on). Handles two shapes:
+//   1. Multi-shot ad: id matches an entry in `asset.scenes[]`.
+//   2. Single-clip file: id matches the asset itself (no scene split).
+function findAdditionalShot(additionalAssets, id) {
+  if (!id || !additionalAssets) return null
+  const list = additionalAssets.extraFootage || []
+  for (const asset of list) {
+    if (Array.isArray(asset.scenes) && asset.scenes.length > 0) {
+      const scene = asset.scenes.find((s) => s.id === id)
+      if (scene) return { asset, scene, isFullClip: false }
+    } else if (asset.id === id) {
+      return {
+        asset,
+        scene: { id: asset.id, tcIn: 0, tcOut: asset.duration || 0, duration: asset.duration || 0 },
+        isFullClip: true,
+      }
+    }
+  }
+  return null
+}
+
+// Extract (or reuse cached) sub-clip MP4 for an additional shot. Lives
+// alongside the parent file under
+//   <projectDir>/.reedit/additional/extraFootage/<assetId>/clips/<sceneId>.mp4
+async function ensureAdditionalShotClip(parent, scene, projectDir) {
+  if (!parent?.path || !scene || !projectDir) return null
+  const sanitize = (s) => String(s).replace(/[^a-zA-Z0-9._-]/g, '_').slice(0, 80)
+  const outputPath = `${projectDir.replace(/\\/g, '/')}/.reedit/additional/extraFootage/${sanitize(parent.id)}/clips/${sanitize(scene.id)}.mp4`
+  const res = await window.electronAPI?.extractSceneClip?.({
+    videoPath: parent.path,
+    tcIn: Number(scene.tcIn) || 0,
+    tcOut: Number(scene.tcOut) || ((Number(scene.tcIn) || 0) + 0.5),
+    outputPath,
+  })
+  if (!res?.success) throw new Error(res?.error || `Could not extract additional shot ${scene.id}.`)
+  return res.path || outputPath
+}
+
+// Register an additional-asset shot as a timeline asset. Same shape as
+// `registerSceneAsset` so the placer can drop it onto the video track
+// uniformly. Stamped with `reeditAdditionalSceneId` so the cleanup
+// pass on next Apply removes it just like the source scenes.
+function registerAdditionalShotAsset(sourceVideo, parent, scene, clipPath, durationSec) {
+  const assetsStore = useAssetsStore.getState()
+  const niceName = parent.scenes?.length > 0
+    ? `${parent.name} · shot ${String(scene.id).replace(/^.*-scene-/, '')}`
+    : parent.name
+  return assetsStore.addAsset({
+    name: `Add: ${niceName}`,
+    url: toFileUrl(clipPath),
+    path: clipPath,
+    absolutePath: clipPath,
+    type: 'video',
+    duration: durationSec,
+    width: parent.width || sourceVideo?.width || null,
+    height: parent.height || sourceVideo?.height || null,
+    fps: parent.fps || sourceVideo?.fps || null,
+    isImported: true,
+    settings: {
+      duration: durationSec,
+      reeditAdditionalAssetId: parent.id,
+      reeditAdditionalSceneId: scene.id,
+      reeditSourceVideoPath: parent.path,
+    },
+  })
+}
+
 function registerStemAsset(sourceVideo, stemPath, kind, durationSec) {
   const assetsStore = useAssetsStore.getState()
   const labels = { music: 'Music (original stem)', vo: 'VO (original stem)' }
@@ -365,9 +434,11 @@ function registerStemAsset(sourceVideo, stemPath, kind, durationSec) {
   const niceName = labels[kind] || (
     kind === 'vo-gen-combined'
       ? 'VO (new, generated)'
-      : (typeof kind === 'string' && kind.startsWith('vo-gen-'))
-        ? `VO (new) · ${kind.slice('vo-gen-'.length)}`
-        : `Stem (${kind})`
+      : kind === 'music-gen'
+        ? 'Music (new, generated)'
+        : (typeof kind === 'string' && kind.startsWith('vo-gen-'))
+          ? `VO (new) · ${kind.slice('vo-gen-'.length)}`
+          : `Stem (${kind})`
   )
   return assetsStore.addAsset({
     name: niceName,
@@ -428,6 +499,7 @@ function cleanupStaleReeditAssets() {
     || a?.settings?.reeditFrameCandidate
     || a?.settings?.reeditGeneratedRowIndex != null
     || a?.settings?.reeditStemKind
+    || a?.settings?.reeditAdditionalSceneId
   ))
   for (const asset of stale) {
     try { assetsStore.removeAsset(asset.id) } catch (_) { /* ignore */ }
@@ -636,6 +708,16 @@ export async function applyEdlToTimeline({
   // synthesis is done, we lay each synth WAV on the audio track instead
   // of trimming the original demucs stem.
   generatedVoiceover = null,
+  // Generated music draft (capability `generateMusic`). Shape:
+  //   { id, tags, durationSec, synthesis: { audioPath, durationSec, status } }
+  // When provided + synthesised, the placer drops the single MP3 onto
+  // a dedicated audio track at t=0.
+  generatedMusic = null,
+  // Additional-material catalogue. Consumed when an EDL row has a
+  // `sourceSceneId` starting with `add-` (the proposer pulled an
+  // imported shot in instead of a source-ad shot). Required when the
+  // `useAdditionalAssets` capability is on; ignored otherwise.
+  additionalAssets = null,
 } = {}) {
   if (!Array.isArray(edl) || edl.length === 0) {
     throw new Error('EDL is empty.')
@@ -679,6 +761,7 @@ export async function applyEdlToTimeline({
         || a?.settings?.reeditFrameCandidate
         || a?.settings?.reeditGeneratedRowIndex != null
         || a?.settings?.reeditStemKind
+        || a?.settings?.reeditAdditionalSceneId
       ))
       .map((a) => a.id)
   )
@@ -808,6 +891,40 @@ export async function applyEdlToTimeline({
       placeholdersPlaced++
       continue
     }
+    // Additional-asset row: the proposer pulled a shot from imported
+    // extra footage. Resolve via the additionalAssets catalogue,
+    // extract a sub-clip on the fly (cached after the first run), and
+    // place on the timeline as a regular video clip.
+    if (row.sourceSceneId && String(row.sourceSceneId).startsWith('add-') && capabilities?.useAdditionalAssets) {
+      const found = findAdditionalShot(additionalAssets, row.sourceSceneId)
+      if (!found) {
+        skippedMissingScene++
+        continue
+      }
+      let clipPath
+      try {
+        clipPath = await ensureAdditionalShotClip(found.asset, found.scene, projectDir)
+      } catch (err) {
+        console.warn('[reedit] additional shot extract failed:', err)
+        skippedMissingScene++
+        continue
+      }
+      const dur = Math.max(0.1, Number(found.scene.duration) || (Number(found.scene.tcOut) - Number(found.scene.tcIn)))
+      const asset = registerAdditionalShotAsset(sourceVideo, found.asset, found.scene, clipPath, dur)
+      const newClip = timelineStore.addClip(videoTrack.id, asset, cursor, null, {
+        duration: dur,
+        trimStart: 0,
+        trimEnd: dur,
+        saveHistory: false,
+        selectAfterAdd: false,
+      })
+      if (newClip?.id && row.colorAdjustments) {
+        timelineStore.updateClipAdjustments(newClip.id, row.colorAdjustments, false)
+      }
+      cursor += dur
+      placed++
+      continue
+    }
     const scene = sceneById.get(row.sourceSceneId)
     if (!scene) {
       skippedMissingScene++
@@ -910,8 +1027,35 @@ export async function applyEdlToTimeline({
 
   const stemsPlaced = []
 
-  // Music: single continuous clip.
-  if (stems && capabilities?.useOriginalMusic && stems.musicPath) {
+  // Music branch A: NEW generated music (capability `generateMusic`).
+  // The selected synth draft has a single MP3 the placer drops as one
+  // clip on its own audio track. Mutually exclusive with the original
+  // music stem branch below — capability flags are wired to be
+  // mutually exclusive in the UI, but we double-gate here so even if
+  // both flags are somehow on, the generated track wins.
+  const useGeneratedMusic = Boolean(
+    capabilities?.generateMusic
+    && generatedMusic
+    && generatedMusic.synthesis?.status === 'done'
+    && generatedMusic.synthesis?.audioPath
+  )
+  if (useGeneratedMusic) {
+    const synth = generatedMusic.synthesis
+    const naturalDur = Number(synth.durationSec) || generatedMusic.durationSec || totalReeditDur
+    const clipDur = Math.max(0.1, Math.min(totalReeditDur, naturalDur))
+    const track = takeAudioTrack()
+    const asset = registerStemAsset(sourceVideo, synth.audioPath, 'music-gen', naturalDur)
+    useTimelineStore.getState().addClip(track.id, asset, 0, null, {
+      duration: clipDur,
+      trimStart: 0,
+      trimEnd: clipDur,
+      saveHistory: false,
+      selectAfterAdd: false,
+    })
+    stemsPlaced.push('music-generated')
+  }
+  // Music branch B: ORIGINAL music stem (single continuous clip).
+  else if (stems && capabilities?.useOriginalMusic && stems.musicPath) {
     const clipDur = Math.max(0.1, Math.min(totalReeditDur, stemNaturalDur))
     const track = takeAudioTrack()
     const asset = registerStemAsset(sourceVideo, stems.musicPath, 'music', stemNaturalDur)

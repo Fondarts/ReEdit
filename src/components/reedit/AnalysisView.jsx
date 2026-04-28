@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from 'react'
-import { FileText, Loader2, AlertCircle, PlayCircle, RotateCcw, Sparkles, StopCircle, Eye, EyeOff, Cpu, KeyRound, Wand2, CheckCircle2, RefreshCw, Lightbulb } from 'lucide-react'
+import { FileText, Loader2, AlertCircle, PlayCircle, RotateCcw, Sparkles, StopCircle, Eye, EyeOff, Cpu, KeyRound, Wand2, CheckCircle2, RefreshCw, Lightbulb, ExternalLink, Trash2 } from 'lucide-react'
 import useProjectStore from '../../stores/projectStore'
 import { captionScenes, pickVisionModelId, analyzeOverallAd } from '../../services/reeditCaptioner'
 import { resolveActiveClipPath } from '../../services/reeditVideoAnalyzer'
@@ -220,6 +220,10 @@ function AnalysisView() {
   const sourceVideo = currentProject?.sourceVideo
   const analysis = currentProject?.analysis
   const scenes = analysis?.scenes || []
+  // Sub-tab inside the Analysis workspace: 'source' (the source-video
+  // shot log + caption controls — the original view) vs 'additional'
+  // (auxiliary material the user dropped in Import).
+  const [section, setSection] = useState('source')
 
   // Hovered scene state for the fixed-position preview overlay. We
   // track the cursor-anchored rect so the preview can dodge off
@@ -814,7 +818,49 @@ function AnalysisView() {
         </div>
       )}
 
-      {/* Body */}
+      {/* Sub-tabs (Source video / Additional assets) */}
+      {(() => {
+        const additional = currentProject?.additionalAssets || {}
+        const additionalCount = ['extraFootage', 'graphics', 'music', 'voiceover'].reduce(
+          (n, k) => n + (Array.isArray(additional[k]) ? additional[k].length : 0),
+          0,
+        )
+        return (
+          <div className="flex-shrink-0 flex items-center gap-1 px-6 pt-3 pb-3 border-b border-sf-dark-800">
+            <button
+              type="button"
+              onClick={() => setSection('source')}
+              className={`inline-flex items-center gap-1.5 px-3 py-1.5 rounded-md text-xs border transition-colors
+                ${section === 'source'
+                  ? 'border-sf-accent bg-sf-accent/10 text-sf-text-primary'
+                  : 'border-sf-dark-700 bg-sf-dark-900 hover:border-sf-dark-500 text-sf-text-muted hover:text-sf-text-primary'}`}
+            >
+              <FileText className="w-3.5 h-3.5" />
+              Source video
+              <span className={`ml-1 text-[10px] ${section === 'source' ? 'text-sf-text-secondary' : 'text-sf-text-muted/70'}`}>
+                {scenes.length} shot{scenes.length === 1 ? '' : 's'}
+              </span>
+            </button>
+            <button
+              type="button"
+              onClick={() => setSection('additional')}
+              className={`inline-flex items-center gap-1.5 px-3 py-1.5 rounded-md text-xs border transition-colors
+                ${section === 'additional'
+                  ? 'border-sf-accent bg-sf-accent/10 text-sf-text-primary'
+                  : 'border-sf-dark-700 bg-sf-dark-900 hover:border-sf-dark-500 text-sf-text-muted hover:text-sf-text-primary'}`}
+            >
+              <Sparkles className="w-3.5 h-3.5" />
+              Additional assets
+              <span className={`ml-1 text-[10px] ${section === 'additional' ? 'text-sf-text-secondary' : 'text-sf-text-muted/70'}`}>
+                {additionalCount} item{additionalCount === 1 ? '' : 's'}
+              </span>
+            </button>
+          </div>
+        )
+      })()}
+
+      {/* Body — Source-video branch (current shot log) */}
+      {section === 'source' && (
       <div className="flex-1 overflow-auto">
         {scenes.length === 0 && !running && !error && (
           <div className="h-full flex items-center justify-center text-sm text-sf-text-muted">
@@ -949,6 +995,12 @@ function AnalysisView() {
           </table>
         )}
       </div>
+      )}
+
+      {/* Body — Additional-assets branch (auxiliary material) */}
+      {section === 'additional' && (
+        <AdditionalAssetsTab onNavigate={() => { /* future — navigate to import */ }} />
+      )}
 
       {/* Hover preview — fixed-positioned so it escapes the scrollable
           table. Positioned to the right of the thumb by default, but
@@ -1000,6 +1052,444 @@ function AnalysisView() {
           setLlmModalOpen(false)
         }}
       />
+    </div>
+  )
+}
+
+// Browse the imported additional material (extra footage / graphics
+// / music / voiceover). Per-shot Analyze runs Gemini on each detected
+// scene, persisting `videoAnalysis` + `caption` next to the scene
+// metadata so the proposer can later pick from analysed shots when
+// the `useAdditionalAssets` capability is on.
+function AdditionalAssetsTab() {
+  const currentProject = useProjectStore((s) => s.currentProject)
+  const currentProjectHandle = useProjectStore((s) => s.currentProjectHandle)
+  const saveProject = useProjectStore((s) => s.saveProject)
+  const additional = currentProject?.additionalAssets || {}
+  const projectDir = typeof currentProjectHandle === 'string' ? currentProjectHandle : null
+
+  // Per-scene analyze state: { [sceneId]: { running, error } }. Local
+  // — survives the panel staying mounted but doesn't persist (the
+  // resulting videoAnalysis IS persisted on the scene).
+  const [analyzeState, setAnalyzeState] = useState({})
+
+  const handleDelete = async (categoryId, asset) => {
+    if (!asset?.id) return
+    try { await window.electronAPI?.deleteAdditionalAsset?.({ assetPath: asset.path }) } catch (_) { /* noop */ }
+    const latest = useProjectStore.getState().currentProject
+    const existing = latest?.additionalAssets || {}
+    const next = {
+      ...existing,
+      [categoryId]: (existing[categoryId] || []).filter((a) => a.id !== asset.id),
+    }
+    await saveProject({ additionalAssets: next })
+  }
+
+  // Persist a videoAnalysis result back onto a specific scene of a
+  // specific extraFootage asset. Keeps everything else immutable.
+  const persistSceneAnalysis = async (assetId, sceneId, patch) => {
+    const latest = useProjectStore.getState().currentProject
+    const existing = latest?.additionalAssets || {}
+    const list = existing.extraFootage || []
+    const next = list.map((a) => {
+      if (a.id !== assetId) return a
+      const scenes = (a.scenes || []).map((s) => s.id === sceneId ? { ...s, ...patch } : s)
+      return { ...a, scenes }
+    })
+    await saveProject({
+      additionalAssets: { ...existing, extraFootage: next },
+    })
+  }
+
+  const handleAnalyzeScene = async (asset, scene) => {
+    if (!projectDir || !asset?.path || !scene?.id) return
+    if (analyzeState[scene.id]?.running) return
+    setAnalyzeState((prev) => ({ ...prev, [scene.id]: { running: true, error: null } }))
+    try {
+      const { analyzeSceneVideo } = await import('../../services/reeditVideoAnalyzer')
+      const result = await analyzeSceneVideo(
+        { id: scene.id, tcIn: scene.tcIn, tcOut: scene.tcOut },
+        { sourceVideoPath: asset.path, projectDir },
+      )
+      // Derive a short caption from the visual field (or first sentence
+      // of it) — keeps the card readable without forcing the user into
+      // the structured payload.
+      const caption = (typeof result.visual === 'string' && result.visual.trim())
+        ? result.visual.trim().split(/[.!?](?:\s|$)/)[0].trim().slice(0, 200)
+        : ''
+      await persistSceneAnalysis(asset.id, scene.id, {
+        videoAnalysis: result,
+        caption,
+        analyzedAt: new Date().toISOString(),
+      })
+      setAnalyzeState((prev) => ({ ...prev, [scene.id]: { running: false, error: null } }))
+    } catch (err) {
+      console.error('[reedit] analyze additional shot failed:', err)
+      setAnalyzeState((prev) => ({ ...prev, [scene.id]: { running: false, error: err?.message || String(err) } }))
+    }
+  }
+
+  const handleAnalyzeAllInAsset = async (asset) => {
+    const scenes = Array.isArray(asset?.scenes) ? asset.scenes : []
+    for (const scene of scenes) {
+      if (scene.videoAnalysis) continue // skip already-analysed
+      // eslint-disable-next-line no-await-in-loop
+      await handleAnalyzeScene(asset, scene)
+    }
+  }
+
+  // Analyse a single-clip extraFootage asset (no scene split — the
+  // whole file is treated as one shot). Stores `videoAnalysis` +
+  // `caption` directly on the asset entry rather than on a scene.
+  const handleAnalyzeAsset = async (asset) => {
+    if (!projectDir || !asset?.path || !asset?.id) return
+    if (analyzeState[asset.id]?.running) return
+    setAnalyzeState((prev) => ({ ...prev, [asset.id]: { running: true, error: null } }))
+    try {
+      const { analyzeSceneVideo } = await import('../../services/reeditVideoAnalyzer')
+      // Synthesise a scene shape spanning the whole file. The analyser's
+      // ensureSceneClip will extract a clip cached by the asset id.
+      const result = await analyzeSceneVideo(
+        { id: asset.id, tcIn: 0, tcOut: Number(asset.duration) || 0 },
+        { sourceVideoPath: asset.path, projectDir },
+      )
+      const caption = (typeof result.visual === 'string' && result.visual.trim())
+        ? result.visual.trim().split(/[.!?](?:\s|$)/)[0].trim().slice(0, 200)
+        : ''
+      const latest = useProjectStore.getState().currentProject
+      const existing = latest?.additionalAssets || {}
+      const list = existing.extraFootage || []
+      const next = list.map((a) => a.id === asset.id
+        ? { ...a, videoAnalysis: result, caption, analyzedAt: new Date().toISOString() }
+        : a)
+      await saveProject({
+        additionalAssets: { ...existing, extraFootage: next },
+      })
+      setAnalyzeState((prev) => ({ ...prev, [asset.id]: { running: false, error: null } }))
+    } catch (err) {
+      console.error('[reedit] analyze asset failed:', err)
+      setAnalyzeState((prev) => ({ ...prev, [asset.id]: { running: false, error: err?.message || String(err) } }))
+    }
+  }
+
+  const sections = [
+    { id: 'extraFootage', label: 'Extra footage', kind: 'video' },
+    { id: 'graphics',     label: 'Graphics',      kind: 'image' },
+    { id: 'music',        label: 'Music',         kind: 'audio' },
+    { id: 'voiceover',    label: 'Voiceover',     kind: 'audio' },
+  ]
+  const totalItems = sections.reduce((n, s) => n + (additional[s.id]?.length || 0), 0)
+
+  if (totalItems === 0) {
+    return (
+      <div className="flex-1 flex items-center justify-center px-6 py-10">
+        <div className="rounded-lg border border-dashed border-sf-dark-700 bg-sf-dark-900/40 p-6 max-w-md text-center">
+          <Sparkles className="w-6 h-6 text-sf-text-muted mx-auto mb-3" />
+          <h3 className="text-sm font-medium text-sf-text-primary mb-1">No additional material yet</h3>
+          <p className="text-xs text-sf-text-muted leading-relaxed">
+            Drop extra footage, graphics, music, or VO files in the <span className="text-sf-text-secondary">Import</span> tab. They'll show up here so you can analyse them and pull them into the proposal.
+          </p>
+        </div>
+      </div>
+    )
+  }
+
+  return (
+    <div className="flex-1 overflow-auto px-6 py-6 space-y-6">
+      {sections.map((sect) => {
+        const items = additional[sect.id] || []
+        if (items.length === 0) return null
+
+        // Extra footage flattens scenes: an ad split into N shots
+        // renders as N cards (one per detected scene); a loose clip
+        // stays as a single card. Other categories stay 1:1 with
+        // their imported file.
+        const cards = []
+        for (const asset of items) {
+          if (sect.id === 'extraFootage' && Array.isArray(asset.scenes) && asset.scenes.length > 0) {
+            asset.scenes.forEach((scene, idx) => cards.push({
+              parent: asset,
+              scene,
+              sceneIndex: idx + 1,
+              kind: 'video',
+              key: scene.id,
+            }))
+          } else {
+            cards.push({ parent: asset, scene: null, sceneIndex: 0, kind: sect.kind, key: asset.id })
+          }
+        }
+
+        // Asset-level "Analyze remaining" — for extraFootage with at
+        // least one shot still pending Gemini analysis. Covers both
+        // multi-shot ads (any scene without videoAnalysis) and loose
+        // single clips (asset itself without videoAnalysis).
+        const assetsWithUnanalysed = sect.id === 'extraFootage'
+          ? items.filter((a) => {
+              if (Array.isArray(a.scenes) && a.scenes.length > 0) {
+                return a.scenes.some((s) => !s.videoAnalysis)
+              }
+              return !a.videoAnalysis
+            })
+          : []
+
+        return (
+          <section key={sect.id}>
+            <header className="flex items-center gap-2 mb-2">
+              <h3 className="text-sm font-semibold text-sf-text-primary">{sect.label}</h3>
+              <span className="text-[10px] text-sf-text-muted">
+                {items.length} file{items.length === 1 ? '' : 's'}
+                {cards.length !== items.length && ` · ${cards.length} shot${cards.length === 1 ? '' : 's'}`}
+              </span>
+              {assetsWithUnanalysed.length > 0 && (
+                <button
+                  type="button"
+                  onClick={() => {
+                    for (const a of assetsWithUnanalysed) {
+                      if (Array.isArray(a.scenes) && a.scenes.length > 0) {
+                        handleAnalyzeAllInAsset(a)
+                      } else if (!a.videoAnalysis) {
+                        handleAnalyzeAsset(a)
+                      }
+                    }
+                  }}
+                  className="ml-auto inline-flex items-center gap-1 text-[11px] px-2 py-0.5 rounded border border-sf-accent/40 bg-sf-accent/10 text-sf-accent hover:bg-sf-accent/20"
+                  title="Run Gemini analysis on every shot still missing one"
+                >
+                  <Sparkles className="w-3 h-3" />
+                  Analyze remaining
+                </button>
+              )}
+            </header>
+            <div className={`grid gap-3 ${sect.kind === 'audio' ? 'grid-cols-1 md:grid-cols-2' : 'grid-cols-2 md:grid-cols-3 lg:grid-cols-4'}`}>
+              {cards.map((card) => {
+                // Resolve analyze wiring: scene cards talk to scene
+                // entries; non-scene extraFootage cards (loose shots,
+                // no scene split) analyse the whole asset.
+                const isExtraFootage = sect.id === 'extraFootage'
+                const stateKey = card.scene?.id || card.parent.id
+                const onAnalyze = card.scene
+                  ? () => handleAnalyzeScene(card.parent, card.scene)
+                  : (isExtraFootage ? () => handleAnalyzeAsset(card.parent) : null)
+                return (
+                  <AdditionalAssetCard
+                    key={card.key}
+                    asset={card.parent}
+                    scene={card.scene}
+                    sceneIndex={card.sceneIndex}
+                    kind={card.kind}
+                    onDelete={() => handleDelete(sect.id, card.parent)}
+                    onAnalyze={onAnalyze}
+                    analyzing={Boolean(analyzeState[stateKey]?.running)}
+                    analyzeError={analyzeState[stateKey]?.error}
+                  />
+                )
+              })}
+            </div>
+          </section>
+        )
+      })}
+    </div>
+  )
+}
+
+function AdditionalAssetCard({ asset, scene, sceneIndex, kind, onDelete, onAnalyze, analyzing, analyzeError }) {
+  const videoRef = useRef(null)
+  const [hovering, setHovering] = useState(false)
+  const url = asset.path ? `comfystudio://${encodeURIComponent(asset.path)}` : null
+  const thumbUrl = scene?.thumbnail
+    ? `comfystudio://${encodeURIComponent(scene.thumbnail)}?v=${asset.importedAt || ''}`
+    : null
+  const isScene = Boolean(scene)
+
+  // Hover-to-play behaviour for scene cards: seek into the scene's
+  // window and pause at scene end. The same handler also drives the
+  // single-clip case when there's no scene split.
+  useEffect(() => {
+    const v = videoRef.current
+    if (!v || kind !== 'video') return
+    if (hovering) {
+      try { v.currentTime = isScene ? Math.max(0, scene.tcIn) : 0 } catch (_) { /* noop */ }
+      v.play().catch(() => { /* autoplay may reject */ })
+    } else {
+      v.pause()
+      try { v.currentTime = isScene ? Math.max(0, scene.tcIn) : 0 } catch (_) { /* noop */ }
+    }
+  }, [hovering, isScene, scene, kind])
+
+  // Stop playback when the cursor leaves OR the playhead crosses tcOut.
+  useEffect(() => {
+    if (!isScene || !hovering) return
+    const v = videoRef.current
+    if (!v) return
+    const onTime = () => {
+      if (v.currentTime >= scene.tcOut) {
+        try { v.currentTime = scene.tcIn } catch (_) { /* noop */ }
+        v.play().catch(() => { /* noop */ })
+      }
+    }
+    v.addEventListener('timeupdate', onTime)
+    return () => v.removeEventListener('timeupdate', onTime)
+  }, [hovering, isScene, scene])
+
+  const detection = !isScene && asset.detectionStatus
+  const detectionRunning = detection === 'running'
+  const detectionFailed = detection === 'failed'
+
+  const aspectStyle = asset.width && asset.height
+    ? { aspectRatio: `${asset.width} / ${asset.height}` }
+    : { aspectRatio: kind === 'image' ? '4 / 3' : '16 / 9' }
+
+  return (
+    <div className="rounded-lg border border-sf-dark-700 bg-sf-dark-900 overflow-hidden flex flex-col">
+      {kind === 'video' && url && (
+        <div
+          className="relative bg-black"
+          style={aspectStyle}
+          onMouseEnter={() => setHovering(true)}
+          onMouseLeave={() => setHovering(false)}
+        >
+          <video
+            ref={videoRef}
+            src={url}
+            poster={thumbUrl || undefined}
+            muted
+            playsInline
+            preload="metadata"
+            className="w-full h-full object-cover"
+          />
+          {isScene && (
+            <div className="absolute top-1.5 left-1.5 px-1.5 py-0.5 rounded bg-black/70 text-[10px] font-mono text-sf-text-secondary">
+              shot {String(sceneIndex).padStart(2, '0')}
+            </div>
+          )}
+          {detectionRunning && (
+            <div className="absolute inset-0 bg-black/60 flex items-center justify-center text-[11px] text-sf-accent">
+              <Loader2 className="w-3.5 h-3.5 animate-spin mr-1.5" />
+              Detecting shots…
+            </div>
+          )}
+        </div>
+      )}
+      {kind === 'image' && url && (
+        <img
+          src={url}
+          alt={asset.name}
+          className="w-full h-auto bg-sf-dark-950"
+          style={aspectStyle}
+        />
+      )}
+      {kind === 'audio' && url && (
+        <div className="p-3 bg-sf-dark-950">
+          <audio src={url} controls preload="metadata" className="w-full h-8" />
+        </div>
+      )}
+      <div className="p-2 flex items-center gap-1.5">
+        <div className="flex-1 min-w-0">
+          <div className="text-[12px] text-sf-text-primary truncate" title={asset.path}>
+            {isScene
+              ? `${asset.name} · shot ${sceneIndex}`
+              : asset.name}
+          </div>
+          <div className="text-[10px] text-sf-text-muted">
+            {isScene
+              ? `${scene.duration.toFixed(1)}s · ${scene.tcIn.toFixed(1)}–${scene.tcOut.toFixed(1)}s`
+              : (
+                <>
+                  {asset.duration ? `${asset.duration.toFixed(1)}s` : ''}
+                  {asset.width && asset.height ? ` · ${asset.width}×${asset.height}` : ''}
+                  {asset.fps ? ` · ${asset.fps.toFixed?.(1) ?? asset.fps} fps` : ''}
+                </>
+              )}
+            {detectionFailed && (
+              <span className="ml-1 text-amber-300" title={asset.detectionError || ''}>· detection failed</span>
+            )}
+          </div>
+        </div>
+        <button
+          type="button"
+          onClick={() => window.electronAPI?.showItemInFolder?.(asset.path)}
+          className="p-1 rounded text-sf-text-muted hover:text-sf-accent"
+          title="Reveal in file manager"
+        >
+          <ExternalLink className="w-3 h-3" />
+        </button>
+        {/* Delete only appears on the non-scene card so the user can't
+            accidentally remove the whole imported file by clicking on
+            a single detected shot. */}
+        {!isScene && (
+          <button
+            type="button"
+            onClick={onDelete}
+            className="p-1 rounded text-sf-text-muted hover:text-red-300"
+            title="Remove from project"
+          >
+            <Trash2 className="w-3 h-3" />
+          </button>
+        )}
+      </div>
+
+      {/* Analysis state row. Renders for scene cards AND for
+          single-clip extra-footage cards (loose shots have no scene
+          split — we analyse the whole asset). One of three states:
+          unanalyzed → "Analyze" button; running → spinner;
+          analyzed → caption snippet + a tiny re-analyze button. */}
+      {(() => {
+        const analysed = scene ? scene.videoAnalysis : (kind === 'video' ? asset.videoAnalysis : null)
+        const caption = scene ? scene.caption : (kind === 'video' ? asset.caption : null)
+        // Show the panel only when there's an onAnalyze handler — the
+        // parent decides which card kinds get the Analyze affordance.
+        if (!onAnalyze && !analysed) return null
+        return (
+          <div className="px-2 pb-2">
+            {analysed ? (
+              <div className="rounded border border-emerald-500/20 bg-emerald-500/5 px-2 py-1.5">
+                <div className="flex items-center gap-1.5 mb-1">
+                  <CheckCircle2 className="w-3 h-3 text-emerald-300 shrink-0" />
+                  <span className="text-[10px] uppercase tracking-wider text-emerald-300/90 font-medium">Analysed</span>
+                  {onAnalyze && (
+                    <button
+                      type="button"
+                      onClick={onAnalyze}
+                      disabled={analyzing}
+                      className="ml-auto p-0.5 rounded text-emerald-300/70 hover:text-emerald-200 disabled:opacity-50"
+                      title="Re-analyze (overwrites current caption)"
+                    >
+                      {analyzing ? <Loader2 className="w-3 h-3 animate-spin" /> : <RotateCcw className="w-3 h-3" />}
+                    </button>
+                  )}
+                </div>
+                {caption && (
+                  <div className="text-[10px] leading-snug text-sf-text-secondary line-clamp-3" title={caption}>
+                    {caption}
+                  </div>
+                )}
+              </div>
+            ) : analyzing ? (
+              <div className="rounded border border-sf-accent/30 bg-sf-accent/5 px-2 py-1.5 flex items-center gap-1.5 text-[11px] text-sf-accent">
+                <Loader2 className="w-3 h-3 animate-spin" />
+                Analysing with Gemini…
+              </div>
+            ) : (
+              <button
+                type="button"
+                onClick={onAnalyze}
+                disabled={!onAnalyze}
+                className="w-full inline-flex items-center justify-center gap-1 px-2 py-1 rounded border border-sf-dark-700 bg-sf-dark-950 hover:border-sf-accent/40 hover:bg-sf-accent/5 text-[11px] text-sf-text-secondary hover:text-sf-text-primary"
+                title="Send this shot to Gemini for caption + cinematography read"
+              >
+                <Sparkles className="w-3 h-3" />
+                Analyze
+              </button>
+            )}
+            {analyzeError && (
+              <div className="mt-1 flex items-start gap-1 text-[10px] text-amber-300 leading-snug">
+                <AlertCircle className="w-3 h-3 mt-0.5 shrink-0" />
+                <span>{analyzeError}</span>
+              </div>
+            )}
+          </div>
+        )
+      })()}
     </div>
   )
 }

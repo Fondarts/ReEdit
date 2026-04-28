@@ -420,13 +420,6 @@ function ProposalView({ onNavigate }) {
     setError(null)
     setGenState({})
     setHover(null)
-    // VO drafts hang off the project, not the proposal — reload them
-    // when the project changes so opening a different project doesn't
-    // leak the previous one's drafts into this session.
-    setVoiceoverDrafts(Array.isArray(currentProject?.voiceoverDrafts?.drafts)
-      ? currentProject.voiceoverDrafts.drafts
-      : [])
-    setSelectedVoiceoverDraftId(currentProject?.voiceoverDrafts?.selectedId || null)
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [projectIdentity])
 
@@ -502,27 +495,18 @@ function ProposalView({ onNavigate }) {
   // draft holds segments + future synthesis state. Persisted on the
   // project so re-opening the project preserves every take the user
   // generated, plus the radio selection that drives the proposer.
-  const [voiceoverDrafts, setVoiceoverDrafts] = useState(() => Array.isArray(currentProject?.voiceoverDrafts?.drafts)
+  // Read voiceoverDrafts straight from currentProject so edits made in
+  // OptimizationView (which is where the user authors / synthesises
+  // them) propagate immediately. Storing them as local state here was
+  // the original design, but the local state only re-synced when
+  // `projectIdentity` (sourceVideo path + proposal createdAt) changed
+  // — so drafts created on the same project after mount were invisible
+  // to ProposalView and the proposer thought "no draft selected" even
+  // when one was synthesised and active in Optimization.
+  const voiceoverDrafts = Array.isArray(currentProject?.voiceoverDrafts?.drafts)
     ? currentProject.voiceoverDrafts.drafts
-    : [])
-  const [selectedVoiceoverDraftId, setSelectedVoiceoverDraftId] = useState(() => currentProject?.voiceoverDrafts?.selectedId || null)
-  // Save drafts on every meaningful change. saveProject merges shallowly
-  // so we always pass the full bag — drafts + selectedId together.
-  const persistVoiceoverDrafts = (nextDrafts, nextSelectedId) => {
-    setVoiceoverDrafts(nextDrafts)
-    saveProject({
-      voiceoverDrafts: {
-        drafts: nextDrafts,
-        selectedId: nextSelectedId !== undefined ? nextSelectedId : selectedVoiceoverDraftId,
-      },
-    })
-  }
-  const persistSelectedVoiceoverDraftId = (id) => {
-    setSelectedVoiceoverDraftId(id)
-    saveProject({
-      voiceoverDrafts: { drafts: voiceoverDrafts, selectedId: id },
-    })
-  }
+    : []
+  const selectedVoiceoverDraftId = currentProject?.voiceoverDrafts?.selectedId || null
 
   // Capability flags — global (localStorage), default all false per
   // the design conversation. Kept in local state so toggling repaints
@@ -613,6 +597,13 @@ function ProposalView({ onNavigate }) {
           if (!sel || sel.synthesis?.status !== 'done') return null
           return { segments: sel.segments, synthesis: sel.synthesis }
         })(),
+        // Additional analysed footage (extra clips / other ads to recut).
+        // Only sent when the capability is on; the proposer renders an
+        // "Alternative footage available" block in the prompt that the
+        // LLM can pull from for individual EDL rows.
+        additionalAssets: capabilities?.useAdditionalAssets
+          ? (currentProject?.additionalAssets || null)
+          : null,
       })
       setDraft(proposal)
     } catch (err) {
@@ -776,6 +767,20 @@ function ProposalView({ onNavigate }) {
         voiceoverSegments: currentProject?.analysis?.overall?.voiceover_segments || null,
         voiceoverPlan: effectiveVoPlan,
         generatedVoiceover,
+        // Selected synthesised music draft (gated by capability +
+        // synthesis status inside the placer).
+        generatedMusic: (() => {
+          if (!capabilities?.generateMusic) return null
+          const drafts = Array.isArray(currentProject?.musicDrafts?.drafts) ? currentProject.musicDrafts.drafts : []
+          const id = currentProject?.musicDrafts?.selectedId || null
+          const sel = id ? drafts.find((d) => d.id === id) : null
+          if (!sel || sel.synthesis?.status !== 'done') return null
+          return sel
+        })(),
+        // Catalogue of imported extras (only consumed when EDL rows
+        // reference an `add-` shot id). Always passed — the placer
+        // gates internally on the capability flag.
+        additionalAssets: currentProject?.additionalAssets || null,
         onProgress: ({ index, total }) => {
           setApplyProgress({ current: index, total })
         },

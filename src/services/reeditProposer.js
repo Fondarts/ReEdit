@@ -284,6 +284,57 @@ function renderShotLog(scenes) {
   return blocks.join('\n\n---\n\n')
 }
 
+// Render the analysed shots from `additionalAssets.extraFootage` as a
+// secondary shot log the proposer is allowed to pull from. Each scene
+// gets a synthetic `id` (the same one persisted on the additional
+// asset's scene entry, prefixed with `add-`) so the EDL can reference
+// it directly. We only include scenes that have a `videoAnalysis` —
+// un-analyzed shots have nothing useful to show the LLM.
+function renderAdditionalShotLog(additionalAssets) {
+  const extraFootage = additionalAssets?.extraFootage || []
+  if (!Array.isArray(extraFootage) || extraFootage.length === 0) return ''
+  const blocks = []
+  for (const asset of extraFootage) {
+    const scenes = Array.isArray(asset?.scenes) ? asset.scenes : []
+    // Single-clip files (no scene split) still get treated as a single
+    // shot when analysed: synthesise a virtual scene entry the same
+    // way the apply path does.
+    const effectiveScenes = scenes.length > 0
+      ? scenes.filter((s) => s.videoAnalysis)
+      : (asset.videoAnalysis ? [{ id: asset.id, tcIn: 0, tcOut: asset.duration || 0, duration: asset.duration || 0, videoAnalysis: asset.videoAnalysis, caption: asset.caption || '' }] : [])
+    for (const scene of effectiveScenes) {
+      // Reuse the source-shot formatter so the structure (chips,
+      // motion, cinematography lines) matches exactly. `formatSceneBlock`
+      // expects `videoAnalysis`, `caption`, `tcIn`, `tcOut`, `duration`,
+      // `id` — we already match that schema on additional shots.
+      const sceneShape = {
+        id: scene.id,
+        tcIn: scene.tcIn,
+        tcOut: scene.tcOut,
+        duration: scene.duration || (scene.tcOut - scene.tcIn) || 0,
+        caption: scene.caption || '',
+        videoAnalysis: scene.videoAnalysis,
+        // Tag the source filename so the LLM has provenance context
+        // (e.g. it's a "Honda 30s spot" vs a loose drone shot).
+        structured: { brand: '', emotion: '', framing: '', movement: '' },
+      }
+      const block = formatSceneBlock(sceneShape)
+      // Prefix each block with a "Source:" line so the LLM knows which
+      // imported file the shot came from — useful when the user has
+      // mixed multiple ads worth of additional footage.
+      blocks.push(`Source: ${asset.name}\n${block}`)
+    }
+  }
+  if (blocks.length === 0) return ''
+  return `\n\n# Alternative footage available (from your imported additional material)
+These shots are NOT in the source ad's cut but you imported them as additional material. You MAY substitute them into the EDL by using their \`id\` as \`sourceSceneId\` (the ids start with \`add-\`). Use them when:
+- a beat in the source ad doesn't have great coverage and one of these is a clear win;
+- a particular emotion or framing is missing from the source but available here.
+Don't lean on these heavily — the source ad's shots stay primary; alternative footage is a tool, not the canvas.
+
+${blocks.join('\n\n---\n\n')}`
+}
+
 // Sum expected timeline seconds from an EDL, using source scenes'
 // natural durations for originals and declared gap for placeholders —
 // matches what reeditEdlToTimeline actually lays down at Apply time.
@@ -676,8 +727,14 @@ These are the creative strategist's notes on what the ORIGINAL ad is about. Your
 ${rows.join('\n')}`
 }
 
-function buildUserPrompt({ scenes, brandBrief, extraInstructions, metric, totalDurationSec, targetDurationSec, criteria, correctionNote, capabilities, adConcept, voSegments, generatedVoiceover }) {
+function buildUserPrompt({ scenes, brandBrief, extraInstructions, metric, totalDurationSec, targetDurationSec, criteria, correctionNote, capabilities, adConcept, voSegments, generatedVoiceover, additionalAssets }) {
   const shotLog = renderShotLog(scenes)
+  // Alternative footage block — only rendered when the capability is
+  // on. The block is appended after the main shot log so the LLM treats
+  // the source ad's shots as primary and these as a secondary pool.
+  const additionalShotLog = capabilities?.useAdditionalAssets
+    ? renderAdditionalShotLog(additionalAssets)
+    : ''
   // Keep the budget math consistent with the shot log — if a shot
   // isn't in the log, the LLM can't reference it, so its seconds
   // shouldn't count toward "available footage" either.
@@ -803,7 +860,7 @@ Each shot below is a multi-line block separated by \`---\`:
 - Pacing: shot boundary character (cut_type) and tempo feel.
 Use Audio.VO to anchor narrative continuity — never split a VO line across shots arbitrarily. Use Pacing + music tempo to size shot durations. Use Graphics to decide which shots MUST carry brand elements (logo, tagline, legal disclaimer) and which ones can be replaced. Use Cinematography to keep visual continuity tight: when ordering shots, alternate or match \`shot_size\` deliberately (don't bounce ECU→Wide→ECU at random), keep \`lighting_style\` consistent within a beat, and match \`composition\` lines (a leading-line shot pairs well with another that continues the line).
 
-${shotLog}
+${shotLog}${additionalShotLog}
 
 # Your task
 Propose a new edit decision list that improves ${metric}. The tools available to you depend on the Capabilities block above:
@@ -866,6 +923,7 @@ export async function generateProposal({
   voSegments,
   voPlanOverride,
   generatedVoiceover, // { segments: [{id,text,role,gapBeforeSec}], synthesis: { segmentAudio: { [id]: { path, durationSec } } } } | null
+  additionalAssets,   // currentProject.additionalAssets — only consumed when capability `useAdditionalAssets` is on
 } = {}) {
   if (!Array.isArray(scenes) || scenes.length === 0) {
     throw new Error('Shot log is empty — run Analysis first.')
@@ -928,7 +986,7 @@ export async function generateProposal({
   // so this path works for both LM Studio and the Anthropic backend
   // without the proposer knowing which is active.
   const runOnce = async (correctionNote) => {
-    const userPromptText = buildUserPrompt({ scenes, brandBrief, extraInstructions, metric: targetMetric, totalDurationSec, targetDurationSec, criteria: effectiveCriteria, correctionNote, capabilities, adConcept, voSegments, generatedVoiceover })
+    const userPromptText = buildUserPrompt({ scenes, brandBrief, extraInstructions, metric: targetMetric, totalDurationSec, targetDurationSec, criteria: effectiveCriteria, correctionNote, capabilities, adConcept, voSegments, generatedVoiceover, additionalAssets })
     // When we have a video ready, compose the user message as a
     // content array: the prompt first (order matters — Gemini treats
     // the last text as the active instruction) then the video. The

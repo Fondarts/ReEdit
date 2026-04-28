@@ -36,6 +36,8 @@ export const DEFAULT_CAPABILITIES = Object.freeze({
   useOriginalMusic: false,
   useOriginalVoiceover: false,
   generateVoiceover: false,
+  generateMusic: false,
+  useAdditionalAssets: false,
 })
 
 export const CAPABILITY_DEFINITIONS = [
@@ -73,6 +75,16 @@ export const CAPABILITY_DEFINITIONS = [
     id: 'generateVoiceover',
     label: 'Generate new voiceover',
     blurb: 'Have Gemini write a fresh VO script (in any supported language) using the ad concept, mood, and brand role as inspiration. Synthesised by ComfyUI (F5-TTS) cloning the original speaker’s voice. Replaces the original VO when enabled — mutually exclusive with “Use original voiceover”.',
+  },
+  {
+    id: 'useAdditionalAssets',
+    label: 'Use additional assets',
+    blurb: 'Lets the proposer pull from extra footage you imported (loose shots or other ads we cut up). Each shot you analyse in the Additional Assets tab becomes a candidate the LLM can swap into the EDL.',
+  },
+  {
+    id: 'generateMusic',
+    label: 'Generate new music',
+    blurb: 'Generate a fresh music track via ComfyUI (ACE-Step 1.5). Replaces the original music stem on the timeline. Mutually exclusive with “Use original music”.',
   },
 ]
 
