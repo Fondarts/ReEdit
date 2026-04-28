@@ -262,6 +262,13 @@ function AnalysisView() {
   // runs the jobs sequentially, but the UI allows multiple rows to be
   // queued; main.js emits progress events we fan out into this map.
   const [optimizeState, setOptimizeState] = useState({}) // { [sceneId]: { stage, ...details, outputPath?, error? } }
+  // Per-scene preview (mask-only) state. Declared up here ABOVE the
+  // early return below so React's hook order stays consistent across
+  // renders — moving it after `if (!sourceVideo)` triggers the
+  // "Rendered fewer hooks than expected" violation when the user
+  // creates a new project (sourceVideo flips between null and an
+  // object, changing the hook count between renders).
+  const [previewState, setPreviewState] = useState({})
   useEffect(() => {
     const unsub = window.electronAPI?.onOptimizeFootageProgress?.((payload) => {
       if (!payload?.sceneId) return
@@ -558,10 +565,9 @@ function AnalysisView() {
     })
   }
 
-  // Per-scene preview state: separate from optimizeState because the
-  // two actions can run independently (preview while a previous
-  // optimize is done, etc.). { stage: 'running' | 'done' | 'error', maskPath?, error? }
-  const [previewState, setPreviewState] = useState({})
+  // `previewState` is declared at the top of the component (above the
+  // !sourceVideo early return) to keep the hook order stable. The
+  // runner below mutates it via setPreviewState.
   const runPreviewMask = async (scene) => {
     if (!projectDir) return
     const current = previewState[scene.id]

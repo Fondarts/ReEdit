@@ -1085,14 +1085,71 @@ export async function applyEdlToTimeline({
   )
   if (useGeneratedVo) {
     const synth = generatedVoiceover.synthesis
+    const segments = generatedVoiceover.segments || []
+    const segmentAudio = synth.segmentAudio || {}
     const track = takeAudioTrack()
     const tlStore = useTimelineStore.getState()
-    // Preferred path: synth produced a single combined WAV with
-    // silences baked in. Place that as ONE clip — cleaner waveform on
-    // the timeline, fewer boundaries, and the user can drag it as a
-    // unit. Fallback to per-segment placement only when the combined
-    // file is missing (e.g. ffmpeg concat failed at synth time).
-    if (synth.combinedAudioPath) {
+
+    // Preferred path: EDL-driven placement. The proposer, when given
+    // the FIXED-VO block, annotates each row that should carry a VO
+    // line with `AUDIO vo: "<verbatim line>"` in its note. We parse
+    // those directives, match each to a draft segment by text, and
+    // place the segment's WAV at that row's actual newTcIn — so the
+    // proposal's intent (which segment lands on which shot) drives
+    // the timeline 1:1.
+    //
+    // Fallback to combined-WAV / per-segment-with-gaps below when the
+    // proposer didn't annotate (e.g. capability turned on after the
+    // proposal was drafted).
+    const normalizeText = (s) => String(s || '').trim().toLowerCase()
+      .replace(/[\s.!?,;:'"]+$/, '')
+      .replace(/\s+/g, ' ')
+    const edlMatches = []
+    const usedSegIds = new Set()
+    for (const row of edl) {
+      if (row?.excluded) continue
+      const note = row?.note || ''
+      const m = /\bAUDIO\s+vo\b[^"]*"([^"]+)"/i.exec(note)
+      if (!m) continue
+      const target = normalizeText(m[1])
+      if (!target) continue
+      const seg = segments.find((s) => !usedSegIds.has(s.id) && normalizeText(s.text) === target)
+        || segments.find((s) => !usedSegIds.has(s.id) && normalizeText(s.text).startsWith(target.slice(0, 30)))
+        || segments.find((s) => !usedSegIds.has(s.id) && target.startsWith(normalizeText(s.text).slice(0, 30)))
+      if (!seg) continue
+      usedSegIds.add(seg.id)
+      edlMatches.push({ row, seg })
+    }
+
+    if (edlMatches.length > 0) {
+      // EDL-driven placement: one clip per matched segment, anchored
+      // at the row's start time on the timeline. Unmatched segments
+      // are intentionally dropped — the proposer chose not to use
+      // them, so respecting that beats forcing them on top of others.
+      for (const { row, seg } of edlMatches) {
+        const audio = segmentAudio[seg.id]
+        if (!audio?.path) continue
+        const wordCount = (seg.text || '').trim().split(/\s+/).filter(Boolean).length
+        const fallbackDur = Math.max(0.4, wordCount / 2.4)
+        const segDur = Number(audio.durationSec) || fallbackDur
+        const startSec = Math.max(0, Number(row.newTcIn) || 0)
+        const remaining = totalReeditDur - startSec
+        if (remaining <= 0.05) continue
+        const dur = Math.max(0.05, Math.min(segDur, remaining))
+        const asset = registerStemAsset(sourceVideo, audio.path, `vo-gen-${seg.id}`, Number(audio.durationSec) || dur)
+        tlStore.addClip(track.id, asset, startSec, null, {
+          duration: dur,
+          trimStart: 0,
+          trimEnd: dur,
+          saveHistory: false,
+          selectAfterAdd: false,
+        })
+      }
+      stemsPlaced.push('vo-generated-edl')
+    }
+    // Fallback: combined WAV at t=0 (kept for projects whose proposer
+    // didn't annotate `AUDIO vo:` directives).
+    else if (synth.combinedAudioPath) {
       const combinedDur = Math.max(
         0.05,
         Math.min(
@@ -1114,8 +1171,10 @@ export async function applyEdlToTimeline({
         selectAfterAdd: false,
       })
     } else {
-      // Legacy / fallback path: place each segment WAV individually.
-      const segmentAudio = synth.segmentAudio || {}
+      // Legacy / fallback path: place each segment WAV individually
+      // using its `gapBeforeSec` to advance the cursor. Same data the
+      // combined branch used; falls through to here when the synth
+      // didn't produce a combined file (older drafts).
       let voCursor = 0
       for (const seg of generatedVoiceover.segments) {
         const audio = segmentAudio[seg.id]
@@ -1243,6 +1302,116 @@ export async function applyEdlToTimeline({
     }
   }
 
+  // Auto-duck the music under VO. Walks the placed clips, finds the
+  // music clip(s) and the VO clips, splits each music clip into
+  // alternating segments (full-volume where there's no VO, ducked
+  // where there is) with short fades at the boundaries. Cheap, no
+  // engine changes — just multiple clips referencing the same asset
+  // with different gainDb values.
+  applyMusicDuckingForVO()
+
   onProgress?.({ index: total, total, done: true })
   return { placed, placeholdersPlaced, skippedMissingScene, stemsPlaced }
+}
+
+// Sidechain-style ducking faked on a clip-based timeline. Splits the
+// music clip into alternating intervals: full gain (0 dB) outside VO
+// windows, ducked (-12 dB) where VO segments overlap. Adds tiny fades
+// at the cut points so the duck transitions don't pop. Idempotent in
+// the sense that the next applyEdlToTimeline pass re-creates the
+// music clip from scratch and re-runs this — so editing the VO
+// segments + re-applying refreshes the duck shape.
+function applyMusicDuckingForVO() {
+  const tlStore = useTimelineStore.getState()
+  const assetsStore = useAssetsStore.getState()
+  const allClips = tlStore.clips || []
+  const assetById = new Map((assetsStore.assets || []).map((a) => [a.id, a]))
+
+  const isMusicClip = (clip) => {
+    const a = assetById.get(clip.assetId)
+    const kind = a?.settings?.reeditStemKind
+    return kind === 'music' || kind === 'music-gen'
+  }
+  const isVoClip = (clip) => {
+    const a = assetById.get(clip.assetId)
+    const kind = a?.settings?.reeditStemKind || ''
+    return kind === 'vo' || kind === 'vo-gen-combined' || kind.startsWith('vo-gen-')
+  }
+
+  const musicClips = allClips.filter(isMusicClip)
+  const voClips = allClips.filter(isVoClip)
+  if (musicClips.length === 0 || voClips.length === 0) return
+
+  // Pad VO windows so the duck starts a touch BEFORE each VO line and
+  // recovers a touch AFTER — that's how broadcast ducking sounds. The
+  // tail pad is bigger than the head pad because human speech tails
+  // off softly while music rises eagerly.
+  const PRE = 0.2
+  const POST = 0.4
+  const DUCK_GAIN_DB = -12
+  const FADE_SEC = 0.15
+
+  const rawWindows = voClips.map((c) => ({
+    start: Math.max(0, (Number(c.startTime) || 0) - PRE),
+    end: (Number(c.startTime) || 0) + (Number(c.duration) || 0) + POST,
+  })).sort((a, b) => a.start - b.start)
+
+  // Merge overlapping windows so a sequence of close-together VO lines
+  // becomes one continuous duck region instead of bouncing the music
+  // up and down between each line.
+  const merged = []
+  for (const w of rawWindows) {
+    const last = merged[merged.length - 1]
+    if (last && w.start <= last.end + 0.05) {
+      last.end = Math.max(last.end, w.end)
+    } else {
+      merged.push({ ...w })
+    }
+  }
+
+  for (const music of musicClips) {
+    const asset = assetById.get(music.assetId)
+    if (!asset) continue
+    const musicStart = Number(music.startTime) || 0
+    const musicEnd = musicStart + (Number(music.duration) || 0)
+    const baseTrim = Number(music.trimStart) || 0
+
+    // Build alternating intervals over the music's range.
+    const intervals = []
+    let cursor = musicStart
+    for (const w of merged) {
+      if (w.end <= musicStart || w.start >= musicEnd) continue
+      const ws = Math.max(w.start, musicStart)
+      const we = Math.min(w.end, musicEnd)
+      if (ws - cursor > 0.05) intervals.push({ start: cursor, end: ws, gainDb: 0 })
+      intervals.push({ start: ws, end: we, gainDb: DUCK_GAIN_DB })
+      cursor = we
+    }
+    if (musicEnd - cursor > 0.05) intervals.push({ start: cursor, end: musicEnd, gainDb: 0 })
+
+    // Nothing to split (no VO overlapped this music clip).
+    if (intervals.length <= 1) continue
+
+    // Replace the original music clip with the split intervals.
+    try { tlStore.removeClip(music.id) } catch (_) { /* ignore */ }
+    for (let i = 0; i < intervals.length; i++) {
+      const itv = intervals[i]
+      const dur = Math.max(0.05, itv.end - itv.start)
+      const trimStart = baseTrim + (itv.start - musicStart)
+      // Tiny fade at every internal boundary so the gain change
+      // doesn't click. First / last clip don't get the outer fade.
+      const fadeIn = i === 0 ? (Number(music.fadeIn) || 0) : Math.min(FADE_SEC, dur / 2)
+      const fadeOut = i === intervals.length - 1 ? (Number(music.fadeOut) || 0) : Math.min(FADE_SEC, dur / 2)
+      tlStore.addClip(music.trackId, asset, itv.start, null, {
+        duration: dur,
+        trimStart,
+        trimEnd: trimStart + dur,
+        gainDb: itv.gainDb,
+        fadeIn,
+        fadeOut,
+        saveHistory: false,
+        selectAfterAdd: false,
+      })
+    }
+  }
 }

@@ -5580,15 +5580,43 @@ ipcMain.handle('export:mixAudio', async (event, options = {}) => {
     const filters = [
       `atrim=start=${formatFilterNumber(entry.sourceOffsetSec)}:duration=${formatFilterNumber(entry.sourceDurationSec)}`,
       'asetpts=PTS-STARTPTS',
-      ...buildAtempoFilterChain(entry.timeScale),
     ]
+
+    // atempo only when there's a real time-scale change. atempo=1.0 is
+    // a no-op but it still buffers samples internally and (in ffmpeg 8)
+    // interferes with `volume:eval=frame` evaluating correctly when
+    // followed by adelay — the volume output for the rest of the clip
+    // gets stuck at the t=0 evaluation, which is 0 if the clip has a
+    // fade-in. That's exactly the bug we hit with auto-ducked music
+    // splits going silent past their fade-in point. So skip atempo for
+    // 1.0 and skip the eval=frame expression entirely.
+    if (Math.abs(entry.timeScale - 1) > 0.000001) {
+      filters.push(...buildAtempoFilterChain(entry.timeScale))
+    }
 
     if (entry.forceMono) {
       filters.push('aformat=channel_layouts=mono')
     }
-    if (entry.fadeIn > 0 || entry.fadeOut > 0 || entry.gainDb !== 0 || entry.trackVolume !== 100) {
-      filters.push(`volume='${buildAudioFadeVolumeExpression(entry.clipDuration, entry.fadeIn, entry.fadeOut, entry.clipOffsetOnTimeline, entry.gainDb, entry.trackVolume)}':eval=frame`)
+
+    // Fades: use ffmpeg's standard afade filter instead of a custom
+    // volume expression. afade is well-tested, handles edge cases (very
+    // short clips, overlapping fade windows) sanely, and doesn't carry
+    // the eval=frame baggage that was breaking the previous design.
+    if (entry.fadeIn > 0) {
+      filters.push(`afade=t=in:st=0:d=${formatFilterNumber(entry.fadeIn)}`)
     }
+    if (entry.fadeOut > 0) {
+      const fadeOutStart = Math.max(0, entry.clipDuration - entry.fadeOut)
+      filters.push(`afade=t=out:st=${formatFilterNumber(fadeOutStart)}:d=${formatFilterNumber(entry.fadeOut)}`)
+    }
+
+    // Static gain: clip gainDb (e.g. -12 for ducked music) + per-track
+    // volume slider. One `volume=N` filter, no expressions, no eval.
+    const gainLinear = audioGainDbToLinear(entry.gainDb) * Math.max(0, Math.min(1, entry.trackVolume / 100))
+    if (Math.abs(gainLinear - 1) > 0.000001) {
+      filters.push(`volume=${formatFilterNumber(gainLinear)}`)
+    }
+
     if (entry.delayMs > 0) {
       filters.push(`adelay=${entry.delayMs}:all=1`)
     }
@@ -5598,9 +5626,16 @@ ipcMain.handle('export:mixAudio', async (event, options = {}) => {
     mixLabels.push(`[${label}]`)
   })
 
+  // amix' default `normalize=1` divides each input by the active input
+  // count, which collapses our audio when many split clips are in play
+  // (auto-ducking turns one music clip into 7+ alternating segments —
+  // combined with VO clips that can push N past 10, every input gets
+  // attenuated by ~-20 dB and the mix becomes inaudible after the first
+  // duck. Disable normalization so the mixer truly sums; clamp the
+  // final mix at -3 dB so peaks don't clip when music + VO overlap.
   const finalMixFilter = mixLabels.length === 1
     ? `${mixLabels[0]}atrim=duration=${formatFilterNumber(totalDuration)},asetpts=PTS-STARTPTS[outa]`
-    : `${mixLabels.join('')}amix=inputs=${mixLabels.length}:duration=longest:dropout_transition=0,atrim=duration=${formatFilterNumber(totalDuration)},asetpts=PTS-STARTPTS[outa]`
+    : `${mixLabels.join('')}amix=inputs=${mixLabels.length}:duration=longest:dropout_transition=0:normalize=0,volume=0.7071,atrim=duration=${formatFilterNumber(totalDuration)},asetpts=PTS-STARTPTS[outa]`
   const filterComplex = `${inputFilters.join(';')};${finalMixFilter}`
 
   args.push(
@@ -5611,6 +5646,29 @@ ipcMain.handle('export:mixAudio', async (event, options = {}) => {
     '-c:a', 'pcm_s16le',
     outputPath
   )
+
+  // Diagnostic: log the audio mix recipe to the main-process console
+  // every export until the auto-ducking + amix issue is conclusively
+  // closed. Once the user confirms exports are clean, gate this back
+  // behind `process.env.REEDIT_LOG_AUDIO_MIX === '1'`.
+  {
+    const summary = preparedInputs.map((e, i) => ({
+      i,
+      inputPath: path.basename(e.inputPath),
+      sourceOffsetSec: +e.sourceOffsetSec.toFixed(4),
+      sourceDurationSec: +e.sourceDurationSec.toFixed(4),
+      delayMs: e.delayMs,
+      clipDuration: +e.clipDuration.toFixed(4),
+      clipOffsetOnTimeline: +e.clipOffsetOnTimeline.toFixed(4),
+      gainDb: e.gainDb,
+      fadeIn: +e.fadeIn.toFixed(4),
+      fadeOut: +e.fadeOut.toFixed(4),
+      trackVolume: e.trackVolume,
+    }))
+    console.log('[mixAudio] range', { rangeStartSec, rangeEndSec, totalDuration, inputCount: preparedInputs.length })
+    console.log('[mixAudio] inputs', JSON.stringify(summary, null, 2))
+    console.log('[mixAudio] filter_complex', filterComplex)
+  }
 
   return await new Promise((resolve) => {
     const ffmpeg = spawn(ffmpegPath, args, { windowsHide: true })

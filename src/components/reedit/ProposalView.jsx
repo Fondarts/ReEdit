@@ -544,6 +544,34 @@ function ProposalView({ onNavigate }) {
     return map
   }, [scenes])
 
+  // Two more useMemos — declared up here so the hook order stays
+  // identical regardless of which prereq-prompt early-return fires
+  // below. Moving these BELOW the early returns triggers React's
+  // "Rendered fewer hooks than expected" the moment the project
+  // transitions from "no source video" to "scenes loaded".
+  const estimatedDuration = useMemo(() => {
+    const rows = draft?.edl || []
+    let total = 0
+    for (const row of rows) {
+      if (row.excluded) continue
+      if (row.kind === 'placeholder') {
+        const gap = (Number(row.newTcOut) || 0) - (Number(row.newTcIn) || 0)
+        total += Math.max(0.5, gap || 1.5)
+        continue
+      }
+      const scene = sceneById.get(row.sourceSceneId)
+      if (!scene) continue
+      total += Math.max(0.1, (Number(scene.tcOut) - Number(scene.tcIn)))
+    }
+    return total
+  }, [draft, sceneById])
+  const placedVoSegments = useMemo(() => {
+    if (!capabilities?.generateVoiceover) return []
+    const sel = voiceoverDrafts.find((d) => d.id === selectedVoiceoverDraftId)
+    if (!sel || sel.synthesis?.status !== 'done') return []
+    return placeGeneratedVoiceover({ segments: sel.segments, synthesis: sel.synthesis })
+  }, [capabilities?.generateVoiceover, voiceoverDrafts, selectedVoiceoverDraftId])
+
   if (!sourceVideo) {
     return <PrereqPrompt>Import a video first in the <span className="text-sf-text-primary">Import</span> tab.</PrereqPrompt>
   }
@@ -596,6 +624,17 @@ function ProposalView({ onNavigate }) {
           const sel = voiceoverDrafts.find((d) => d.id === selectedVoiceoverDraftId)
           if (!sel || sel.synthesis?.status !== 'done') return null
           return { segments: sel.segments, synthesis: sel.synthesis }
+        })(),
+        // Selected music draft, surfaced to the proposer as audio-bed
+        // context (tempo / genre / duration). Only when the
+        // generateMusic capability is on AND the draft is synthesised.
+        generatedMusic: (() => {
+          if (!capabilities?.generateMusic) return null
+          const drafts = Array.isArray(currentProject?.musicDrafts?.drafts) ? currentProject.musicDrafts.drafts : []
+          const id = currentProject?.musicDrafts?.selectedId || null
+          const sel = id ? drafts.find((d) => d.id === id) : null
+          if (!sel || sel.synthesis?.status !== 'done') return null
+          return sel
         })(),
         // Additional analysed footage (extra clips / other ads to recut).
         // Only sent when the capability is on; the proposer renders an
@@ -877,28 +916,8 @@ function ProposalView({ onNavigate }) {
     : null
 
   // Live duration estimate. Originals contribute their source scene's
-  // natural length (the populator ignores the LLM's `newTc*` values);
-  // placeholders contribute their declared gap, floored at 0.5s. Recomputed
-  // on every edit so exclusions / reorders / deletions update the header
-  // in real time. Excluded rows don't count — they're about to be
-  // skipped by the populator anyway.
-  const estimatedDuration = useMemo(() => {
-    const rows = draft?.edl || []
-    let total = 0
-    for (const row of rows) {
-      if (row.excluded) continue
-      if (row.kind === 'placeholder') {
-        const gap = (Number(row.newTcOut) || 0) - (Number(row.newTcIn) || 0)
-        total += Math.max(0.5, gap || 1.5)
-        continue
-      }
-      const scene = sceneById.get(row.sourceSceneId)
-      if (!scene) continue
-      total += Math.max(0.1, (Number(scene.tcOut) - Number(scene.tcIn)))
-    }
-    return total
-  }, [draft, sceneById])
-
+  // `estimatedDuration` lives at the top of the component (above the
+  // prereq early returns) to keep React's hook order consistent.
   const durationMatch = (
     targetDurationSec > 0
     && estimatedDuration > 0
@@ -907,16 +926,8 @@ function ProposalView({ onNavigate }) {
   const isDirty = draft && draft !== savedProposal
   const edl = draft?.edl || []
 
-  // Layout the generated-VO draft (when applicable) so the row table
-  // can render a "VO" chip on shots that overlap a synthesised segment.
-  // Recomputes only when the selected draft or its synthesis result
-  // changes — cheap (~N segments).
-  const placedVoSegments = useMemo(() => {
-    if (!capabilities?.generateVoiceover) return []
-    const sel = voiceoverDrafts.find((d) => d.id === selectedVoiceoverDraftId)
-    if (!sel || sel.synthesis?.status !== 'done') return []
-    return placeGeneratedVoiceover({ segments: sel.segments, synthesis: sel.synthesis })
-  }, [capabilities?.generateVoiceover, voiceoverDrafts, selectedVoiceoverDraftId])
+  // `placedVoSegments` is declared at the top of the component to
+  // keep React's hook order consistent (see comment up there).
   const placeholderCount = edl.filter((r) => r.kind === 'placeholder').length
   const originalCount = edl.length - placeholderCount
   const excludedRowCount = edl.filter((r) => r.excluded).length

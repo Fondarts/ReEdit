@@ -702,14 +702,42 @@ function renderGeneratedVoiceoverBlock(generatedVoiceover) {
     lines.push(`- ${start.toFixed(1)}s → ${end.toFixed(1)}s${role}: "${s.text}"`)
   }
   return `\n\n# Voiceover script (FIXED — already written and synthesised)
-The user has authored a NEW voiceover script and synthesised it (cloning the source speaker's voice). It is NOT a transcript of the original ad — it is the new copy that WILL play under your re-edit, exactly as listed below, in this order, with the timestamps shown. You CANNOT add, drop, reorder, or re-time these lines. Total VO occupies ${totalDur.toFixed(1)}s of the timeline; the gaps shown are deliberate breathing room — visuals fill them.
+The user has authored a NEW voiceover script and synthesised it (cloning the source speaker's voice). It is NOT a transcript of the original ad — it is the new copy that WILL play under your re-edit, in the order shown. You CANNOT change the lines themselves. Total VO occupies ${totalDur.toFixed(1)}s of timeline content (lines + gaps).
 
 ${lines.join('\n')}
 
-When choosing shots:
-- Hero / static / contemplative shots tend to live under VO lines. Fast-cut action lives in the gaps.
-- The TAGLINE timestamp is non-negotiable — make sure the closing visual lands on that beat.
-- Do NOT return a \`voiceoverPlan\` field — the VO is fixed and the placer uses the script directly.`
+## How to anchor each VO line to a shot
+The placer is **EDL-driven** — each VO line lands on the timeline at the \`newTcIn\` of whichever EDL row you annotate with it. To anchor a line, prefix that row's \`note\` with:
+  \`AUDIO vo: "<exact verbatim text of the line>"\` — the quoted text MUST match the line in the script word-for-word so the placer can match it.
+
+Choose anchors thoughtfully:
+- Match each VO line to the shot that best illustrates / pays it off. Hero / static / contemplative shots tend to live under VO; fast-cut action lives between lines.
+- **Do NOT anchor any VO line to a row whose \`newTcIn\` is below 1.5 s.** The picture needs at least 1.5 s of music + visuals to establish before the first line crashes in — VO at t=0 sounds rushed.
+- The TAGLINE (last VO line) MUST anchor to a row near the END of the cut so the closing line pays off the final beat.
+- Lines should anchor in the order they appear in the script — don't shuffle (the synthesised audio plays in order).
+- It's OK to leave gaps between VO lines — that's the whole point of the cadence shown above.
+- Do NOT return a \`voiceoverPlan\` field. Do NOT invent new VO lines. Use only the lines listed above, verbatim, in their script order.`
+}
+
+// Render a short block describing the music bed the user already
+// authored / synthesised so the proposer can pace cuts to it. The
+// block is only emitted when the `generateMusic` capability is on
+// and a synthesised music draft is selected. Includes tempo, key,
+// genre tags and total duration — enough context for the proposer
+// to align beat hits, sustain held shots over instrumental pads,
+// or push hard cuts to drum-heavy moments.
+function renderGeneratedMusicBlock(generatedMusic) {
+  if (!generatedMusic) return ''
+  const synth = generatedMusic.synthesis || {}
+  const dur = Number(synth.durationSec) || generatedMusic.durationSec
+  const pieces = []
+  if (generatedMusic.tags) pieces.push(`style: ${generatedMusic.tags}`)
+  if (generatedMusic.bpm) pieces.push(`tempo: ${generatedMusic.bpm} bpm`)
+  if (generatedMusic.keyscale) pieces.push(`key: ${generatedMusic.keyscale}`)
+  if (Number.isFinite(dur)) pieces.push(`length: ${dur.toFixed(1)}s`)
+  if (pieces.length === 0) return ''
+  return `\n\n# Music bed (already chosen, plays under the whole re-edit)
+A ${pieces.join(' · ')} track is locked in as the audio bed. Plan the cut to ride that bed — match hard cuts to drum hits / accents in a high-tempo track, hold contemplative shots over sustained pads in a slower one, and reserve the final beat for the brand resolution. Don't propose anything that fights the music's energy curve.`
 }
 
 function renderAdConceptBlock(adConcept) {
@@ -727,7 +755,7 @@ These are the creative strategist's notes on what the ORIGINAL ad is about. Your
 ${rows.join('\n')}`
 }
 
-function buildUserPrompt({ scenes, brandBrief, extraInstructions, metric, totalDurationSec, targetDurationSec, criteria, correctionNote, capabilities, adConcept, voSegments, generatedVoiceover, additionalAssets }) {
+function buildUserPrompt({ scenes, brandBrief, extraInstructions, metric, totalDurationSec, targetDurationSec, criteria, correctionNote, capabilities, adConcept, voSegments, generatedVoiceover, generatedMusic, additionalAssets }) {
   const shotLog = renderShotLog(scenes)
   // Alternative footage block — only rendered when the capability is
   // on. The block is appended after the main shot log so the LLM treats
@@ -842,12 +870,19 @@ function buildUserPrompt({ scenes, brandBrief, extraInstructions, metric, totalD
     : (capabilities?.useOriginalVoiceover && Array.isArray(voSegments) && voSegments.length > 0)
       ? renderVoiceoverScriptBlock(voSegments, targetDurationSec)
       : ''
+  // Music bed context — only when the user generated a fresh track.
+  // The original-music branch (Demucs stem) doesn't render here because
+  // the proposer doesn't have a tempo / genre breakdown of the source
+  // ad's music; that's a future enhancement.
+  const musicBedBlock = (capabilities?.generateMusic && generatedMusic)
+    ? renderGeneratedMusicBlock(generatedMusic)
+    : ''
 
   return `# Goal
 Re-edit this commercial to improve its ${metric} score.${framework}
 
 # Brand brief
-${brandBrief?.trim() || '(not provided — infer from the shot log)'}${extraBlock}${adConceptBlock}${voScriptBlock}${capabilitiesBlock}
+${brandBrief?.trim() || '(not provided — infer from the shot log)'}${extraBlock}${adConceptBlock}${voScriptBlock}${musicBedBlock}${capabilitiesBlock}
 
 # Shot log (from the current cut)
 Each shot below is a multi-line block separated by \`---\`:
@@ -923,6 +958,7 @@ export async function generateProposal({
   voSegments,
   voPlanOverride,
   generatedVoiceover, // { segments: [{id,text,role,gapBeforeSec}], synthesis: { segmentAudio: { [id]: { path, durationSec } } } } | null
+  generatedMusic,     // selected synthesised music draft — { tags, bpm, keyscale, durationSec, synthesis } | null
   additionalAssets,   // currentProject.additionalAssets — only consumed when capability `useAdditionalAssets` is on
 } = {}) {
   if (!Array.isArray(scenes) || scenes.length === 0) {
@@ -986,7 +1022,7 @@ export async function generateProposal({
   // so this path works for both LM Studio and the Anthropic backend
   // without the proposer knowing which is active.
   const runOnce = async (correctionNote) => {
-    const userPromptText = buildUserPrompt({ scenes, brandBrief, extraInstructions, metric: targetMetric, totalDurationSec, targetDurationSec, criteria: effectiveCriteria, correctionNote, capabilities, adConcept, voSegments, generatedVoiceover, additionalAssets })
+    const userPromptText = buildUserPrompt({ scenes, brandBrief, extraInstructions, metric: targetMetric, totalDurationSec, targetDurationSec, criteria: effectiveCriteria, correctionNote, capabilities, adConcept, voSegments, generatedVoiceover, generatedMusic, additionalAssets })
     // When we have a video ready, compose the user message as a
     // content array: the prompt first (order matters — Gemini treats
     // the last text as the active instruction) then the video. The
