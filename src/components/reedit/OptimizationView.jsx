@@ -34,6 +34,7 @@ import { resolveActiveClipPath } from '../../services/reeditVideoAnalyzer'
 import OptimizeFootageCell, { shotHasGraphics } from './OptimizeFootageCell'
 import { OriginalVoiceoverPanel, GenerateVoiceoverPanel } from './VoiceoverPanels'
 import MusicPanel from './MusicPanel'
+import { getActiveHttpBaseSync, getActiveComfyIpcContext } from '../../services/localComfyConnection'
 
 // Build a comfystudio:// URL for the renderer. Same shape as
 // AnalysisView's helper. `version` cache-busts so re-running optimize
@@ -116,6 +117,7 @@ export default function OptimizationView({ onNavigate }) {
       const res = await window.electronAPI.optimizeFootage({
         scene: { id: scene.id, videoAnalysis: scene.videoAnalysis, caption: scene.caption },
         projectDir,
+        ...getActiveComfyIpcContext(),
       })
       if (!res?.success) {
         setOptimizeState((prev) => ({ ...prev, [scene.id]: { stage: 'error', error: res?.error || 'Unknown error.' } }))
@@ -168,6 +170,7 @@ export default function OptimizationView({ onNavigate }) {
       const res = await window.electronAPI.previewMask({
         scene: { id: scene.id, videoAnalysis: scene.videoAnalysis },
         projectDir,
+        ...getActiveComfyIpcContext(),
       })
       if (!res?.success) {
         setPreviewState((prev) => ({ ...prev, [scene.id]: { stage: 'error', error: res?.error || 'Unknown error.' } }))
@@ -402,13 +405,6 @@ export default function OptimizationView({ onNavigate }) {
       <div className="flex-1 overflow-y-auto px-6 py-6">
         {section === 'video' && (
           <section>
-            <header className="mb-3 max-w-3xl">
-              <h2 className="text-sm font-semibold mb-1 text-sf-text-primary">Per-shot cleanup</h2>
-              <p className="text-xs text-sf-text-muted leading-relaxed">
-                Wan VACE removes on-screen text, logos, and other graphics from a shot so the timeline can use a clean version downstream. Each run produces a versioned MP4 (V01, V02, …); the dropdown picks which version Apply uses for that shot. Hover any card to play the source clip.
-              </p>
-            </header>
-
             {optimizableScenes.length === 0 ? (
               <div className="rounded-lg border border-dashed border-sf-dark-700 bg-sf-dark-900/40 px-4 py-6 text-sm text-sf-text-muted">
                 No included shots have detectable graphics. If you expected some, re-run Analysis with a fresh caption pass — Gemini may have missed text or logos in low-contrast frames.
@@ -559,6 +555,7 @@ export default function OptimizationView({ onNavigate }) {
                     capabilities={capabilities}
                     projectDir={projectDir}
                     defaultDurationSec={targetDurationSec}
+                    analysis={analysis}
                   />
                 )}
               </div>

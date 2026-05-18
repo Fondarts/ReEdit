@@ -28,6 +28,7 @@ import {
   TONAL_ADJUSTMENT_GROUP_KEYS,
 } from '../utils/adjustments'
 import { clearDiskCacheUrl } from './VideoLayerRenderer'
+import { getActiveHttpBaseSync, getActiveComfyIpcContext } from '../services/localComfyConnection'
 import { swapSceneActiveVersion } from '../services/reeditEdlToTimeline'
 import { commitExtend as commitExtendService } from '../services/reeditExtend'
 import { loadCapabilitySettings, I2V_MODEL_OPTIONS } from '../services/reeditCapabilitySettings'
@@ -844,6 +845,7 @@ function InspectorPanel({ isExpanded, onToggleExpanded }) {
         zoom, anchorX, anchorY,
         targetW, targetH,
         upscaleModel,
+        ...getActiveComfyIpcContext(),
       })
       if (!res?.success) {
         setReframeCommitState({ stage: 'error', error: res?.error || 'Unknown error.', sceneId: sceneIdForReframe })

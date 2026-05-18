@@ -1251,19 +1251,54 @@ export async function applyEdlToTimeline({
       const track = takeAudioTrack()
       const asset = registerStemAsset(sourceVideo, stems.vocalsPath, 'vo', stemNaturalDur)
       const tlStore = useTimelineStore.getState()
+
+      // Spacing decision: respect LLM-emitted gaps when they're
+      // meaningful (sum > 0.5 s); otherwise auto-distribute the slack
+      // between the total VO duration and the re-edit window. Without
+      // this fallback, a proposal with empty `segmentGaps` stacks every
+      // VO line at t=0 and the back half of the cut runs silent — the
+      // bug the user kept seeing in the timeline preview.
+      const totalVoDur = picked.reduce((sum, s) => {
+        const d = Math.max(0.05, Number(s.endSec) - Number(s.startSec))
+        return sum + (Number.isFinite(d) ? d : 0)
+      }, 0)
+      const llmGapSum = picked.reduce((sum, s) => {
+        const g = Number(gaps?.[s.id])
+        return sum + (Number.isFinite(g) && g > 0 ? g : 0)
+      }, 0)
+      const slack = Math.max(0, totalReeditDur - totalVoDur)
+      const llmGapsAreMeaningful = llmGapSum > 0.5
+      const useAutoSpacing = !llmGapsAreMeaningful && slack > 1.5 && picked.length >= 2
+      // Front-pad: ~15 % of the slack (capped at 1.5 s) reserves a
+      // short breath before the opening line so the cut doesn't lead
+      // with a hard VO entry. The remaining slack distributes evenly
+      // BEFORE every segment from the second onward, then a similar
+      // pad falls naturally at the end (last gap played out as silence
+      // until totalReeditDur).
+      const autoHeadPad = useAutoSpacing ? Math.min(slack * 0.15, 1.5) : 0
+      const autoMidGap = useAutoSpacing && picked.length > 1
+        ? Math.max(0, (slack - autoHeadPad) / picked.length)
+        : 0
+
       let voCursor = 0
-      for (const seg of picked) {
+      for (let segIdx = 0; segIdx < picked.length; segIdx++) {
+        const seg = picked[segIdx]
         const fullSegDur = Math.max(0.05, Number(seg.endSec) - Number(seg.startSec))
         if (!Number.isFinite(fullSegDur) || fullSegDur <= 0) continue
-        // Apply pre-segment gap from the proposer (or user-edited
-        // override). Lets the LLM push the tagline / closing line near
-        // the end of the re-edit instead of stacking everything from
-        // t=0. Capped so a runaway gap can never silence the entire
-        // timeline — leave at least 0.1 s for the segment itself.
-        const rawGap = Number(gaps?.[seg.id])
-        if (Number.isFinite(rawGap) && rawGap > 0) {
+        // Pick the gap to apply before this segment. LLM gaps win when
+        // present and meaningful; otherwise the auto-spacing math fills
+        // the timeline. Capped so a runaway gap can never silence the
+        // entire timeline — leave at least 0.1 s for the segment.
+        let appliedGap = 0
+        if (llmGapsAreMeaningful) {
+          const rawGap = Number(gaps?.[seg.id])
+          if (Number.isFinite(rawGap) && rawGap > 0) appliedGap = rawGap
+        } else if (useAutoSpacing) {
+          appliedGap = segIdx === 0 ? autoHeadPad : autoMidGap
+        }
+        if (appliedGap > 0) {
           const maxGap = Math.max(0, totalReeditDur - voCursor - 0.1)
-          voCursor += Math.min(rawGap, maxGap)
+          voCursor += Math.min(appliedGap, maxGap)
         }
         // Stop placing once we've filled the re-edit window. Trim the
         // tail segment so it ends exactly at totalReeditDur.
@@ -1346,9 +1381,15 @@ function applyMusicDuckingForVO() {
   // recovers a touch AFTER — that's how broadcast ducking sounds. The
   // tail pad is bigger than the head pad because human speech tails
   // off softly while music rises eagerly.
+  // -6 dB is a gentler duck than the broadcast standard (-12 to -18
+  // dB). Speech-over-music ads can usually carry a softer duck because
+  // the VO is well-recorded and high in the mix already; cutting the
+  // music in half is enough to free the dialogue without making the
+  // bed disappear. Bumping deeper makes the music feel like it ducks
+  // out of the cut entirely.
   const PRE = 0.2
   const POST = 0.4
-  const DUCK_GAIN_DB = -12
+  const DUCK_GAIN_DB = -6
   const FADE_SEC = 0.15
 
   const rawWindows = voClips.map((c) => ({

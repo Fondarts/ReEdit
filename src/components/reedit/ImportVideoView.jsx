@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import { Upload, Loader2, CheckCircle2, AlertCircle, Mic, Music, ExternalLink, RotateCcw } from 'lucide-react'
 import useProjectStore from '../../stores/projectStore'
 import useTimelineStore from '../../stores/timelineStore'
@@ -308,6 +308,14 @@ function AudioStemsSection({ sourceVideo, saveProject }) {
 
   const running = stage && stage !== 'done' && stage !== 'error'
 
+  // Auto-trigger stem separation right after a fresh import. Tracked
+  // by the source video's path: if the user re-imports a different
+  // video (or re-imports the same one — `importedAt` updates), we
+  // forget the previous "already-tried" decision and try again. We
+  // skip auto-runs when stems exist, audio is missing, or a previous
+  // attempt errored — those need a manual click on Re-run / Retry.
+  const autoTriedForPath = useRef(null)
+
   if (sourceVideo?.hasAudio === false) {
     return (
       <div className="mt-4 pt-3 border-t border-sf-dark-800 text-sf-text-muted">
@@ -361,6 +369,26 @@ function AudioStemsSection({ sourceVideo, saveProject }) {
     if (!p) return
     try { window.electronAPI?.showItemInFolder?.(p) } catch (_) { /* ignore */ }
   }
+
+  // Auto-fire `runSeparate` once per imported source. Demucs takes 5-20
+  // min — we kick it off the moment the project has a source path so
+  // the user can navigate to Analysis and start captioning while stems
+  // run in parallel; by the time they reach Optimization → Audio the
+  // VO/music stems are typically ready.
+  useEffect(() => {
+    if (!projectDir) return
+    if (sourceVideo?.hasAudio === false) return
+    if (!sourceVideo?.path) return
+    if (stems) return
+    if (running) return
+    if (stage === 'error') return
+    if (autoTriedForPath.current === sourceVideo.path) return
+    autoTriedForPath.current = sourceVideo.path
+    runSeparate()
+    // runSeparate is stable enough for this — it reads the latest
+    // sourceVideo via closure, and we're guarded against double-firing
+    // by `autoTriedForPath`. eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [projectDir, sourceVideo?.path, stems, running, stage])
 
   // Done state: show the two files + reveal + re-run.
   if (stems && stage !== 'error') {

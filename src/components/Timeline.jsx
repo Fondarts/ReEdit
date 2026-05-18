@@ -444,7 +444,7 @@ function AudioWaveformBars({ clip, clipWidth, clipUrl, waveformInput = null }) {
   )
 }
 
-function Timeline({ onOpenAudioGenerate }) {
+function Timeline({ onOpenAudioGenerate, hideToolbar = false }) {
   const timelineRef = useRef(null)
   const trackHeadersRef = useRef(null)
   const trackContentRef = useRef(null)
@@ -4046,10 +4046,11 @@ function Timeline({ onOpenAudioGenerate }) {
   return (
     <div className="h-full bg-sf-dark-900 border-t border-sf-dark-700 flex flex-col">
       {/* Timeline Header - Track controls and zoom only (transport controls are above) */}
+      {!hideToolbar && (
       <div className="h-7 bg-sf-dark-800 border-b border-sf-dark-700 flex items-center px-2 gap-3">
         {/* Add Track Buttons */}
         <div className="flex items-center gap-1">
-          <button 
+          <button
             onClick={() => addTrack('video')}
             className="flex items-center gap-1 px-1.5 py-0.5 bg-sf-dark-700 hover:bg-sf-dark-600 rounded text-[10px] text-sf-text-secondary transition-colors"
           >
@@ -4312,6 +4313,7 @@ function Timeline({ onOpenAudioGenerate }) {
           </div>
         </div>
       </div>
+      )}
 
       {/* Timeline Content */}
       <div className="flex-1 flex overflow-hidden">

@@ -23,7 +23,9 @@
  */
 
 import { useEffect, useMemo, useRef, useState } from 'react'
-import { Loader2, AlertCircle, Wand2, Music2, Trash2, Play, Sparkles, ChevronDown, ChevronUp, ExternalLink } from 'lucide-react'
+import { Loader2, AlertCircle, Wand2, Music2, Trash2, Play, Sparkles, ExternalLink } from 'lucide-react'
+import { generateMusicBriefDraft } from '../../services/reeditMusicBriefer'
+import { getActiveHttpBaseSync, getActiveComfyIpcContext } from '../../services/localComfyConnection'
 
 // Curated tag taxonomies. Same vocabulary stock-music libraries
 // (Artlist, EpidemicSound) use to filter their catalogues — well
@@ -83,6 +85,7 @@ export default function MusicPanel({
   capabilities,
   projectDir,
   defaultDurationSec,
+  analysis,
 }) {
   const [generating, setGenerating] = useState(null) // null | draftId currently rendering
   const [error, setError] = useState(null)
@@ -90,13 +93,20 @@ export default function MusicPanel({
   // synth time into a single comma-joined prompt the encoder consumes.
   const [selectedTags, setSelectedTags] = useState(() => new Set())
   const [freeText, setFreeText] = useState('')
-  const [openCategories, setOpenCategories] = useState(() => new Set(['genre', 'mood']))
+  // Single-open accordion: only one category's chip drawer is visible
+  // at a time. Click the active button again to collapse to none.
+  const [openCategoryId, setOpenCategoryId] = useState('genre')
   const [lyrics, setLyrics] = useState('')
   const [language, setLanguage] = useState('en')
   const [keyscale, setKeyscale] = useState('C minor')
   const [bpm, setBpm] = useState(110)
   const [durationSec, setDurationSec] = useState(() => Math.max(8, Math.round(defaultDurationSec || 30)))
   const [synthState, setSynthState] = useState({}) // { [draftId]: { running, stage, elapsedSec, error } }
+  // Auto-brief state: tracks the running Gemini call kicked off by
+  // the "Auto" button so we can disable it during the request and
+  // surface errors inline (no full-form alert).
+  const [autoBriefing, setAutoBriefing] = useState(false)
+  const [autoError, setAutoError] = useState(null)
 
   const toggleTag = (tag) => {
     setSelectedTags((prev) => {
@@ -107,12 +117,7 @@ export default function MusicPanel({
     })
   }
   const toggleCategoryOpen = (id) => {
-    setOpenCategories((prev) => {
-      const next = new Set(prev)
-      if (next.has(id)) next.delete(id)
-      else next.add(id)
-      return next
-    })
+    setOpenCategoryId((current) => (current === id ? null : id))
   }
   // Build the final prompt the encoder gets: tags first (in the order
   // the user picked them is fine — order doesn't matter to ACE-Step's
@@ -185,6 +190,7 @@ export default function MusicPanel({
         bpm: draft.bpm,
         language: draft.language,
         keyscale: draft.keyscale,
+        ...getActiveComfyIpcContext(),
       })
       if (!res?.success) throw new Error(res?.error || 'Music synthesis failed.')
       const updated = currentDrafts.map((d) => d.id === draft.id ? {
@@ -215,6 +221,38 @@ export default function MusicPanel({
     await runSynthesis(draft, drafts)
   }
 
+  // Auto-brief: send the ad analysis to Gemini and ask it to pick
+  // chips + write a short free-text addendum. Replaces what the user
+  // has selected so far so the result is immediately actionable.
+  const handleAutoBrief = async () => {
+    setAutoError(null)
+    if (!analysis?.overall && !(analysis?.scenes?.length)) {
+      setAutoError('No analysis on this project yet. Run Analysis → Analyze before using Auto.')
+      return
+    }
+    setAutoBriefing(true)
+    try {
+      const brief = await generateMusicBriefDraft({
+        analysis,
+        taxonomies: TAG_CATEGORIES,
+        targetDurationSec: durationSec,
+      })
+      setSelectedTags(new Set(brief.tags))
+      setFreeText(brief.freeText || '')
+      // Pop open the FIRST category that gained chips so the user can
+      // see what changed without hunting. Single-open accordion means
+      // we can only surface one — pick by taxonomy order so Genre wins
+      // the tie when both Genre and Mood got picked.
+      const firstHit = TAG_CATEGORIES.find((cat) => cat.tags.some((t) => brief.tags.includes(t)))
+      if (firstHit) setOpenCategoryId(firstHit.id)
+    } catch (err) {
+      console.error('[reedit] music auto-brief failed:', err)
+      setAutoError(err?.message || 'Auto-brief failed.')
+    } finally {
+      setAutoBriefing(false)
+    }
+  }
+
   const handleDelete = (id) => {
     const next = drafts.filter((d) => d.id !== id)
     onChangeDrafts(next)
@@ -231,61 +269,90 @@ export default function MusicPanel({
           <div className="flex items-center gap-2 mb-1.5">
             <label className="text-[11px] font-medium text-sf-text-muted uppercase tracking-wider">Style / genre</label>
             {selectedTags.size > 0 && (
-              <>
-                <span className="text-[10px] text-sf-text-muted">{selectedTags.size} tag{selectedTags.size === 1 ? '' : 's'} selected</span>
-                <button
-                  type="button"
-                  onClick={() => setSelectedTags(new Set())}
-                  className="ml-auto text-[10px] text-sf-text-muted hover:text-sf-text-primary underline"
-                >
-                  Clear all
-                </button>
-              </>
+              <span className="text-[10px] text-sf-text-muted">{selectedTags.size} tag{selectedTags.size === 1 ? '' : 's'} selected</span>
+            )}
+            <button
+              type="button"
+              onClick={handleAutoBrief}
+              disabled={autoBriefing}
+              className={`ml-auto inline-flex items-center gap-1 text-[10px] px-2 py-0.5 rounded border transition-colors
+                ${autoBriefing
+                  ? 'border-sf-dark-700 bg-sf-dark-900 text-sf-text-muted/60 cursor-not-allowed'
+                  : 'border-sf-accent/50 bg-sf-accent/10 text-sf-accent hover:bg-sf-accent/20'}`}
+              title="Have Gemini read the ad analysis and pre-fill chips + free-text"
+            >
+              {autoBriefing ? <Loader2 className="w-3 h-3 animate-spin" /> : <Sparkles className="w-3 h-3" />}
+              {autoBriefing ? 'Drafting…' : 'Auto'}
+            </button>
+            {selectedTags.size > 0 && (
+              <button
+                type="button"
+                onClick={() => setSelectedTags(new Set())}
+                className="text-[10px] text-sf-text-muted hover:text-sf-text-primary underline"
+              >
+                Clear all
+              </button>
             )}
           </div>
-          {/* Tag categories — collapsible chip pickers */}
-          <div className="space-y-1.5">
-            {TAG_CATEGORIES.map((cat) => {
-              const open = openCategories.has(cat.id)
-              const selectedInCat = cat.tags.filter((t) => selectedTags.has(t)).length
-              return (
-                <div key={cat.id} className="rounded border border-sf-dark-700 bg-sf-dark-900">
+          {autoError && (
+            <div className="mb-1.5 inline-flex items-center gap-1.5 text-[10px] text-sf-error">
+              <AlertCircle className="w-3 h-3" />
+              <span>{autoError}</span>
+            </div>
+          )}
+          {/* Tag categories — single-open accordion. Tabs row up top
+              picks which chip drawer is visible; only one drawer
+              exists at a time so the form stays compact. */}
+          <div>
+            <div className="grid grid-cols-4 gap-1">
+              {TAG_CATEGORIES.map((cat) => {
+                const open = openCategoryId === cat.id
+                const selectedInCat = cat.tags.filter((t) => selectedTags.has(t)).length
+                return (
                   <button
+                    key={cat.id}
                     type="button"
                     onClick={() => toggleCategoryOpen(cat.id)}
-                    className="w-full flex items-center gap-2 px-2.5 py-1.5 text-left hover:bg-sf-dark-800/40"
+                    className={`flex items-center justify-center gap-1.5 px-2 py-1.5 rounded border text-[11px] font-medium transition-colors
+                      ${open
+                        ? 'border-sf-accent bg-sf-accent/15 text-sf-text-primary'
+                        : 'border-sf-dark-700 bg-sf-dark-900 text-sf-text-secondary hover:border-sf-dark-500 hover:text-sf-text-primary'}`}
+                    title={cat.label}
                   >
-                    {open ? <ChevronUp className="w-3 h-3 text-sf-text-muted" /> : <ChevronDown className="w-3 h-3 text-sf-text-muted" />}
-                    <span className="text-[11px] font-medium text-sf-text-secondary">{cat.label}</span>
+                    <span className="truncate">{cat.label}</span>
                     {selectedInCat > 0 && (
-                      <span className="text-[9px] uppercase tracking-wider px-1.5 py-0.5 rounded bg-sf-accent/20 text-sf-accent border border-sf-accent/30">
+                      <span className="text-[9px] uppercase tracking-wider px-1 py-0.5 rounded bg-sf-accent/25 text-sf-accent border border-sf-accent/40">
                         {selectedInCat}
                       </span>
                     )}
                   </button>
-                  {open && (
-                    <div className="px-2.5 py-2 border-t border-sf-dark-700/60 flex flex-wrap gap-1.5">
-                      {cat.tags.map((tag) => {
-                        const isOn = selectedTags.has(tag)
-                        return (
-                          <button
-                            key={tag}
-                            type="button"
-                            onClick={() => toggleTag(tag)}
-                            className={`text-[11px] px-2 py-0.5 rounded-full border transition-colors
-                              ${isOn
-                                ? 'border-sf-accent bg-sf-accent text-white hover:bg-sf-accent/90'
-                                : 'border-sf-dark-700 bg-sf-dark-950 text-sf-text-secondary hover:border-sf-dark-500 hover:text-sf-text-primary'}`}
-                          >
-                            {tag}
-                          </button>
-                        )
-                      })}
-                    </div>
-                  )}
+                )
+              })}
+            </div>
+            {openCategoryId && (() => {
+              const cat = TAG_CATEGORIES.find((c) => c.id === openCategoryId)
+              if (!cat) return null
+              return (
+                <div className="mt-1.5 px-2.5 py-2 rounded border border-sf-dark-700 bg-sf-dark-900 flex flex-wrap gap-1.5">
+                  {cat.tags.map((tag) => {
+                    const isOn = selectedTags.has(tag)
+                    return (
+                      <button
+                        key={tag}
+                        type="button"
+                        onClick={() => toggleTag(tag)}
+                        className={`text-[11px] px-2 py-0.5 rounded-full border transition-colors
+                          ${isOn
+                            ? 'border-sf-accent bg-sf-accent text-white hover:bg-sf-accent/90'
+                            : 'border-sf-dark-700 bg-sf-dark-950 text-sf-text-secondary hover:border-sf-dark-500 hover:text-sf-text-primary'}`}
+                      >
+                        {tag}
+                      </button>
+                    )
+                  })}
                 </div>
               )
-            })}
+            })()}
           </div>
           {/* Free-text addendum */}
           <div className="mt-2">

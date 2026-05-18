@@ -7,6 +7,12 @@ import {
   getLocalComfyHttpBaseSync,
   getLocalComfyWsBaseSync,
   hydrateLocalComfyConnection,
+  getActiveHttpBaseSync,
+  getActiveWsBaseSync,
+  getActiveApiKeySync,
+  getActiveModeSync,
+  hydrateComfyCloudConnection,
+  COMFY_MODE_CLOUD,
 } from './localComfyConnection'
 import {
   isInsufficientCreditsError,
@@ -87,6 +93,31 @@ class ComfyUIService {
     this._promptNodeMeta = new Map();
     this._promptNodeMetaMax = 32;
     void hydrateLocalComfyConnection()
+    void hydrateComfyCloudConnection()
+  }
+
+  // Headers added to every HTTP fetch. In cloud mode the API key is
+  // injected as `X-API-Key` (Comfy Cloud's documented header) AND
+  // `Authorization: Bearer …` as a fallback for proxies that prefer
+  // Bearer. Local mode adds nothing (loopback has no auth).
+  _authHeaders(extra = {}) {
+    if (getActiveModeSync() !== COMFY_MODE_CLOUD) return extra
+    const key = getActiveApiKeySync()
+    if (!key) return extra
+    return { ...extra, 'X-API-Key': key, Authorization: `Bearer ${key}` }
+  }
+
+  // Endpoint path mapper. Comfy Cloud documents its API under /api/…
+  // while local ComfyUI exposes the same routes at the root. Centralise
+  // the prefix decision so every call gets the right path automatically
+  // based on the user's active mode.
+  _apiPath(path) {
+    const p = path.startsWith('/') ? path : `/${path}`
+    if (getActiveModeSync() === COMFY_MODE_CLOUD) {
+      // Already prefixed? Don't double it.
+      return p.startsWith('/api/') ? p : `/api${p}`
+    }
+    return p
   }
 
   /**
@@ -124,11 +155,13 @@ class ComfyUIService {
   }
 
   getHttpBase() {
-    return getLocalComfyHttpBaseSync()
+    // Active connection respects the user's mode toggle (local vs cloud).
+    // Falls back to the local loopback when cloud isn't configured.
+    return getActiveHttpBaseSync() || getLocalComfyHttpBaseSync()
   }
 
   getWsBase() {
-    return getLocalComfyWsBaseSync()
+    return getActiveWsBaseSync() || getLocalComfyWsBaseSync()
   }
 
   /**
@@ -160,7 +193,12 @@ class ComfyUIService {
       }
 
       // Always connect directly to ComfyUI (Vite proxy doesn't handle WS well)
-      const wsUrl = `${this.getWsBase()}/ws?clientId=${this.clientId}`;
+      // WebSocket URL: cloud hosts typically accept the API key via
+      // ?token=… (no auth headers on a WS upgrade). We append it when
+      // we have one; loopback ignores it.
+      const cloudKey = getActiveModeSync() === COMFY_MODE_CLOUD ? getActiveApiKeySync() : ''
+      const tokenSuffix = cloudKey ? `&token=${encodeURIComponent(cloudKey)}` : ''
+      const wsUrl = `${this.getWsBase()}/ws?clientId=${this.clientId}${tokenSuffix}`;
       
       // Only log first attempt
       if (this.wsFailCount === 0) {
@@ -325,7 +363,7 @@ class ComfyUIService {
     const suffix = classType
       ? `/object_info/${encodeURIComponent(String(classType).trim())}`
       : '/object_info'
-    const response = await fetch(`${this.getHttpBase()}${suffix}`)
+    const response = await fetch(`${this.getHttpBase()}${this._apiPath(suffix)}`, { headers: this._authHeaders() })
     if (!response.ok) {
       throw new Error(`Failed to fetch ComfyUI object info (${response.status})`)
     }
@@ -347,11 +385,11 @@ class ComfyUIService {
           api_key_comfy_org: apiKey
         };
       }
-      const response = await fetch(`${this.getHttpBase()}/prompt`, {
+      const response = await fetch(`${this.getHttpBase()}${this._apiPath('/prompt')}`, {
         method: 'POST',
-        headers: {
+        headers: this._authHeaders({
           'Content-Type': 'application/json',
-        },
+        }),
         body: JSON.stringify(payload),
       });
 
@@ -576,14 +614,56 @@ class ComfyUIService {
    */
   async getHistory(promptId) {
     try {
-      const url = promptId
-        ? `${this.getHttpBase()}/history/${promptId}`
-        : `${this.getHttpBase()}/history`;
-      const response = await fetch(url);
-      return await response.json();
+      // Cloud and local diverge here:
+      //   - Local ComfyUI:  GET /history/<id>  or  GET /history (all jobs)
+      //   - Comfy Cloud:    GET /api/jobs/<id> (returns outputs by node id)
+      //                     `/api/jobs` plural for one job is intentional;
+      //                     there is no documented "full history" endpoint.
+      // We always return a map keyed by promptId to keep the shape stable
+      // for callers, even if the cloud response itself isn't wrapped that way.
+      const isCloud = getActiveModeSync() === COMFY_MODE_CLOUD
+      let url
+      if (isCloud) {
+        if (!promptId) {
+          // No documented "all jobs" listing on cloud — return empty map.
+          return {}
+        }
+        url = `${this.getHttpBase()}/api/jobs/${encodeURIComponent(promptId)}`
+      } else {
+        url = promptId
+          ? `${this.getHttpBase()}/history/${promptId}`
+          : `${this.getHttpBase()}/history`
+      }
+      const response = await fetch(url, { headers: this._authHeaders() });
+      const data = await response.json();
+      // Cloud returns the job object directly. Local returns
+      // { [promptId]: { outputs, status, ... } }. Wrap the cloud
+      // response into the same shape so polling code stays uniform.
+      if (isCloud && promptId) {
+        return { [promptId]: data }
+      }
+      return data
     } catch (error) {
       console.error('Error getting history:', error);
       throw error;
+    }
+  }
+
+  // Lightweight status poll — only available on Cloud. Returns the
+  // documented status enum ('pending' | 'in_progress' | 'completed' |
+  // 'failed' | 'cancelled'). Cheaper than getHistory() because it
+  // doesn't return the outputs blob.
+  async getJobStatus(promptId) {
+    if (!promptId) return null
+    if (getActiveModeSync() !== COMFY_MODE_CLOUD) return null
+    try {
+      const url = `${this.getHttpBase()}/api/job/${encodeURIComponent(promptId)}/status`
+      const response = await fetch(url, { headers: this._authHeaders() })
+      if (!response.ok) return null
+      return await response.json()  // { status: '...' }
+    } catch (error) {
+      console.error('Error getting job status:', error)
+      return null
     }
   }
 
@@ -596,7 +676,7 @@ class ComfyUIService {
       subfolder,
       type
     });
-    return `${this.getHttpBase()}/view?${params}`;
+    return `${this.getHttpBase()}${this._apiPath('/view')}?${params}`;
   }
 
   /**
@@ -608,9 +688,9 @@ class ComfyUIService {
    */
   async downloadVideo(filename, subfolder = '', type = 'output') {
     const url = this.getMediaUrl(filename, subfolder, type);
-    
+
     try {
-      const response = await fetch(url);
+      const response = await fetch(url, { headers: this._authHeaders() });
       if (!response.ok) {
         throw new Error(`Failed to download video: ${response.status}`);
       }
@@ -631,7 +711,9 @@ class ComfyUIService {
    */
   async interrupt() {
     try {
-      await fetch(`${this.getHttpBase()}/interrupt`, { method: 'POST' });
+      // Comfy Cloud doesn't document an /interrupt endpoint; calling it
+      // is a best-effort no-op there. Local ComfyUI accepts it normally.
+      await fetch(`${this.getHttpBase()}${this._apiPath('/interrupt')}`, { method: 'POST', headers: this._authHeaders() });
     } catch (error) {
       console.error('Error interrupting:', error);
     }
@@ -642,7 +724,14 @@ class ComfyUIService {
    */
   async getQueueStatus() {
     try {
-      const response = await fetch(`${this.getHttpBase()}/queue`);
+      // Comfy Cloud doesn't document /queue (only per-job status via
+      // /api/job/<id>/status). On cloud we return an empty queue shape
+      // so callers that expect { queue_running, queue_pending } don't
+      // break — concurrency limits are managed cloud-side anyway.
+      if (getActiveModeSync() === COMFY_MODE_CLOUD) {
+        return { queue_running: [], queue_pending: [] }
+      }
+      const response = await fetch(`${this.getHttpBase()}/queue`, { headers: this._authHeaders() });
       return await response.json();
     } catch (error) {
       console.error('Error getting queue:', error);
@@ -674,8 +763,9 @@ class ComfyUIService {
       formData.append('type', type);
       formData.append('overwrite', 'true');
 
-      const response = await fetch(`${this.getHttpBase()}/upload/image`, {
+      const response = await fetch(`${this.getHttpBase()}${this._apiPath('/upload/image')}`, {
         method: 'POST',
+        headers: this._authHeaders(),  // Note: do NOT add Content-Type — fetch will set the multipart boundary
         body: formData,
       });
 

@@ -50,11 +50,64 @@ export function extractJson(text) {
     const last = s.lastIndexOf('}')
     if (first >= 0 && last > first) s = s.slice(first, last + 1)
   }
-  try {
-    return JSON.parse(s)
-  } catch {
-    return null
+  // Fast path: well-formed JSON.
+  try { return JSON.parse(s) } catch { /* fall through to tolerant parsing */ }
+
+  // Tolerant recovery: Gemini occasionally hits MAX_TOKENS mid-string,
+  // leaving us with `{"visual": "frenetic, low-angle..."` and no closing
+  // bracket. Try to close the structure ourselves: close the open string
+  // (if any), then close any unclosed object braces / array brackets we
+  // can count. If that still doesn't parse, fall back to regex-pulling
+  // the `visual` field — that's the only one downstream really needs.
+  const repaired = tryRepairTruncatedJson(s)
+  if (repaired) {
+    try { return JSON.parse(repaired) } catch { /* still bad, regex below */ }
   }
+
+  // Last-resort regex: yank `"visual": "..."` even if the rest of the
+  // object is rubbish. Handles escaped quotes and newlines inside the
+  // value. We only recover the visual field on purpose — anything else
+  // we'd surface from a half-truncated JSON would be unreliable.
+  const m = s.match(/"visual"\s*:\s*"((?:[^"\\]|\\.)*)"/)
+  if (m) {
+    let v = m[1]
+    try { v = JSON.parse('"' + v + '"') } catch { /* unescape best-effort */ }
+    return { visual: v, __truncated: true }
+  }
+  return null
+}
+
+// Best-effort: close any unfinished string, any unbalanced [ or {.
+function tryRepairTruncatedJson(s) {
+  let inString = false
+  let escape = false
+  const stack = []
+  for (let i = 0; i < s.length; i++) {
+    const ch = s[i]
+    if (inString) {
+      if (escape) { escape = false; continue }
+      if (ch === '\\') { escape = true; continue }
+      if (ch === '"') inString = false
+      continue
+    }
+    if (ch === '"') { inString = true; continue }
+    if (ch === '{' || ch === '[') stack.push(ch)
+    else if (ch === '}') { if (stack[stack.length-1] === '{') stack.pop() }
+    else if (ch === ']') { if (stack[stack.length-1] === '[') stack.pop() }
+  }
+  let out = s
+  // If the truncation happened mid-string-value, drop the trailing
+  // characters that don't fit (no graceful way to know where to cut, so
+  // we close the string immediately).
+  if (inString) out += '"'
+  // Drop a dangling comma if any.
+  out = out.replace(/,\s*$/, '')
+  // Close any open containers in reverse order.
+  while (stack.length) {
+    const open = stack.pop()
+    out += (open === '{' ? '}' : ']')
+  }
+  return out === s ? null : out
 }
 
 // Go through the main process IPC instead of fetching the

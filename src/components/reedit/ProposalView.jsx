@@ -3,10 +3,12 @@ import {
   Sparkles, Loader2, AlertCircle, Save, RotateCcw,
   ArrowUp, ArrowDown, Trash2, CheckCircle2, Film, Wand2, Eye, EyeOff,
   Pencil, Plus, Cpu, KeyRound, ExternalLink, Video, Image as ImageIcon,
-  Play, Pause,
+  Play, Pause, ChevronDown,
 } from 'lucide-react'
 import useProjectStore from '../../stores/projectStore'
 import { generateProposal } from '../../services/reeditProposer'
+import { parseSundogsReport } from '../../services/reeditSundogsReport'
+import SundogsReportPanel from './sundogs/SundogsReportPanel'
 import { applyEdlToTimeline, buildPlaceholderSvgDataUrl } from '../../services/reeditEdlToTimeline'
 import { generateFillForPlaceholder, sendPlaceholderWorkflowToComfyUI } from '../../services/reeditGenerate'
 import { useReeditPresets } from '../../hooks/useReeditPresets'
@@ -420,6 +422,12 @@ function ProposalView({ onNavigate }) {
     setError(null)
     setGenState({})
     setHover(null)
+    // Re-sync the imported Sundogs report when the project identity
+    // flips (different source video / proposal cleared). The report
+    // is tied to the current commercial, so a report imported for a
+    // different ad would mislead both the panel and the proposer.
+    setSundogsReport(currentProject?.sundogsReport || null)
+    setReportError(null)
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [projectIdentity])
 
@@ -458,6 +466,16 @@ function ProposalView({ onNavigate }) {
   )
   const [generating, setGenerating] = useState(false)
   const [error, setError] = useState(null)
+
+  // Sundogs report — the client's PDF analysis imported by the user.
+  // Persisted on the project alongside the proposal so it survives a
+  // reload. Only consumed when the user picks the 'Sundogs' metric;
+  // the parsed report gets injected into the proposal LLM prompt so
+  // the EDL it returns optimises against Sundogs' actual scoring.
+  const savedSundogsReport = currentProject?.sundogsReport || null
+  const [sundogsReport, setSundogsReport] = useState(savedSundogsReport)
+  const [importingReport, setImportingReport] = useState(false)
+  const [reportError, setReportError] = useState(null)
 
   // Voiceover plan — which VO segments (from analysis.overall.voiceover_segments)
   // end up on the timeline, and whether the user has taken manual control.
@@ -527,7 +545,38 @@ function ProposalView({ onNavigate }) {
     // forces the other OFF so the UI stays self-consistent.
     if (turningOn && id === 'generateVoiceover') patch.useOriginalVoiceover = false
     if (turningOn && id === 'useOriginalVoiceover') patch.generateVoiceover = false
+    if (turningOn && id === 'generateMusic') patch.useOriginalMusic = false
+    if (turningOn && id === 'useOriginalMusic') patch.generateMusic = false
     const next = saveProposalCapabilities(patch)
+    setCapabilities(next)
+  }
+
+  // VO mode tri-state. Mirrors the dropdown exposed in OptimizationView
+  // so the user can decide here without bouncing tabs. Setting a mode
+  // writes both flags atomically so the mutually-exclusive invariant
+  // holds (`saveProposalCapabilities` doesn't enforce it on patches).
+  const voMode = capabilities.generateVoiceover
+    ? 'generate'
+    : capabilities.useOriginalVoiceover
+      ? 'original'
+      : 'off'
+  const setVoMode = (mode) => {
+    const next = saveProposalCapabilities({
+      useOriginalVoiceover: mode === 'original',
+      generateVoiceover: mode === 'generate',
+    })
+    setCapabilities(next)
+  }
+  const musicMode = capabilities.generateMusic
+    ? 'generate'
+    : capabilities.useOriginalMusic
+      ? 'original'
+      : 'off'
+  const setMusicMode = (mode) => {
+    const next = saveProposalCapabilities({
+      useOriginalMusic: mode === 'original',
+      generateMusic: mode === 'generate',
+    })
     setCapabilities(next)
   }
 
@@ -583,6 +632,26 @@ function ProposalView({ onNavigate }) {
     return <PrereqPrompt>Run <span className="text-sf-text-primary">Caption all</span> in Analysis first — the LLM needs scene descriptions to reason about the edit.</PrereqPrompt>
   }
 
+  // Import a Sundogs PDF report. Persisted on the project so it
+  // survives reload. Errors are surfaced via `reportError`; we don't
+  // re-throw because the panel button is the only caller and a
+  // failed import shouldn't abort anything else.
+  const importSundogsReport = async (file) => {
+    if (!file) return
+    setImportingReport(true)
+    setReportError(null)
+    try {
+      const result = await parseSundogsReport({ file })
+      setSundogsReport(result)
+      await saveProject({ sundogsReport: result })
+    } catch (err) {
+      console.error('[reedit] Sundogs PDF import failed:', err)
+      setReportError(err?.message || 'Sundogs PDF import failed.')
+    } finally {
+      setImportingReport(false)
+    }
+  }
+
   const runGenerate = async () => {
     if (generating) return
     setGenerating(true)
@@ -603,6 +672,11 @@ function ProposalView({ onNavigate }) {
         targetDurationSec,
         capabilities,
         sourceVideoPath: sourceVideo?.path || null,
+        // Only pass the report when the active metric is Sundogs.
+        // Otherwise the prompt would carry a # Sundogs Report block
+        // even when the LLM is supposed to optimise against ABCD or a
+        // single-dimension metric — confusing the role.
+        sundogsReport: selected?.id === 'Sundogs' ? sundogsReport : null,
         // Creative strategist's read of the original ad, produced by the
         // Analyze pass in AnalysisView. Drives the "preserve original
         // intent" block in the prompt so the proposer doesn't drift off
@@ -1032,94 +1106,78 @@ function ProposalView({ onNavigate }) {
         {/* Inputs */}
         <div className="px-6 py-5 border-b border-sf-dark-800 bg-sf-dark-950">
           <div>
-            <label className="block text-xs font-medium text-sf-text-muted uppercase tracking-wider mb-2">Optimize for</label>
-            {/* Fixed-width preset cards in a wrapping flex row. Cards
-                stay at their natural size instead of stretching to
-                fill the row, so adding more presets later just spills
-                onto a second row — and the empty trailing space is a
-                visual hint that "you can add more here". */}
-            <div className="flex flex-wrap gap-2 mb-5">
-              {presets.map((m) => (
-                <div key={m.id} className="relative group/preset w-[180px] flex-shrink-0">
+            {/* Optimize-for + Target duration in one row. Both are
+                short controls — keeping them side-by-side reclaims
+                vertical space the old card-row was eating. */}
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-4 mb-4">
+              <div>
+                <label className="block text-xs font-medium text-sf-text-muted uppercase tracking-wider mb-2">Optimize for</label>
+                <div className="flex items-center gap-2">
+                  <div className="relative flex-1">
+                    <select
+                      value={metric}
+                      onChange={(e) => setMetric(e.target.value)}
+                      className="w-full appearance-none rounded-lg border border-sf-dark-700 bg-sf-dark-900 pl-3 pr-8 py-1.5 text-sm text-sf-text-primary focus:outline-none focus:border-sf-accent"
+                    >
+                      {presets.map((m) => (
+                        <option key={m.id} value={m.id}>{m.label}</option>
+                      ))}
+                    </select>
+                    <ChevronDown className="w-3.5 h-3.5 text-sf-text-muted absolute right-2.5 top-1/2 -translate-y-1/2 pointer-events-none" />
+                  </div>
                   <button
                     type="button"
-                    onClick={() => setMetric(m.id)}
-                    className={`w-full h-full text-left p-3 rounded-lg border transition-colors
-                      ${metric === m.id
-                        ? 'border-sf-accent bg-sf-accent/10 text-sf-text-primary'
-                        : 'border-sf-dark-700 bg-sf-dark-900 text-sf-text-muted hover:border-sf-dark-500 hover:text-sf-text-primary'}`}
+                    onClick={() => {
+                      const m = presets.find((p) => p.id === metric)
+                      if (m) handleOpenEditPreset(m)
+                    }}
+                    className="p-1.5 rounded border border-sf-dark-700 bg-sf-dark-900 hover:bg-sf-dark-800 text-sf-text-muted hover:text-sf-text-primary"
+                    title="Edit selected preset"
                   >
-                    <div className="text-sm font-medium pr-6">{m.label}</div>
-                    <div className="text-[10px] leading-snug mt-1 opacity-80">{m.blurb || 'No description.'}</div>
+                    <Pencil className="w-3.5 h-3.5" />
                   </button>
                   <button
                     type="button"
-                    onClick={(e) => { e.stopPropagation(); handleOpenEditPreset(m) }}
-                    title="Edit preset"
-                    className="absolute top-1.5 right-1.5 p-1 rounded bg-sf-dark-800/80 hover:bg-sf-dark-700 text-sf-text-muted hover:text-sf-text-primary opacity-0 group-hover/preset:opacity-100 focus:opacity-100 transition-opacity"
+                    onClick={handleOpenCreatePreset}
+                    className="p-1.5 rounded border border-sf-dark-700 bg-sf-dark-900 hover:bg-sf-dark-800 text-sf-text-muted hover:text-sf-text-primary"
+                    title="Create new preset"
                   >
-                    <Pencil className="w-3 h-3" />
+                    <Plus className="w-3.5 h-3.5" />
                   </button>
                 </div>
-              ))}
-              <button
-                type="button"
-                onClick={handleOpenCreatePreset}
-                className="w-[180px] flex-shrink-0 text-left p-3 rounded-lg border border-dashed border-sf-dark-700 bg-sf-dark-950 hover:border-sf-accent hover:bg-sf-accent/5 text-sf-text-muted hover:text-sf-text-primary transition-colors flex flex-col items-center justify-center gap-1"
-                title="Create a new preset"
-              >
-                <Plus className="w-4 h-4" />
-                <span className="text-[11px]">New preset</span>
-              </button>
-            </div>
-
-            <label className="block text-xs font-medium text-sf-text-muted uppercase tracking-wider mb-2">
-              Target duration
-              <span className="text-sf-text-muted/70 normal-case ml-2">
-                (the LLM picks a subset of scenes whose natural durations sum close to this)
-              </span>
-            </label>
-            <div className="mb-5 flex items-center flex-wrap gap-2">
-              <div className="inline-flex items-center rounded-lg border border-sf-dark-700 bg-sf-dark-900 overflow-hidden">
-                <input
-                  type="number"
-                  min={1}
-                  max={600}
-                  step={1}
-                  value={Math.round(targetDurationSec)}
-                  onChange={(e) => {
-                    const v = Number(e.target.value)
-                    if (Number.isFinite(v) && v > 0) setTargetDurationSec(v)
-                  }}
-                  className="w-20 bg-transparent px-3 py-1.5 text-sm text-sf-text-primary focus:outline-none tabular-nums"
-                />
-                <span className="pr-3 pl-1 text-xs text-sf-text-muted">seconds</span>
               </div>
-              {sourceVideo?.duration && (
-                <button
-                  type="button"
-                  onClick={() => setTargetDurationSec(sourceVideo.duration)}
-                  className={`px-2.5 py-1 rounded text-[11px] border transition-colors
-                    ${Math.abs(targetDurationSec - sourceVideo.duration) < 0.5
-                      ? 'border-sf-accent bg-sf-accent/10 text-sf-text-primary'
-                      : 'border-sf-dark-700 bg-sf-dark-900 text-sf-text-muted hover:border-sf-dark-500 hover:text-sf-text-primary'}`}
-                >
-                  Original ({sourceVideo.duration.toFixed(1)}s)
-                </button>
-              )}
-              {[6, 15, 30, 60].map((n) => (
-                <button
-                  key={n}
-                  type="button"
-                  onClick={() => setTargetDurationSec(n)}
-                  className={`px-2.5 py-1 rounded text-[11px] border transition-colors
-                    ${Math.abs(targetDurationSec - n) < 0.5
-                      ? 'border-sf-accent bg-sf-accent/10 text-sf-text-primary'
-                      : 'border-sf-dark-700 bg-sf-dark-900 text-sf-text-muted hover:border-sf-dark-500 hover:text-sf-text-primary'}`}
-                >
-                  {n}s
-                </button>
-              ))}
+              <div>
+                <label className="block text-xs font-medium text-sf-text-muted uppercase tracking-wider mb-2">Target duration</label>
+                <div className="flex items-center gap-2">
+                  <div className="inline-flex items-center rounded-lg border border-sf-dark-700 bg-sf-dark-900 overflow-hidden">
+                    <input
+                      type="number"
+                      min={1}
+                      max={600}
+                      step={1}
+                      value={Math.round(targetDurationSec)}
+                      onChange={(e) => {
+                        const v = Number(e.target.value)
+                        if (Number.isFinite(v) && v > 0) setTargetDurationSec(v)
+                      }}
+                      className="w-20 bg-transparent px-3 py-1.5 text-sm text-sf-text-primary focus:outline-none tabular-nums"
+                    />
+                    <span className="pr-3 pl-1 text-xs text-sf-text-muted">seconds</span>
+                  </div>
+                  {sourceVideo?.duration && (
+                    <button
+                      type="button"
+                      onClick={() => setTargetDurationSec(sourceVideo.duration)}
+                      className={`px-2.5 py-1 rounded text-[11px] border transition-colors whitespace-nowrap
+                        ${Math.abs(targetDurationSec - sourceVideo.duration) < 0.5
+                          ? 'border-sf-accent bg-sf-accent/10 text-sf-text-primary'
+                          : 'border-sf-dark-700 bg-sf-dark-900 text-sf-text-muted hover:border-sf-dark-500 hover:text-sf-text-primary'}`}
+                    >
+                      Original ({sourceVideo.duration.toFixed(1)}s)
+                    </button>
+                  )}
+                </div>
+              </div>
             </div>
 
             <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
@@ -1137,67 +1195,107 @@ function ProposalView({ onNavigate }) {
                   className="w-full text-sm rounded-lg border border-sf-dark-700 bg-sf-dark-900 px-3 py-2 text-sf-text-primary placeholder:text-sf-text-muted/60 focus:outline-none focus:border-sf-accent resize-none"
                 />
               </div>
-              {/* Voiceover decisions (original VO segment picker + new
-                  VO drafts/synth) live in the Optimization tab now.
-                  ProposalView still reads voPlan + voiceoverDrafts from
-                  the project to feed the proposer / placer, but the UI
-                  to author them moved one tab to the left. */}
-              <div className="md:col-span-2 rounded-lg border border-sf-dark-700 bg-sf-dark-900/60 px-3 py-2.5 text-[12px] text-sf-text-muted">
-                {(() => {
-                  if (capabilities.generateVoiceover) {
-                    const sel = voiceoverDrafts.find((d) => d.id === selectedVoiceoverDraftId)
-                    if (sel?.synthesis?.status === 'done') {
-                      return (
-                        <>Voiceover: <span className="text-emerald-300">generated draft &ldquo;{sel.title || sel.id}&rdquo; ready</span> — proposer will plan visuals around it. Edit in <button type="button" onClick={() => onNavigate?.('optimization')} className="text-sf-accent hover:underline">Optimization → Audio</button>.</>
-                      )
-                    }
-                    return (
-                      <>Voiceover capability is set to <span className="text-sf-text-secondary">generate new VO</span> but no synthesised draft selected. Open <button type="button" onClick={() => onNavigate?.('optimization')} className="text-sf-accent hover:underline">Optimization → Audio</button> to draft and synthesise one.</>
-                    )
-                  }
-                  if (capabilities.useOriginalVoiceover) {
-                    return (
-                      <>Voiceover: reusing the original VO stem. Adjust segment picks / timings in <button type="button" onClick={() => onNavigate?.('optimization')} className="text-sf-accent hover:underline">Optimization → Audio</button>.</>
-                    )
-                  }
-                  return (
-                    <>Voiceover capability is off — the timeline will be silent on the audio track. Toggle one of the two VO modes in <button type="button" onClick={() => onNavigate?.('optimization')} className="text-sf-accent hover:underline">Optimization → Audio</button>.</>
-                  )
-                })()}
-              </div>
             </div>
 
+            {/* Sundogs report — only visible when the user picks the
+                Sundogs metric. The panel imports the client's PDF
+                analysis (Gemini parses it) and the parsed scores get
+                injected into the proposal prompt as a `# Sundogs
+                Report` block so the EDL directly addresses the
+                negative deltas / "evaluate" techniques. */}
+            {metric === 'Sundogs' && (
+              <div className="mt-4">
+                <SundogsReportPanel
+                  report={sundogsReport}
+                  importing={importingReport}
+                  error={reportError}
+                  onPickFile={importSundogsReport}
+                />
+              </div>
+            )}
+
+            {/* Capabilities — compact chip row. Just the label, with
+                the longer blurb surfaced as a tooltip so the row stays
+                short. VO + music aren't here; they get their own
+                dropdowns below since they're tri-state, not boolean. */}
             <div className="mt-4">
               <div className="block text-xs font-medium text-sf-text-muted uppercase tracking-wider mb-2">
                 Capabilities
                 <span className="text-sf-text-muted/70 normal-case ml-2">what the proposer is allowed to do</span>
               </div>
-              <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-2">
-                {CAPABILITY_DEFINITIONS.filter((cap) => cap.id !== 'useOriginalVoiceover' && cap.id !== 'generateVoiceover').map((cap) => {
-                  const enabled = Boolean(capabilities[cap.id])
+              <div className="flex flex-wrap gap-1.5">
+                {CAPABILITY_DEFINITIONS
+                  .filter((cap) => !['useOriginalVoiceover', 'generateVoiceover', 'useOriginalMusic', 'generateMusic'].includes(cap.id))
+                  .map((cap) => {
+                    const enabled = Boolean(capabilities[cap.id])
+                    return (
+                      <button
+                        key={cap.id}
+                        type="button"
+                        onClick={() => toggleCapability(cap.id)}
+                        title={cap.blurb}
+                        className={`px-2.5 py-1 rounded-full border text-[12px] transition-colors
+                          ${enabled
+                            ? 'border-sf-accent bg-sf-accent/15 text-sf-text-primary'
+                            : 'border-sf-dark-700 bg-sf-dark-900 text-sf-text-muted hover:border-sf-dark-500 hover:text-sf-text-primary'}`}
+                      >
+                        {cap.label}
+                      </button>
+                    )
+                  })}
+              </div>
+            </div>
+
+            {/* Audio mode dropdowns. Tri-state per track (original /
+                generate / off). Same backing flags as the
+                Optimization → Audio section, persisted via
+                `saveProposalCapabilities` so both views stay in sync. */}
+            <div className="mt-4 grid grid-cols-1 md:grid-cols-2 gap-3">
+              <div>
+                <label className="block text-xs font-medium text-sf-text-muted uppercase tracking-wider mb-2">Voiceover</label>
+                <div className="relative">
+                  <select
+                    value={voMode}
+                    onChange={(e) => setVoMode(e.target.value)}
+                    className="w-full appearance-none rounded-lg border border-sf-dark-700 bg-sf-dark-900 pl-3 pr-8 py-1.5 text-sm text-sf-text-primary focus:outline-none focus:border-sf-accent"
+                  >
+                    <option value="original">Use original VO</option>
+                    <option value="generate">Generate new VO</option>
+                    <option value="off">No VO</option>
+                  </select>
+                  <ChevronDown className="w-3.5 h-3.5 text-sf-text-muted absolute right-2.5 top-1/2 -translate-y-1/2 pointer-events-none" />
+                </div>
+                {voMode === 'generate' && (() => {
+                  const sel = voiceoverDrafts.find((d) => d.id === selectedVoiceoverDraftId)
+                  const ready = sel?.synthesis?.status === 'done'
                   return (
-                    <label
-                      key={cap.id}
-                      className={`flex items-start gap-2.5 p-2.5 rounded-lg border cursor-pointer transition-colors
-                        ${enabled
-                          ? 'border-sf-accent bg-sf-accent/10'
-                          : 'border-sf-dark-700 bg-sf-dark-900 hover:border-sf-dark-500'}`}
-                    >
-                      <input
-                        type="checkbox"
-                        checked={enabled}
-                        onChange={() => toggleCapability(cap.id)}
-                        className="mt-0.5 accent-sf-accent"
-                      />
-                      <div className="flex-1 min-w-0">
-                        <div className={`text-sm font-medium ${enabled ? 'text-sf-text-primary' : 'text-sf-text-secondary'}`}>
-                          {cap.label}
-                        </div>
-                        <div className="text-[10px] leading-snug text-sf-text-muted mt-0.5">{cap.blurb}</div>
-                      </div>
-                    </label>
+                    <div className="text-[11px] text-sf-text-muted mt-1.5">
+                      {ready
+                        ? <>Draft <span className="text-emerald-300">&ldquo;{sel.title || sel.id}&rdquo;</span> ready · edit in <button type="button" onClick={() => onNavigate?.('optimization')} className="text-sf-accent hover:underline">Optimization → Audio</button>.</>
+                        : <>No synthesised draft yet · <button type="button" onClick={() => onNavigate?.('optimization')} className="text-sf-accent hover:underline">draft one in Optimization → Audio</button>.</>}
+                    </div>
                   )
-                })}
+                })()}
+              </div>
+              <div>
+                <label className="block text-xs font-medium text-sf-text-muted uppercase tracking-wider mb-2">Music</label>
+                <div className="relative">
+                  <select
+                    value={musicMode}
+                    onChange={(e) => setMusicMode(e.target.value)}
+                    className="w-full appearance-none rounded-lg border border-sf-dark-700 bg-sf-dark-900 pl-3 pr-8 py-1.5 text-sm text-sf-text-primary focus:outline-none focus:border-sf-accent"
+                  >
+                    <option value="original">Use original music</option>
+                    <option value="generate">Generate new music</option>
+                    <option value="off">No music</option>
+                  </select>
+                  <ChevronDown className="w-3.5 h-3.5 text-sf-text-muted absolute right-2.5 top-1/2 -translate-y-1/2 pointer-events-none" />
+                </div>
+                {musicMode === 'generate' && (
+                  <div className="text-[11px] text-sf-text-muted mt-1.5">
+                    Generate drafts in <button type="button" onClick={() => onNavigate?.('optimization')} className="text-sf-accent hover:underline">Optimization → Audio → Music</button>.
+                  </div>
+                )}
               </div>
             </div>
 

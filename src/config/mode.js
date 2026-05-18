@@ -27,11 +27,13 @@ export const REEDIT_FULLSCREEN_TABS = new Set(['projects', 'import', 'analysis',
 
 // Decide the initial tab when a project is opened or created.
 // - No sourceVideo yet → Import.
-// - Has video, no approved proposal → Analysis (user continues from where they left).
-// - Approved proposal → Editor (the timeline is the right workspace).
+// - Has video → Analysis. We used to short-circuit to Editor when the
+//   proposal was approved, but reopening a project usually means the
+//   user wants to inspect / re-run the pipeline, not jump straight into
+//   the timeline. Editor is one click away from here when they really
+//   need it.
 export function pickInitialReeditTab(project) {
   if (!project) return 'import'
   if (!project.sourceVideo) return 'import'
-  if (project.proposal?.status === 'approved') return 'editor'
   return 'analysis'
 }

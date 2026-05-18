@@ -34,6 +34,13 @@ import {
   describeComfyLauncherPortOwner,
   connectComfyLauncherExternal,
 } from '../services/comfyLauncher'
+import {
+  COMFY_MODE_CLOUD,
+  COMFY_CONNECTION_CHANGED_EVENT,
+  getActiveModeSync,
+  getActiveHttpBaseSync,
+} from '../services/localComfyConnection'
+import { Cloud as CloudIcon } from 'lucide-react'
 
 const STATE_STYLES = {
   unknown: { dot: 'bg-slate-400', label: 'ComfyUI', tone: 'idle' },
@@ -80,6 +87,21 @@ function ComfyLauncherChip() {
   const [error, setError] = useState('')
   const [logViewerOpen, setLogViewerOpen] = useState(false)
   const [portOwner, setPortOwner] = useState(null) // { pid, name, port } | null
+  // Cloud-mode awareness. When the user flips the toggle in Settings →
+  // Launcher, this chip switches its label / colour to reflect that
+  // the local launcher is no longer the active backend.
+  const [comfyMode, setComfyMode] = useState(() => getActiveModeSync())
+  const [cloudHttpBase, setCloudHttpBase] = useState(() => (
+    getActiveModeSync() === COMFY_MODE_CLOUD ? getActiveHttpBaseSync() : ''
+  ))
+  useEffect(() => {
+    const onConn = () => {
+      setComfyMode(getActiveModeSync())
+      setCloudHttpBase(getActiveModeSync() === COMFY_MODE_CLOUD ? getActiveHttpBaseSync() : '')
+    }
+    window.addEventListener(COMFY_CONNECTION_CHANGED_EVENT, onConn)
+    return () => window.removeEventListener(COMFY_CONNECTION_CHANGED_EVENT, onConn)
+  }, [])
   // Which edge of the trigger button the popover anchors to. 'right' means the
   // popover extends leftward (good when the chip lives on the right side of a
   // header); 'left' means it extends rightward (needed when the chip lives
@@ -234,11 +256,26 @@ function ComfyLauncherChip() {
         ref={triggerRef}
         type="button"
         onClick={() => setOpen((v) => !v)}
-        title={summary}
-        className="flex items-center gap-1.5 h-7 px-2.5 mr-1 rounded-md bg-sf-dark-800 hover:bg-sf-dark-700 text-sf-text-primary text-[11px] font-medium transition-colors border border-sf-dark-700"
+        title={comfyMode === COMFY_MODE_CLOUD
+          ? `ComfyUI Cloud${cloudHttpBase ? ` · ${cloudHttpBase}` : ''}`
+          : summary}
+        className={`flex items-center gap-1.5 h-7 px-2.5 mr-1 rounded-md text-[11px] font-medium transition-colors border ${
+          comfyMode === COMFY_MODE_CLOUD
+            ? 'bg-sky-500/15 border-sky-500/40 text-sky-200 hover:bg-sky-500/25'
+            : 'bg-sf-dark-800 border-sf-dark-700 text-sf-text-primary hover:bg-sf-dark-700'
+        }`}
       >
-        <span className={`w-2 h-2 rounded-full ${stateStyle.dot}`} />
-        <span className="whitespace-nowrap">{stateStyle.label}</span>
+        {comfyMode === COMFY_MODE_CLOUD ? (
+          <>
+            <CloudIcon className="w-3 h-3 text-sky-300" />
+            <span className="whitespace-nowrap">Cloud</span>
+          </>
+        ) : (
+          <>
+            <span className={`w-2 h-2 rounded-full ${stateStyle.dot}`} />
+            <span className="whitespace-nowrap">{stateStyle.label}</span>
+          </>
+        )}
         <ChevronDown className="w-3 h-3 text-sf-text-muted" />
       </button>
 

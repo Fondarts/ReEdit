@@ -298,12 +298,16 @@ export async function analyzeSceneVideo(scene, {
   projectDir,
   modelOverride,
   temperature = 0.2,
-  // 3000 tokens is overkill for the JSON payload itself (~400 tokens)
-  // but leaves room for Gemini 2.5 Pro when thinking is enabled
-  // upstream by accident, and covers clips with long VO transcripts.
-  // Raising this doesn't increase cost on empty-response shots; the
-  // model only bills for tokens actually produced.
-  maxTokens = 3000,
+  // 6000 tokens covers the worst-case JSON payload + long VO transcripts +
+  // a verbose `visual` field for action-packed shots (Gemini sometimes
+  // elaborates a lot when the clip has multiple subjects / camera moves).
+  // We previously sat at 3000 and saw MAX_TOKENS truncations cut JSON
+  // mid-string for shots with frenetic visuals + dialogue. extractJson
+  // now repairs truncated payloads as a safety net, but raising the
+  // budget here prevents the truncation in the first place. The model
+  // only bills for tokens actually produced, so this is free on shots
+  // that come in under the old budget.
+  maxTokens = 6000,
 } = {}) {
   if (!scene?.id) throw new Error('analyzeSceneVideo: missing scene.id')
   if (!sourceVideoPath) throw new Error('analyzeSceneVideo: missing sourceVideoPath')

@@ -285,3 +285,248 @@ export async function checkLocalComfyConnection(options = {}) {
   }
 }
 
+// ============================================================
+//  Cloud / remote ComfyUI support
+// ------------------------------------------------------------
+//  The legacy code above is loopback-only on purpose (`isLoopbackHost`
+//  rejects anything else). Cloud is a separate mode flag with its own
+//  base URL + API key. When MODE_CLOUD is active, `getActiveHttpBase()` /
+//  `getActiveWsBase()` return the cloud endpoints; otherwise they fall
+//  back to the existing local loopback config.
+// ============================================================
+
+export const COMFY_MODE_LOCAL = 'local'
+export const COMFY_MODE_CLOUD = 'cloud'
+
+export const COMFY_MODE_SETTING_KEY = 'comfyMode'        // 'local' | 'cloud'
+export const COMFY_CLOUD_SETTING_KEY = 'comfyCloud'      // { httpBase, apiKey }
+export const COMFY_CLOUD_LOCAL_KEY = 'comfystudio-comfy-cloud'
+
+let cachedMode = COMFY_MODE_LOCAL
+let cachedCloudHttpBase = ''
+let cachedCloudApiKey = ''
+
+function readCloudFromLocalStorage() {
+  try {
+    if (typeof localStorage === 'undefined') return null
+    const mode = localStorage.getItem(`${COMFY_CLOUD_LOCAL_KEY}-mode`)
+    const httpBase = localStorage.getItem(`${COMFY_CLOUD_LOCAL_KEY}-base`) || ''
+    const apiKey = localStorage.getItem(`${COMFY_CLOUD_LOCAL_KEY}-key`) || ''
+    return {
+      mode: mode === COMFY_MODE_CLOUD ? COMFY_MODE_CLOUD : COMFY_MODE_LOCAL,
+      httpBase, apiKey,
+    }
+  } catch { return null }
+}
+
+function writeCloudToLocalStorage({ mode, httpBase, apiKey }) {
+  try {
+    if (typeof localStorage === 'undefined') return
+    if (mode != null)     localStorage.setItem(`${COMFY_CLOUD_LOCAL_KEY}-mode`, mode)
+    if (httpBase != null) localStorage.setItem(`${COMFY_CLOUD_LOCAL_KEY}-base`, httpBase)
+    if (apiKey != null)   localStorage.setItem(`${COMFY_CLOUD_LOCAL_KEY}-key`, apiKey)
+  } catch { /* ignore */ }
+}
+
+;(function hydrateCloudFromLocalStorage() {
+  const raw = readCloudFromLocalStorage()
+  if (!raw) return
+  cachedMode = raw.mode || COMFY_MODE_LOCAL
+  cachedCloudHttpBase = raw.httpBase || ''
+  cachedCloudApiKey = raw.apiKey || ''
+})()
+
+// Normalize a cloud base URL: must be http(s), no trailing slash, no
+// /ws or /prompt suffix. Returns { ok, httpBase, error }.
+export function parseCloudHttpBase(input) {
+  const raw = String(input ?? '').trim()
+  if (!raw) return { ok: false, error: 'Cloud URL is required.' }
+  let candidate = raw
+  if (!/^[a-zA-Z][a-zA-Z0-9+.-]*:\/\//.test(candidate)) {
+    candidate = `https://${candidate}`
+  }
+  try {
+    const parsed = new URL(candidate)
+    if (parsed.protocol !== 'http:' && parsed.protocol !== 'https:') {
+      return { ok: false, error: 'Cloud URL must be http(s).' }
+    }
+    // Strip trailing slash and any path component the user may have
+    // pasted (e.g. .../ws or .../prompt). We always append our own
+    // route names downstream.
+    parsed.pathname = ''
+    parsed.search = ''
+    parsed.hash = ''
+    const httpBase = parsed.toString().replace(/\/$/, '')
+    return { ok: true, httpBase }
+  } catch {
+    return { ok: false, error: 'Invalid URL.' }
+  }
+}
+
+export function deriveWsBase(httpBase) {
+  if (!httpBase) return ''
+  return httpBase.replace(/^http/i, (m) => m.toLowerCase() === 'https' ? 'wss' : 'ws')
+}
+
+// Active connection: respects mode. Falls back to local when cloud isn't
+// configured (so a half-configured cloud doesn't brick the app).
+export function getActiveComfyConnectionSync() {
+  if (cachedMode === COMFY_MODE_CLOUD && cachedCloudHttpBase) {
+    return {
+      mode: COMFY_MODE_CLOUD,
+      httpBase: cachedCloudHttpBase,
+      wsBase: deriveWsBase(cachedCloudHttpBase),
+      apiKey: cachedCloudApiKey || '',
+    }
+  }
+  const local = getLocalComfyConnectionSync()
+  return {
+    mode: COMFY_MODE_LOCAL,
+    httpBase: local.httpBase,
+    wsBase: local.wsBase,
+    apiKey: '',
+  }
+}
+
+export function getActiveHttpBaseSync() { return getActiveComfyConnectionSync().httpBase }
+export function getActiveWsBaseSync()   { return getActiveComfyConnectionSync().wsBase   }
+export function getActiveApiKeySync()   { return getActiveComfyConnectionSync().apiKey   }
+export function getActiveModeSync()     { return getActiveComfyConnectionSync().mode     }
+
+// IPC payload helper: spread this into the options object you send to
+// any `analysis:*` handler so main.js sees the right host + key. We need
+// both because the renderer-side connection module lives in Vite-land
+// and isn't accessible from the Node main process.
+//
+//   await window.electronAPI.optimizeFootage({
+//     scene, projectDir,
+//     ...getActiveComfyIpcContext(),
+//   })
+export function getActiveComfyIpcContext() {
+  const c = getActiveComfyConnectionSync()
+  return { comfyUrl: c.httpBase, apiKey: c.apiKey || null }
+}
+
+export async function hydrateComfyCloudConnection() {
+  // Mirror of hydrateLocalComfyConnection — pulls the cloud config from
+  // electron settings and prefers it over the localStorage fallback we
+  // already loaded synchronously above.
+  if (typeof window === 'undefined' || !window?.electronAPI?.getSetting) return
+  try {
+    const mode = await window.electronAPI.getSetting(COMFY_MODE_SETTING_KEY)
+    if (mode === COMFY_MODE_CLOUD || mode === COMFY_MODE_LOCAL) cachedMode = mode
+    const cloud = await window.electronAPI.getSetting(COMFY_CLOUD_SETTING_KEY)
+    if (cloud && typeof cloud === 'object') {
+      if (typeof cloud.httpBase === 'string') cachedCloudHttpBase = cloud.httpBase
+      if (typeof cloud.apiKey === 'string')   cachedCloudApiKey = cloud.apiKey
+    }
+    // Persist to localStorage too so a renderer cold-start doesn't have
+    // to wait on the IPC roundtrip before deciding which host to hit.
+    writeCloudToLocalStorage({
+      mode: cachedMode,
+      httpBase: cachedCloudHttpBase,
+      apiKey: cachedCloudApiKey,
+    })
+    dispatchConnectionChanged(getActiveComfyConnectionSync())
+  } catch { /* ignore — keep last-known values */ }
+}
+
+export async function saveComfyMode(mode) {
+  const normalized = mode === COMFY_MODE_CLOUD ? COMFY_MODE_CLOUD : COMFY_MODE_LOCAL
+  cachedMode = normalized
+  writeCloudToLocalStorage({ mode: normalized })
+  try {
+    if (typeof window !== 'undefined' && window?.electronAPI?.setSetting) {
+      await window.electronAPI.setSetting(COMFY_MODE_SETTING_KEY, normalized)
+    }
+  } catch (err) {
+    return { success: false, error: err?.message || 'Failed to persist mode.' }
+  }
+  dispatchConnectionChanged(getActiveComfyConnectionSync())
+  return { success: true, mode: normalized }
+}
+
+export async function saveCloudComfyConnection({ httpBase, apiKey }) {
+  const parsed = parseCloudHttpBase(httpBase)
+  if (!parsed.ok) return { success: false, error: parsed.error }
+  cachedCloudHttpBase = parsed.httpBase
+  cachedCloudApiKey = String(apiKey || '').trim()
+  writeCloudToLocalStorage({
+    httpBase: cachedCloudHttpBase,
+    apiKey: cachedCloudApiKey,
+  })
+  try {
+    if (typeof window !== 'undefined' && window?.electronAPI?.setSetting) {
+      await window.electronAPI.setSetting(COMFY_CLOUD_SETTING_KEY, {
+        httpBase: cachedCloudHttpBase,
+        apiKey: cachedCloudApiKey,
+      })
+    }
+  } catch (err) {
+    return { success: false, error: err?.message || 'Failed to persist cloud settings.' }
+  }
+  dispatchConnectionChanged(getActiveComfyConnectionSync())
+  return { success: true, httpBase: cachedCloudHttpBase }
+}
+
+// Probe a candidate cloud endpoint. Same shape as checkLocalComfyConnection
+// so the UI can render either path with one component.
+//
+// Comfy Cloud doesn't expose /system_stats — that's a local-only ComfyUI
+// helper. We hit /api/user instead (documented as the user-info endpoint)
+// to verify both the URL and the API key in one call.
+export async function checkCloudComfyConnection({ httpBase, apiKey, timeoutMs = 6000 } = {}) {
+  const parsed = parseCloudHttpBase(httpBase)
+  if (!parsed.ok) return { ok: false, error: parsed.error }
+  const controller = typeof AbortController !== 'undefined' ? new AbortController() : null
+  const timer = setTimeout(() => controller?.abort(), timeoutMs)
+  try {
+    const headers = { Accept: 'application/json' }
+    const key = String(apiKey || '').trim()
+    if (key) {
+      headers['X-API-Key'] = key
+      headers['Authorization'] = `Bearer ${key}`  // belt-and-braces for hosts that use Bearer
+    }
+    const res = await fetch(`${parsed.httpBase}/api/user`, {
+      signal: controller?.signal,
+      headers,
+    })
+    if (!res.ok) {
+      return { ok: false, status: res.status, httpBase: parsed.httpBase, error: `HTTP ${res.status}` }
+    }
+    // Validate that the response actually looks like ComfyUI's
+    // /system_stats and not a dashboard HTML page returning 200 to any
+    // path. Real ComfyUI returns a JSON object with a `system` field
+    // (containing argv, comfyui_version, etc.). Pasting the dashboard
+    // URL by mistake is the most common setup error here, so flag it
+    // before the user discovers via cryptic /prompt failures later.
+    const ct = String(res.headers.get('content-type') || '').toLowerCase()
+    if (!ct.includes('json')) {
+      return {
+        ok: false, status: res.status, httpBase: parsed.httpBase,
+        error: `URL responded with ${ct || 'no content-type'} — expected JSON. This looks like a dashboard page, not the ComfyUI API. Look for an "API endpoint" or "Inference URL" in your Comfy Cloud dashboard.`,
+      }
+    }
+    let body
+    try { body = await res.json() } catch {
+      return {
+        ok: false, status: res.status, httpBase: parsed.httpBase,
+        error: 'Response was not JSON — not a ComfyUI API endpoint.',
+      }
+    }
+    // /api/user returns user / account info. We don't enforce a strict
+    // shape (the doc doesn't promise specific fields), but if the host
+    // is the right one it'll be a JSON object — that's enough.
+    if (!body || typeof body !== 'object') {
+      return {
+        ok: false, status: res.status, httpBase: parsed.httpBase,
+        error: 'Response was not a JSON object — not a Comfy Cloud /api/user endpoint.',
+      }
+    }
+    return { ok: true, status: res.status, httpBase: parsed.httpBase }
+  } catch (err) {
+    return { ok: false, httpBase: parsed.httpBase, error: err?.message || 'Connection failed' }
+  } finally {
+    clearTimeout(timer)
+  }
+}

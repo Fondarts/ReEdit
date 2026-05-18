@@ -27,6 +27,11 @@ import AnalysisView from './components/reedit/AnalysisView'
 import OptimizationView from './components/reedit/OptimizationView'
 import ProposalView from './components/reedit/ProposalView'
 import ProjectsView from './components/reedit/ProjectsView'
+import ImportVideoViewSimple from './components/reedit/simple/ImportVideoViewSimple'
+import AnalysisViewSimple from './components/reedit/simple/AnalysisViewSimple'
+import ProposalViewSimple from './components/reedit/simple/ProposalViewSimple'
+import EditorSimple from './components/reedit/simple/EditorSimple'
+import { useUiMode } from './hooks/useUiMode'
 import {
   COMFY_CONNECTION_CHANGED_EVENT,
   getLocalComfyHttpBaseSync,
@@ -36,6 +41,10 @@ import { startComfyLauncherEventBridge } from './services/comfyLauncherEventBrid
 import { startComfyAutoImport } from './services/comfyAutoImport'
 
 function App() {
+  // Reactive read of the UI mode toggle (Simple / Advanced). Drives which
+  // workspace gets rendered for Import / Analysis / Proposal. TitleBar
+  // already filters the tab list separately; this just swaps the body.
+  const uiMode = useUiMode()
   const [audioModalOpen, setAudioModalOpen] = useState(false)
   const [audioModalType, setAudioModalType] = useState('music')
   const [settingsModalOpen, setSettingsModalOpen] = useState(false)
@@ -423,13 +432,15 @@ function App() {
           className="flex-1 flex flex-col min-h-0 overflow-hidden bg-sf-dark-950"
           style={{ display: mainTab === 'import' ? 'flex' : 'none' }}
         >
-          <ImportVideoView onVideoImported={() => setMainTab('analysis')} />
+          {uiMode === 'simple'
+            ? <ImportVideoViewSimple onVideoImported={() => setMainTab('analysis')} />
+            : <ImportVideoView onVideoImported={() => setMainTab('analysis')} />}
         </div>
         <div
           className="flex-1 flex flex-col min-h-0 overflow-hidden bg-sf-dark-950"
           style={{ display: mainTab === 'analysis' ? 'flex' : 'none' }}
         >
-          <AnalysisView />
+          {uiMode === 'simple' ? <AnalysisViewSimple /> : <AnalysisView />}
         </div>
         <div
           className="flex-1 flex flex-col min-h-0 overflow-hidden bg-sf-dark-950"
@@ -441,7 +452,9 @@ function App() {
           className="flex-1 flex flex-col min-h-0 overflow-hidden bg-sf-dark-950"
           style={{ display: mainTab === 'proposal' ? 'flex' : 'none' }}
         >
-          <ProposalView onNavigate={setMainTab} />
+          {uiMode === 'simple'
+            ? <ProposalViewSimple onNavigate={setMainTab} />
+            : <ProposalView onNavigate={setMainTab} />}
         </div>
 
         {/* Editor (Timeline + Preview + Inspector). Mounted whenever
@@ -449,7 +462,14 @@ function App() {
             entirely. Staying mounted keeps the InspectorPanel's
             "Commit reframe" progress listener alive while the user
             flips over to Analysis to queue another job. */}
-        {![ 'projects', 'import', 'analysis', 'optimization', 'proposal', 'export', 'stock', 'llm-assistant', 'comfyui', 'generate', 'mog' ].includes(mainTab) && (
+        {![ 'projects', 'import', 'analysis', 'optimization', 'proposal', 'export', 'stock', 'llm-assistant', 'comfyui', 'generate', 'mog' ].includes(mainTab) && uiMode === 'simple' && (
+          <EditorSimple
+            timelineHeight={timelineHeight}
+            onTimelineResize={handleTimelineResize}
+            onOpenAudioGenerate={openAudioModal}
+          />
+        )}
+        {![ 'projects', 'import', 'analysis', 'optimization', 'proposal', 'export', 'stock', 'llm-assistant', 'comfyui', 'generate', 'mog' ].includes(mainTab) && uiMode !== 'simple' && (
           <>
             {/* Left Panel - Full Height Mode (spans entire left side) */}
             {leftPanelFullHeight && (

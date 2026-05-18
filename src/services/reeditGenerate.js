@@ -27,7 +27,7 @@
 
 import comfyui, { modifyZImageTurboWorkflow } from './comfyui'
 import useProjectStore from '../stores/projectStore'
-import { getLocalComfyHttpBaseSync } from './localComfyConnection'
+import { getLocalComfyHttpBaseSync, getActiveHttpBaseSync } from './localComfyConnection'
 
 const FRAME_WORKFLOW_PATH = '/workflows/image_z_image_turbo.json'
 
@@ -887,8 +887,9 @@ export async function sendPlaceholderWorkflowToComfyUI({ row, rowIndex, edl, sce
   }
 
   // Open ComfyUI AFTER the clipboard write resolves so the focus
-  // shift can't cancel the write in-flight.
-  const comfyBase = getLocalComfyHttpBaseSync()
+  // shift can't cancel the write in-flight. Honour the user's mode
+  // toggle: in cloud mode we open the cloud dashboard, not localhost.
+  const comfyBase = getActiveHttpBaseSync() || getLocalComfyHttpBaseSync()
   if (comfyBase) {
     if (window.electronAPI?.openExternal) {
       window.electronAPI.openExternal(comfyBase).catch(() => {})

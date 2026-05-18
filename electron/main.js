@@ -1906,11 +1906,30 @@ const COLOR_HSV_RANGES = {
   green:   { lower: [35, 80, 100], upper: [85, 255, 255] },
 }
 
-// Dilate kernel size used by make_mask.py. 25 keeps the mask tight
-// around the graphic itself; the composite feather (σ=8 — see the
-// optimizeFootage handler call) does the rest of the edge softening,
-// so we don't over-expand the mask into background pixels.
-const MASK_DILATE_KERNEL = '25'
+// Dilate kernel size used by make_mask.py. Started at 25 but that was
+// pushing the mask onto neighbouring skin / car body and showing the
+// VACE seam outside the actual graphic. 13 hugs the text/logo more
+// tightly and lets the bigger composite feather (σ=16 — see the
+// optimizeFootage handler call) blend the edge instead of relying on
+// the dilate to do the softening.
+const MASK_DILATE_KERNEL = '13'
+
+// Per-axis padding around each Gemini bbox (% of frame dim) for the
+// `boxes` mode. The Python defaults were 7% x / 10% y — at 1920×1080
+// that's 134px / 108px of headroom around every box, which turns a
+// modest text overlay into a frame-spanning rectangle. Gemini's bboxes
+// have improved (we now also separate physical brand marks out), so
+// we can run a much tighter pad. 1.5% / 2% is enough to absorb a few
+// pixels of bbox drift + the anti-aliased glow around text without
+// chewing into adjacent skin / car body.
+const MASK_BOX_PADDING_PCT_X = '2.5'
+const MASK_BOX_PADDING_PCT_Y = '3.0'
+
+// Vertical offset (% of frame) applied to every box. The 5% default
+// was a workaround for an old Gemini bias toward the cap line; current
+// model anchors closer to the mean line so we only need ~1% to absorb
+// the residual drift.
+const MASK_BOX_OFFSET_PCT_Y = '1.0'
 
 // Max per-blob area as a percent of the frame. Above this, a connected
 // component is treated as background (sky / wall / specular) instead
@@ -2015,6 +2034,9 @@ function pickMaskArgsFromHint(hint, graphics) {
       args: [
         '--mode', 'boxes',
         '--dilate-kernel', MASK_DILATE_KERNEL,
+        '--boxes-padding-pct-x', MASK_BOX_PADDING_PCT_X,
+        '--boxes-padding-pct-y', MASK_BOX_PADDING_PCT_Y,
+        '--boxes-offset-pct-y', MASK_BOX_OFFSET_PCT_Y,
       ],
     }
   }
@@ -2085,7 +2107,25 @@ function resolvePythonExe() {
 // Read ComfyUI's `--input-directory` argv by hitting /system_stats.
 // The script-copied source/mask/blank files need to sit somewhere
 // ComfyUI's VHS_LoadVideo node can find them by relative name.
+//
+// Returns null when:
+//   - the URL isn't reachable (network error or non-200)
+//   - the URL is a remote/cloud host (the input dir lives on the cloud
+//     filesystem and we can't `fs.copyFile` into it from here — caller
+//     should fall back to /upload/image HTTP)
 async function resolveComfyInputDir(comfyUrl) {
+  // Reject non-loopback hosts up front: cloud / RunPod / Cloudflare-tunneled
+  // ComfyUIs technically respond to /system_stats and may even hand us a
+  // legitimate-looking `--input-directory` path, but copying into it from
+  // our local filesystem doesn't move bytes to the remote box. Better to
+  // bail here so the caller surfaces a clear "use local mode" error than
+  // to silently miscopy files.
+  try {
+    const parsed = new URL(comfyUrl)
+    const host = String(parsed.hostname || '').toLowerCase()
+    const loopback = host === 'localhost' || host === '::1' || /^127(?:\.\d{1,3}){3}$/.test(host)
+    if (!loopback) return null
+  } catch { return null }
   try {
     const res = await net.fetch(`${comfyUrl}/system_stats`)
     if (!res.ok) return null
@@ -2100,6 +2140,174 @@ async function resolveComfyInputDir(comfyUrl) {
     return null
   } catch {
     return null
+  }
+}
+
+// Helper: is this comfyUrl a non-loopback (cloud) endpoint? Handlers
+// that copy files into the local input dir use this to short-circuit
+// with a clear error instead of failing deep in the workflow.
+function isCloudComfyUrl(comfyUrl) {
+  try {
+    const parsed = new URL(comfyUrl)
+    const host = String(parsed.hostname || '').toLowerCase()
+    if (!host) return false
+    if (host === 'localhost' || host === '::1') return false
+    if (/^127(?:\.\d{1,3}){3}$/.test(host)) return false
+    return true
+  } catch { return false }
+}
+
+// Auth headers for cloud requests. Returns an empty object on local
+// since loopback doesn't authenticate. `apiKey` is sent twice (X-API-Key
+// is Comfy Cloud's documented header; Authorization: Bearer is a
+// fallback for proxies that standardised on Bearer).
+function _comfyHeaders(comfyUrl, apiKey) {
+  if (!isCloudComfyUrl(comfyUrl)) return {}
+  const key = String(apiKey || '').trim()
+  if (!key) return {}
+  return { 'X-API-Key': key, Authorization: `Bearer ${key}` }
+}
+
+// Path prefixer. Comfy Cloud puts its endpoints under /api/...;
+// local ComfyUI uses the same routes at the root.
+function _comfyApiPath(comfyUrl, p) {
+  const path = p.startsWith('/') ? p : `/${p}`
+  if (!isCloudComfyUrl(comfyUrl)) return path
+  return path.startsWith('/api/') ? path : `/api${path}`
+}
+
+// Upload a local file to ComfyUI's input via /upload/image. Works the
+// same on local (the ComfyUI server writes it to its input/ dir) and on
+// cloud (the file is staged remotely for the workflow to consume). The
+// returned `name` is what LoadVideo / LoadImage nodes reference.
+//
+// Returns { name, subfolder, type } on success.
+async function uploadFileToComfy({
+  comfyUrl, apiKey, localFilePath, filename, subfolder = '', type = 'input',
+}) {
+  const fileBuffer = await fs.readFile(localFilePath)
+  const form = new FormData()
+  // ComfyUI's /upload/image accepts any media (mp4 / wav / png) under
+  // the 'image' multipart field — the field name is historical.
+  const blob = new Blob([fileBuffer])
+  form.append('image', blob, filename || path.basename(localFilePath))
+  if (subfolder) form.append('subfolder', subfolder)
+  form.append('type', type)
+  form.append('overwrite', 'true')
+
+  const url = `${comfyUrl}${_comfyApiPath(comfyUrl, '/upload/image')}`
+  const res = await net.fetch(url, {
+    method: 'POST',
+    headers: _comfyHeaders(comfyUrl, apiKey),
+    body: form,
+  })
+  if (!res.ok) {
+    const text = await res.text().catch(() => '')
+    throw new Error(`Upload failed (${res.status}) for ${path.basename(localFilePath)}: ${text.slice(0, 300)}`)
+  }
+  return await res.json()
+}
+
+// Download a generated artifact from ComfyUI via /view. Follows redirects
+// (Comfy Cloud responds with a 302 to a signed URL). Writes to destPath.
+async function downloadFromComfy({
+  comfyUrl, apiKey, filename, subfolder = '', type = 'output', destPath,
+}) {
+  const params = new URLSearchParams({ filename, type })
+  if (subfolder) params.set('subfolder', subfolder)
+  const url = `${comfyUrl}${_comfyApiPath(comfyUrl, '/view')}?${params.toString()}`
+  const res = await net.fetch(url, {
+    headers: _comfyHeaders(comfyUrl, apiKey),
+    redirect: 'follow',
+  })
+  if (!res.ok) {
+    throw new Error(`Download failed (${res.status}) for ${filename}`)
+  }
+  const buf = Buffer.from(await res.arrayBuffer())
+  await fs.mkdir(path.dirname(destPath), { recursive: true })
+  await fs.writeFile(destPath, buf)
+  return destPath
+}
+
+// Poll for job completion. Local ComfyUI exposes /history/<id> with the
+// outputs as soon as the job finishes; Cloud splits status (/api/job/<id>/status)
+// from outputs (/api/jobs/<id>). This helper hides that difference.
+//
+// Status vocabulary on Cloud isn't strictly documented, so we accept
+// the common synonyms (`completed` / `finished` / `succeeded` / `success`
+// / `done`) and fail-equivalents (`failed` / `cancelled` / `canceled` /
+// `error`), matched case-insensitively. The first time we see an unknown
+// status we log it so we can extend the vocab if a deployment uses
+// something exotic.
+//
+// Returns the history-shaped object: { outputs: { [nodeId]: { ... } }, status }
+const TERMINAL_OK_STATES = new Set(['completed', 'finished', 'succeeded', 'success', 'done'])
+const TERMINAL_FAIL_STATES = new Set(['failed', 'cancelled', 'canceled', 'error', 'errored'])
+async function waitForComfyJob({
+  comfyUrl, apiKey, promptId, timeoutMs = 30 * 60 * 1000, pollMs = 2000, onTick,
+}) {
+  const headers = _comfyHeaders(comfyUrl, apiKey)
+  const startedAt = Date.now()
+  const cloud = isCloudComfyUrl(comfyUrl)
+  const seenStates = new Set()
+  while (true) {
+    if (Date.now() - startedAt > timeoutMs) {
+      throw new Error(`Comfy job ${promptId} timed out after ${Math.round(timeoutMs / 60000)} min.`)
+    }
+    if (cloud) {
+      // Lightweight status probe first; fetch full outputs only when done.
+      const statusRes = await net.fetch(`${comfyUrl}/api/job/${encodeURIComponent(promptId)}/status`, { headers })
+      if (statusRes.ok) {
+        const s = await statusRes.json().catch(() => ({}))
+        onTick?.(s)
+        // The status field may live at the top level or nested under
+        // `state` / `job.status` depending on the deployment. Try them
+        // all and lowercase the result.
+        const rawState = String(
+          s?.status ?? s?.state ?? s?.job?.status ?? s?.job?.state ?? ''
+        ).toLowerCase().trim()
+        if (rawState && !seenStates.has(rawState)) {
+          seenStates.add(rawState)
+          console.log(`[waitForComfyJob] cloud status for ${promptId}: "${rawState}"`)
+        }
+        if (TERMINAL_OK_STATES.has(rawState)) {
+          const outRes = await net.fetch(`${comfyUrl}/api/jobs/${encodeURIComponent(promptId)}`, { headers })
+          if (!outRes.ok) throw new Error(`Job ${promptId} ${rawState} but /api/jobs returned ${outRes.status}`)
+          return await outRes.json()
+        }
+        if (TERMINAL_FAIL_STATES.has(rawState)) {
+          // Surface any error text the API included so the user sees
+          // why the job failed instead of a generic "failed".
+          const detail = s?.error || s?.message || s?.job?.error || ''
+          throw new Error(`Comfy job ${promptId} ${rawState}${detail ? `: ${String(detail).slice(0, 300)}` : '.'}`)
+        }
+      } else if (statusRes.status === 404) {
+        // Some deployments retire the status row once the job finishes
+        // and only keep /api/jobs/<id>. Probe the full record as a
+        // fallback before treating the 404 as fatal.
+        const outRes = await net.fetch(`${comfyUrl}/api/jobs/${encodeURIComponent(promptId)}`, { headers })
+        if (outRes.ok) {
+          const body = await outRes.json().catch(() => null)
+          if (body && (body.outputs || body.job?.outputs)) {
+            return body.outputs ? body : { outputs: body.job.outputs, ...body }
+          }
+        }
+      }
+    } else {
+      const res = await net.fetch(`${comfyUrl}/history/${encodeURIComponent(promptId)}`, { headers })
+      if (res.ok) {
+        const data = await res.json().catch(() => ({}))
+        const entry = data?.[promptId]
+        if (entry) {
+          onTick?.(entry)
+          if (entry?.status?.completed) return entry
+          if (entry?.status?.status_str === 'error') {
+            throw new Error(`Comfy job ${promptId} failed.`)
+          }
+        }
+      }
+    }
+    await new Promise((r) => setTimeout(r, pollMs))
   }
 }
 
@@ -2492,11 +2700,12 @@ ipcMain.handle('analysis:previewMask', async (event, options) => {
 })
 
 ipcMain.handle('analysis:optimizeFootage', async (event, options) => {
-  const { scene, projectDir, comfyUrl: comfyUrlOpt } = options || {}
+  const { scene, projectDir, comfyUrl: comfyUrlOpt, apiKey: apiKeyOpt } = options || {}
   if (!scene?.id) return { success: false, error: 'scene.id required.' }
   if (!projectDir) return { success: false, error: 'projectDir required.' }
   const sceneId = scene.id
   const comfyUrl = comfyUrlOpt || 'http://localhost:8000'
+  const apiKey = apiKeyOpt || ''
 
   const emit = (stage, extra = {}) => {
     try { event.sender.send('analysis:optimizeFootage:progress', { sceneId, stage, ...extra }) } catch (_) { /* renderer may be closed */ }
@@ -2580,23 +2789,29 @@ ipcMain.handle('analysis:optimizeFootage', async (event, options) => {
 
   emit('uploading')
 
-  // 4. Copy (source / mask / blank) into ComfyUI's input dir with a
-  //    project-prefixed filename so two re-edit projects optimizing the
-  //    same scene id don't stomp each other's inputs.
-  const comfyInputDir = await resolveComfyInputDir(comfyUrl)
-  if (!comfyInputDir) {
-    return { success: false, error: `Could not determine ComfyUI input dir from ${comfyUrl}/system_stats — is ComfyUI running?` }
-  }
+  // 4. Upload the blank + mask to ComfyUI's input via /upload/image.
+  //    Works the same on local (server writes them into its input/
+  //    directory) and on cloud (the file is staged remotely for the
+  //    workflow to consume). The returned `name` is what LoadVideo
+  //    references inside the workflow JSON.
   const prefix = `reedit_${sanitizeForFilename(path.basename(projectDir))}_${sanitizeForFilename(sceneId)}`
-  const comfySrcName = `${prefix}_blank.mp4`
-  const comfyMaskName = `${prefix}_mask.mp4`
-  const comfySrcFullPath = path.join(comfyInputDir, comfySrcName)
-  const comfyMaskFullPath = path.join(comfyInputDir, comfyMaskName)
+  let comfySrcName
+  let comfyMaskName
   try {
-    await copyFileOverwrite(blankPath, comfySrcFullPath)
-    await copyFileOverwrite(maskPath, comfyMaskFullPath)
+    const blankUp = await uploadFileToComfy({
+      comfyUrl, apiKey,
+      localFilePath: blankPath,
+      filename: `${prefix}_blank.mp4`,
+    })
+    const maskUp = await uploadFileToComfy({
+      comfyUrl, apiKey,
+      localFilePath: maskPath,
+      filename: `${prefix}_mask.mp4`,
+    })
+    comfySrcName = blankUp?.name || `${prefix}_blank.mp4`
+    comfyMaskName = maskUp?.name || `${prefix}_mask.mp4`
   } catch (err) {
-    return { success: false, error: `Failed to copy inputs into ComfyUI input dir: ${err.message}` }
+    return { success: false, error: `Failed to upload inputs to ComfyUI (${comfyUrl}): ${err.message}` }
   }
 
   // 5. Build + submit the workflow. Prompt from the Gemini analysis;
@@ -2622,9 +2837,9 @@ ipcMain.handle('analysis:optimizeFootage', async (event, options) => {
 
   let promptId
   try {
-    const submitRes = await net.fetch(`${comfyUrl}/prompt`, {
+    const submitRes = await net.fetch(`${comfyUrl}${_comfyApiPath(comfyUrl, '/prompt')}`, {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
+      headers: { 'Content-Type': 'application/json', ..._comfyHeaders(comfyUrl, apiKey) },
       body: JSON.stringify({ prompt: workflow }),
     })
     if (!submitRes.ok) {
@@ -2640,51 +2855,45 @@ ipcMain.handle('analysis:optimizeFootage', async (event, options) => {
 
   emit('queued', { promptId })
 
-  // 6. Poll /history until the job finishes. 10-minute hard cap — Wan
-  //    VACE 1.3B at 768×432 + upscale runs ~12 min in our tests, so the
-  //    cap is generous for shots up to ~90 frames. Bigger jobs should
-  //    raise it in the renderer.
-  const MAX_POLL_MS = 20 * 60 * 1000
-  const POLL_EVERY_MS = 4000
-  const startedAt = Date.now()
+  // 6. Wait for the job to complete. waitForComfyJob hides the
+  //    local vs cloud polling difference (local: /history/<id>; cloud:
+  //    /api/job/<id>/status until completed, then /api/jobs/<id>).
   let result
-  while (true) {
-    if (Date.now() - startedAt > MAX_POLL_MS) {
-      return { success: false, error: `Timed out waiting for ${promptId} after ${MAX_POLL_MS / 60000} min.` }
-    }
-    try {
-      const histRes = await net.fetch(`${comfyUrl}/history/${promptId}`)
-      if (histRes.ok) {
-        const hist = await histRes.json()
-        const entry = hist?.[promptId]
-        if (entry?.status?.completed) {
-          result = entry
-          break
-        }
-        if (entry?.status?.status_str === 'error') {
-          const msgs = (entry.status.messages || []).map((m) => JSON.stringify(m)).join(' | ')
-          return { success: false, error: `ComfyUI reported workflow error: ${msgs.slice(0, 600)}` }
-        }
-      }
-    } catch (err) {
-      emit('poll_warn', { message: err.message })
-    }
-    emit('running', { elapsedSec: Math.round((Date.now() - startedAt) / 1000) })
-    await new Promise((r) => setTimeout(r, POLL_EVERY_MS))
+  const startedAt = Date.now()
+  try {
+    result = await waitForComfyJob({
+      comfyUrl, apiKey, promptId,
+      timeoutMs: 20 * 60 * 1000,
+      pollMs: 4000,
+      onTick: () => {
+        emit('running', { elapsedSec: Math.round((Date.now() - startedAt) / 1000) })
+      },
+    })
+  } catch (err) {
+    return { success: false, error: err?.message || `Comfy job ${promptId} failed.` }
   }
 
-  // 7. Extract the output filename from the history entry and copy the
-  //    finished video back into the project's `.reedit/optimized` dir
-  //    so it travels with the project and shows up in the UI.
-  let outputFile = null
+  // 7. Extract the output filename from the history entry. Local Comfy
+  //    populates `g.fullpath` (an absolute path on the server's disk);
+  //    Cloud doesn't — it returns just `filename` + `subfolder` + `type`.
+  //    Either way, we have to download the bytes via /view because in
+  //    cloud the file lives on remote storage. Even in local, the file
+  //    is in ComfyUI's output dir; pulling via /view keeps the code
+  //    path uniform and is cheap on loopback.
+  let outFilename = null, outSubfolder = '', outType = 'output'
   for (const out of Object.values(result.outputs || {})) {
     const gifs = Array.isArray(out?.gifs) ? out.gifs : []
     for (const g of gifs) {
-      if (g?.fullpath) { outputFile = g.fullpath; break }
+      if (g?.filename) {
+        outFilename = g.filename
+        outSubfolder = g.subfolder || ''
+        outType = g.type || 'output'
+        break
+      }
     }
-    if (outputFile) break
+    if (outFilename) break
   }
-  if (!outputFile) {
+  if (!outFilename) {
     return { success: false, error: 'Workflow completed but no video output was reported in history.' }
   }
 
@@ -2715,13 +2924,18 @@ ipcMain.handle('analysis:optimizeFootage', async (event, options) => {
   // mask as a matte.
   const vaceRawPath = path.join(projectOptimizedDir, `${sceneId}_${versionTag}_vace_raw.mp4`)
   try {
-    await copyFileOverwrite(outputFile, vaceRawPath)
+    await downloadFromComfy({
+      comfyUrl, apiKey,
+      filename: outFilename,
+      subfolder: outSubfolder,
+      type: outType,
+      destPath: vaceRawPath,
+    })
   } catch (err) {
-    // Non-fatal: leave the file at the ComfyUI output location and
-    // skip the composite step. Return the ComfyUI path so the UI can
-    // still link to it.
-    emit('note', { message: `Could not copy VACE output to project dir (${err.message}); using ComfyUI output path.` })
-    return { success: true, promptId, outputPath: outputFile, inProjectDir: false, composited: false, version: versionTag }
+    // Non-fatal: skip the composite step and return the remote
+    // filename so the UI at least has a reference.
+    emit('note', { message: `Could not download VACE output (${err.message}); skipping composite.` })
+    return { success: true, promptId, outputPath: null, remoteName: outFilename, inProjectDir: false, composited: false, version: versionTag }
   }
 
   // 8. Composite the VACE output onto the original using the generated
@@ -2737,13 +2951,13 @@ ipcMain.handle('analysis:optimizeFootage', async (event, options) => {
     vacePath: vaceRawPath,
     maskPath: localMaskPath,
     outputPath: finalPath,
-    // σ=8 keeps the mask edge soft enough to hide the seam between
-    // VACE pixels and the original, but tight enough that the matte
-    // stays localised to the graphic. Earlier values (σ=45) blurred
-    // the mask so much it spilled across most of the frame, making
-    // VACE bleed into untouched regions and looking like the whole
-    // shot got re-rendered — the opposite of "preserve the original".
-    feather: 8,
+    // σ=16 — paired with the smaller dilate kernel (13). The combo
+    // lets the mask stay tight around the actual graphic while the
+    // feather smooths the VACE↔original seam. σ=8 was leaving a
+    // visible line on user-marked artefacts; doubling the feather
+    // softens that without bleeding back into the σ=45 over-blur
+    // regression we had earlier when the dilate was too aggressive.
+    feather: 16,
     // Force the composite length to the original clip's frame count.
     // Wan VACE sometimes returns +1 frame on shots where our wanFrames
     // snap differs from numFrames; without this cap that trailing
@@ -2792,11 +3006,13 @@ ipcMain.handle('analysis:commitReframe', async (event, options) => {
     zoom, anchorX, anchorY,
     targetW, targetH,
     comfyUrl: comfyUrlOpt,
+    apiKey: apiKeyOpt,
     upscaleModel: upscaleModelOpt,
   } = options || {}
   if (!sceneId) return { success: false, error: 'sceneId required.' }
   if (!projectDir) return { success: false, error: 'projectDir required.' }
   const comfyUrl = comfyUrlOpt || 'http://localhost:8000'
+  const apiKey = apiKeyOpt || ''
   // Fall back to the shipped default when the renderer didn't pass one;
   // older callers (before capability settings existed) omit the field.
   const upscaleModel = upscaleModelOpt || '4x_NMKD-Siax_200k.pth'
@@ -2907,19 +3123,20 @@ ipcMain.handle('analysis:commitReframe', async (event, options) => {
 
   emit('uploading')
 
-  // Copy pre-crop into ComfyUI input. Follow the same naming pattern
-  // optimizeFootage uses so the file is namespaced by project + scene.
-  const comfyInputDir = await resolveComfyInputDir(comfyUrl)
-  if (!comfyInputDir) {
-    return { success: false, error: `Could not determine ComfyUI input dir from ${comfyUrl}/system_stats — is ComfyUI running?` }
-  }
+  // Upload pre-crop to ComfyUI via /upload/image. Works on both local
+  // (server writes into its input/ dir) and cloud (file is staged
+  // remotely for the workflow).
   const prefix = `reedit_${sanitizeForFilename(path.basename(projectDir))}_${sanitizeForFilename(sceneId)}_${versionTag}`
-  const comfyInputName = `${prefix}_pre_crop.mp4`
-  const comfyInputFullPath = path.join(comfyInputDir, comfyInputName)
+  let comfyInputName
   try {
-    await copyFileOverwrite(preCropPath, comfyInputFullPath)
+    const up = await uploadFileToComfy({
+      comfyUrl, apiKey,
+      localFilePath: preCropPath,
+      filename: `${prefix}_pre_crop.mp4`,
+    })
+    comfyInputName = up?.name || `${prefix}_pre_crop.mp4`
   } catch (err) {
-    return { success: false, error: `Failed to copy pre-crop into ComfyUI input dir: ${err.message}` }
+    return { success: false, error: `Failed to upload pre-crop to ComfyUI: ${err.message}` }
   }
 
   emit('queued_submit')
@@ -2935,9 +3152,9 @@ ipcMain.handle('analysis:commitReframe', async (event, options) => {
 
   let promptId
   try {
-    const submitRes = await net.fetch(`${comfyUrl}/prompt`, {
+    const submitRes = await net.fetch(`${comfyUrl}${_comfyApiPath(comfyUrl, '/prompt')}`, {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
+      headers: { 'Content-Type': 'application/json', ..._comfyHeaders(comfyUrl, apiKey) },
       body: JSON.stringify({ prompt: workflow }),
     })
     if (!submitRes.ok) {
@@ -2953,64 +3170,56 @@ ipcMain.handle('analysis:commitReframe', async (event, options) => {
 
   emit('queued', { promptId })
 
-  // Poll for completion. Upscale-only is much faster than VACE —
-  // 30-90 s typically on an RTX 4070 for a 30s clip — but keep the
-  // same 20-minute cap as optimizeFootage for safety.
-  const MAX_POLL_MS = 20 * 60 * 1000
-  const POLL_EVERY_MS = 3000
-  const startedAt = Date.now()
+  // Wait for completion. Cap 20 min — upscale-only is fast (30-90s on
+  // a 4070) but cloud queue waits can dilate the wall-clock time.
   let result
-  while (true) {
-    if (Date.now() - startedAt > MAX_POLL_MS) {
-      return { success: false, error: `Timed out waiting for ${promptId} after ${MAX_POLL_MS / 60000} min.` }
-    }
-    try {
-      const histRes = await net.fetch(`${comfyUrl}/history/${promptId}`)
-      if (histRes.ok) {
-        const hist = await histRes.json()
-        const entry = hist?.[promptId]
-        if (entry?.status?.completed) {
-          result = entry
-          break
-        }
-        if (entry?.status?.status_str === 'error') {
-          const msgs = (entry.status.messages || []).map((m) => JSON.stringify(m)).join(' | ')
-          return { success: false, error: `ComfyUI reported workflow error: ${msgs.slice(0, 600)}` }
-        }
-      }
-    } catch (err) {
-      emit('poll_warn', { message: err.message })
-    }
-    emit('running', { elapsedSec: Math.round((Date.now() - startedAt) / 1000) })
-    await new Promise((r) => setTimeout(r, POLL_EVERY_MS))
+  const startedAt = Date.now()
+  try {
+    result = await waitForComfyJob({
+      comfyUrl, apiKey, promptId,
+      timeoutMs: 20 * 60 * 1000,
+      pollMs: 3000,
+      onTick: () => emit('running', { elapsedSec: Math.round((Date.now() - startedAt) / 1000) }),
+    })
+  } catch (err) {
+    return { success: false, error: err?.message || `Comfy job ${promptId} failed.` }
   }
 
-  // Pull the finished video off ComfyUI's history entry and drop it
-  // into the project's .reedit/optimized/ dir under the R{NN} tag so
-  // it joins the same stack as V-series outputs. The resolver picks
-  // up the tag string without caring about the V / R prefix.
-  let outputFile = null
+  // Pull the finished video via /view and drop it under .reedit/optimized/
+  // R{NN}.mp4 so it joins the same stack as V-series outputs.
+  let outFilename = null, outSubfolder = '', outType = 'output'
   for (const out of Object.values(result.outputs || {})) {
     const gifs = Array.isArray(out?.gifs) ? out.gifs : []
     for (const g of gifs) {
-      if (g?.fullpath) { outputFile = g.fullpath; break }
+      if (g?.filename) {
+        outFilename = g.filename
+        outSubfolder = g.subfolder || ''
+        outType = g.type || 'output'
+        break
+      }
     }
-    if (outputFile) break
+    if (outFilename) break
   }
-  if (!outputFile) {
+  if (!outFilename) {
     return { success: false, error: 'Workflow completed but no video output was reported in history.' }
   }
 
   const finalPath = path.join(projectOptimizedDir, `${sceneId}_${versionTag}.mp4`)
   try {
-    await copyFileOverwrite(outputFile, finalPath)
+    await downloadFromComfy({
+      comfyUrl, apiKey,
+      filename: outFilename,
+      subfolder: outSubfolder,
+      type: outType,
+      destPath: finalPath,
+    })
   } catch (err) {
-    emit('note', { message: `Could not copy final to project dir (${err.message}); using ComfyUI output path.` })
-    const workflowJsonPathFallback = await saveWorkflowAlongsideOutput(outputFile, workflow, {
+    emit('note', { message: `Could not download final (${err.message}).` })
+    const workflowJsonPathFallback = await saveWorkflowAlongsideOutput(finalPath, workflow, {
       kind: 'reframe', version: versionTag, sceneId, modelId: 'realesrgan-upscale', promptId,
     })
-    emit('done', { promptId, outputPath: outputFile, version: versionTag, inProjectDir: false, workflowJsonPath: workflowJsonPathFallback })
-    return { success: true, promptId, outputPath: outputFile, workflowJsonPath: workflowJsonPathFallback, version: versionTag, inProjectDir: false, kind: 'reframe' }
+    emit('done', { promptId, outputPath: null, remoteName: outFilename, version: versionTag, inProjectDir: false, workflowJsonPath: workflowJsonPathFallback })
+    return { success: true, promptId, outputPath: null, remoteName: outFilename, workflowJsonPath: workflowJsonPathFallback, version: versionTag, inProjectDir: false, kind: 'reframe' }
   }
 
   const workflowJsonPath = await saveWorkflowAlongsideOutput(finalPath, workflow, {
@@ -3052,6 +3261,7 @@ ipcMain.handle('analysis:commitExtend', async (event, options) => {
     workflow, loadImageNodeId, loadVideoNodeId,
     modelId,
     comfyUrl: comfyUrlOpt,
+    apiKey: apiKeyOpt,
   } = options || {}
   if (!sceneId) return { success: false, error: 'sceneId required.' }
   if (!projectDir) return { success: false, error: 'projectDir required.' }
@@ -3068,6 +3278,7 @@ ipcMain.handle('analysis:commitExtend', async (event, options) => {
     return { success: false, error: 'Either loadImageNodeId (LTX/WAN base) or loadVideoNodeId (SVI) is required.' }
   }
   const comfyUrl = comfyUrlOpt || 'http://localhost:8000'
+  const apiKey = apiKeyOpt || ''
   const wantExtendSec = Math.max(0.2, Math.min(2, Number(extendSec) || 1))
 
   const emit = (stage, extra = {}) => {
@@ -3106,12 +3317,7 @@ ipcMain.handle('analysis:commitExtend', async (event, options) => {
   const versionTag = `E${String(nextVersion).padStart(2, '0')}`
   emit('note', { message: `Writing version ${versionTag}.` })
 
-  // Resolve ComfyUI's input dir once — both modes copy a file in.
   emit('uploading')
-  const comfyInputDir = await resolveComfyInputDir(comfyUrl)
-  if (!comfyInputDir) {
-    return { success: false, error: `Could not determine ComfyUI input dir from ${comfyUrl}/system_stats — is ComfyUI running?` }
-  }
   const prefix = `reedit_${sanitizeForFilename(path.basename(projectDir))}_${sanitizeForFilename(sceneId)}_${versionTag}`
 
   // Patch the workflow with the right input filename. SVI mode uploads
@@ -3121,14 +3327,17 @@ ipcMain.handle('analysis:commitExtend', async (event, options) => {
   let lastFrameLocalPath = null
 
   if (isVideoInputMode) {
-    // SVI Pro path — copy the source sub-clip MP4 into ComfyUI's
-    // input dir and point the LoadVideo node at it. No frame extract.
-    const comfyInputName = `${prefix}_source.mp4`
-    const comfyInputFullPath = path.join(comfyInputDir, comfyInputName)
+    // SVI Pro path — upload the source sub-clip MP4 via /upload/image.
+    let comfyInputName = `${prefix}_source.mp4`
     try {
-      await copyFileOverwrite(sourceClipPath, comfyInputFullPath)
+      const up = await uploadFileToComfy({
+        comfyUrl, apiKey,
+        localFilePath: sourceClipPath,
+        filename: comfyInputName,
+      })
+      comfyInputName = up?.name || comfyInputName
     } catch (err) {
-      return { success: false, error: `Failed to copy source clip into ComfyUI input dir: ${err.message}` }
+      return { success: false, error: `Failed to upload source clip: ${err.message}` }
     }
     if (patchedWorkflow[loadVideoNodeId]?.inputs) {
       patchedWorkflow[loadVideoNodeId].inputs.video = comfyInputName
@@ -3158,12 +3367,16 @@ ipcMain.handle('analysis:commitExtend', async (event, options) => {
       proc.on('error', reject)
     }).catch((err) => { throw err })
 
-    const comfyInputName = `${prefix}_last_frame.png`
-    const comfyInputFullPath = path.join(comfyInputDir, comfyInputName)
+    let comfyInputName = `${prefix}_last_frame.png`
     try {
-      await copyFileOverwrite(lastFrameLocalPath, comfyInputFullPath)
+      const up = await uploadFileToComfy({
+        comfyUrl, apiKey,
+        localFilePath: lastFrameLocalPath,
+        filename: comfyInputName,
+      })
+      comfyInputName = up?.name || comfyInputName
     } catch (err) {
-      return { success: false, error: `Failed to copy last frame into ComfyUI input dir: ${err.message}` }
+      return { success: false, error: `Failed to upload last frame: ${err.message}` }
     }
     if (patchedWorkflow[loadImageNodeId]?.inputs) {
       patchedWorkflow[loadImageNodeId].inputs.image = comfyInputName
@@ -3175,9 +3388,9 @@ ipcMain.handle('analysis:commitExtend', async (event, options) => {
   emit('queued_submit')
   let promptId
   try {
-    const submitRes = await net.fetch(`${comfyUrl}/prompt`, {
+    const submitRes = await net.fetch(`${comfyUrl}${_comfyApiPath(comfyUrl, '/prompt')}`, {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
+      headers: { 'Content-Type': 'application/json', ..._comfyHeaders(comfyUrl, apiKey) },
       body: JSON.stringify({ prompt: patchedWorkflow }),
     })
     if (!submitRes.ok) {
@@ -3193,33 +3406,16 @@ ipcMain.handle('analysis:commitExtend', async (event, options) => {
 
   emit('queued', { promptId })
 
-  const MAX_POLL_MS = 20 * 60 * 1000
-  const POLL_EVERY_MS = 3000
-  const startedAt = Date.now()
   let result
-  while (true) {
-    if (Date.now() - startedAt > MAX_POLL_MS) {
-      return { success: false, error: `Timed out waiting for ${promptId} after ${MAX_POLL_MS / 60000} min.` }
-    }
-    try {
-      const histRes = await net.fetch(`${comfyUrl}/history/${promptId}`)
-      if (histRes.ok) {
-        const hist = await histRes.json()
-        const entry = hist?.[promptId]
-        if (entry?.status?.completed) {
-          result = entry
-          break
-        }
-        if (entry?.status?.status_str === 'error') {
-          const msgs = (entry.status.messages || []).map((m) => JSON.stringify(m)).join(' | ')
-          return { success: false, error: `ComfyUI reported workflow error: ${msgs.slice(0, 600)}` }
-        }
-      }
-    } catch (err) {
-      emit('poll_warn', { message: err.message })
-    }
-    emit('running', { elapsedSec: Math.round((Date.now() - startedAt) / 1000) })
-    await new Promise((r) => setTimeout(r, POLL_EVERY_MS))
+  const startedAt = Date.now()
+  try {
+    result = await waitForComfyJob({
+      comfyUrl, apiKey, promptId,
+      timeoutMs: 20 * 60 * 1000, pollMs: 3000,
+      onTick: () => emit('running', { elapsedSec: Math.round((Date.now() - startedAt) / 1000) }),
+    })
+  } catch (err) {
+    return { success: false, error: err?.message || `Comfy job ${promptId} failed.` }
   }
 
   // Step 4 — find the generated tail MP4 in the history outputs.
@@ -3234,8 +3430,9 @@ ipcMain.handle('analysis:commitExtend', async (event, options) => {
   // as the "output", which the renderer then can't play.
   const VIDEO_RE = /\.(mp4|mov|webm|mkv|gif|avi|m4v)$/i
   const isVideoFile = (filename) => VIDEO_RE.test(String(filename || ''))
-  let tailOutputFile = null
-  let tailOutputFilename = null
+  let tailOutFilename = null
+  let tailOutSubfolder = ''
+  let tailOutType = 'output'
   for (const out of Object.values(result.outputs || {})) {
     const candidates = [
       ...(Array.isArray(out?.videos) ? out.videos : []),
@@ -3244,59 +3441,17 @@ ipcMain.handle('analysis:commitExtend', async (event, options) => {
     ]
     for (const c of candidates) {
       // Skip preview images / non-video outputs.
-      if (c?.filename && !isVideoFile(c.filename)) continue
-      if (c?.fullpath && !isVideoFile(c.fullpath)) continue
-      if (c?.fullpath) {
-        tailOutputFile = c.fullpath
-        tailOutputFilename = c.filename || null
-        break
-      }
-      if (c?.filename) {
-        // Some history payloads omit `fullpath` and only give the
-        // filename + subfolder. Resolve against ComfyUI's output dir.
-        tailOutputFilename = c.filename
-        const subfolder = c.subfolder || ''
-        const comfyOutputDir = comfyInputDir.replace(/\/input\/?$/, '/output').replace(/\\input\\?$/, '\\output')
-        const candidatePath = path.join(comfyOutputDir, subfolder, c.filename)
-        if (fsSync.existsSync(candidatePath)) {
-          tailOutputFile = candidatePath
-          break
-        }
-      }
+      if (!c?.filename) continue
+      if (!isVideoFile(c.filename)) continue
+      tailOutFilename = c.filename
+      tailOutSubfolder = c.subfolder || ''
+      tailOutType = c.type || 'output'
+      break
     }
-    if (tailOutputFile) break
+    if (tailOutFilename) break
   }
 
-  // Last-ditch fallback: scan the ComfyUI output dir for the most
-  // recent file matching our prefix. Useful when the history payload
-  // returned no usable filename info (some custom-node SaveVideo
-  // implementations don't populate the standard fields).
-  if (!tailOutputFile) {
-    try {
-      const comfyOutputDir = comfyInputDir.replace(/\/input\/?$/, '/output').replace(/\\input\\?$/, '\\output')
-      const reeditExtendDir = path.join(comfyOutputDir, 'reedit_extend')
-      let scanDir = comfyOutputDir
-      try { await fs.access(reeditExtendDir); scanDir = reeditExtendDir } catch (_) { /* fall back to root */ }
-      const entries = await fs.readdir(scanDir).catch(() => [])
-      let newestPath = null
-      let newestMtime = 0
-      for (const name of entries) {
-        if (!name.toLowerCase().endsWith('.mp4')) continue
-        if (!name.includes(sanitizeForFilename(sceneId))) continue
-        const full = path.join(scanDir, name)
-        try {
-          const st = await fs.stat(full)
-          if (st.mtimeMs > newestMtime) { newestMtime = st.mtimeMs; newestPath = full }
-        } catch (_) { /* ignore */ }
-      }
-      if (newestPath) {
-        tailOutputFile = newestPath
-        emit('note', { message: `Recovered output from disk scan (history payload was empty): ${path.basename(newestPath)}` })
-      }
-    } catch (_) { /* ignore */ }
-  }
-
-  if (!tailOutputFile) {
+  if (!tailOutFilename) {
     return {
       success: false,
       error: `Workflow completed but no video output was reported in history. Check ComfyUI's output dir for a file matching ${sceneId}_${versionTag}* and re-run if it isn't there.`,
@@ -3318,9 +3473,15 @@ ipcMain.handle('analysis:commitExtend', async (event, options) => {
     // shows a small but jarring height/width jump.
     const sviStagePath = path.join(projectOptimizedDir, `${sceneId}_${versionTag}_svi_raw.mp4`)
     try {
-      await copyFileOverwrite(tailOutputFile, sviStagePath)
+      await downloadFromComfy({
+        comfyUrl, apiKey,
+        filename: tailOutFilename,
+        subfolder: tailOutSubfolder,
+        type: tailOutType,
+        destPath: sviStagePath,
+      })
     } catch (err) {
-      return { success: false, error: `Could not copy ComfyUI SVI output: ${err.message}` }
+      return { success: false, error: `Could not download ComfyUI SVI output: ${err.message}` }
     }
     const sviMeta = await probeVideoMeta(sviStagePath)
     const dimsMatch = sviMeta?.width === meta.width && sviMeta?.height === meta.height
@@ -3365,9 +3526,15 @@ ipcMain.handle('analysis:commitExtend', async (event, options) => {
     // onto the source sub-clip with the demuxer.
     tailLocalPath = path.join(projectOptimizedDir, `${sceneId}_${versionTag}_tail.mp4`)
     try {
-      await copyFileOverwrite(tailOutputFile, tailLocalPath)
+      await downloadFromComfy({
+        comfyUrl, apiKey,
+        filename: tailOutFilename,
+        subfolder: tailOutSubfolder,
+        type: tailOutType,
+        destPath: tailLocalPath,
+      })
     } catch (err) {
-      return { success: false, error: `Could not copy ComfyUI tail output: ${err.message}` }
+      return { success: false, error: `Could not download ComfyUI tail output: ${err.message}` }
     }
     const listFilePath = path.join(projectOptimizedDir, `${sceneId}_${versionTag}_concat.txt`)
     const toListLine = (p) => `file '${p.replace(/\\/g, '/').replace(/'/g, "'\\''")}'`
@@ -3565,6 +3732,7 @@ ipcMain.handle('analysis:synthesizeVoiceover', async (event, options) => {
     nfeSteps = 32,    // 16-64 useful range; higher = sharper / slower
     speed = 1.0,       // 0.85 fast … 1.0 default … 1.2 slower / more deliberate
     comfyUrl: comfyUrlOpt,
+    apiKey: apiKeyOpt,
   } = options || {}
   if (!draftId) return { success: false, error: 'draftId required.' }
   if (!projectDir) return { success: false, error: 'projectDir required.' }
@@ -3586,6 +3754,7 @@ ipcMain.handle('analysis:synthesizeVoiceover', async (event, options) => {
     }
   }
   const comfyUrl = comfyUrlOpt || 'http://localhost:8000'
+  const apiKey = apiKeyOpt || ''
 
   const emit = (stage, extra = {}) => {
     try { event.sender.send('analysis:synthesizeVoiceover:progress', { draftId, stage, ...extra }) } catch (_) { /* renderer closed */ }
@@ -3596,14 +3765,6 @@ ipcMain.handle('analysis:synthesizeVoiceover', async (event, options) => {
   const draftDir = path.join(projectDirFwd, '.reedit', 'vo_generated', sanitizeForFilename(draftId, 60))
   try { await fs.mkdir(draftDir, { recursive: true }) } catch (err) {
     return { success: false, error: `Could not create output dir: ${err.message}` }
-  }
-
-  // Resolve ComfyUI's input dir up-front for both modes — Kokoro
-  // doesn't need an upload but we still call /prompt + /history so we
-  // need a valid Comfy URL.
-  const comfyInputDir = await resolveComfyInputDir(comfyUrl)
-  if (!comfyInputDir) {
-    return { success: false, error: `Could not determine ComfyUI input dir from ${comfyUrl}/system_stats — is ComfyUI running?` }
   }
 
   // Reference extract + upload only runs for clone mode. Kokoro skips
@@ -3651,18 +3812,28 @@ ipcMain.handle('analysis:synthesizeVoiceover', async (event, options) => {
       return { success: false, error: `Could not write reference transcript: ${err.message}` }
     }
 
-    // Stage 2: upload the reference pair into ComfyUI's input dir.
+    // Stage 2: upload the reference pair to ComfyUI via /upload/image.
+    // F5TTSAudioAdvanced's `sample` input takes a filename that lives in
+    // ComfyUI's input/ dir; /upload/image accepts arbitrary file types
+    // despite the name and stages them in input/ on local, or under the
+    // job's input space on cloud — same workflow JSON works for both.
     emit('uploading_reference')
     const refBaseName = `reedit_voref_${sanitizeForFilename(draftId, 40)}`
-    const comfyRefWavPath = path.join(comfyInputDir, `${refBaseName}.wav`)
-    const comfyRefTxtPath = path.join(comfyInputDir, `${refBaseName}.txt`)
     try {
-      await copyFileOverwrite(refWavLocalPath, comfyRefWavPath)
-      await copyFileOverwrite(refTxtLocalPath, comfyRefTxtPath)
+      const wavUp = await uploadFileToComfy({
+        comfyUrl, apiKey,
+        localFilePath: refWavLocalPath,
+        filename: `${refBaseName}.wav`,
+      })
+      await uploadFileToComfy({
+        comfyUrl, apiKey,
+        localFilePath: refTxtLocalPath,
+        filename: `${refBaseName}.txt`,
+      })
+      referenceFilename = wavUp?.name || `${refBaseName}.wav`
     } catch (err) {
-      return { success: false, error: `Failed to copy reference pair into ComfyUI input dir: ${err.message}` }
+      return { success: false, error: `Failed to upload reference pair to ComfyUI: ${err.message}` }
     }
-    referenceFilename = `${refBaseName}.wav`
   }
 
   // Stage 3: synthesise each segment in series. F5TTSAudio caches the
@@ -3776,9 +3947,9 @@ ipcMain.handle('analysis:synthesizeVoiceover', async (event, options) => {
 
     let promptId
     try {
-      const submitRes = await net.fetch(`${comfyUrl}/prompt`, {
+      const submitRes = await net.fetch(`${comfyUrl}${_comfyApiPath(comfyUrl, '/prompt')}`, {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers: { 'Content-Type': 'application/json', ..._comfyHeaders(comfyUrl, apiKey) },
         body: JSON.stringify({ prompt: segmentWorkflow }),
       })
       if (!submitRes.ok) {
@@ -3792,39 +3963,28 @@ ipcMain.handle('analysis:synthesizeVoiceover', async (event, options) => {
       return { success: false, error: `Could not reach ComfyUI at ${comfyUrl}: ${err.message}` }
     }
 
-    // Poll /history for completion. F5-TTS jobs are short (a few
-    // seconds for the second+ segment, up to a minute on cold start).
-    const MAX_POLL_MS = 5 * 60 * 1000
-    const POLL_EVERY_MS = 1500
+    // Wait for completion via the shared poller (handles local /history
+    // and cloud /api/job/<id>/status under the same call).
     const startedAt = Date.now()
     let resultEntry
-    while (true) {
-      if (Date.now() - startedAt > MAX_POLL_MS) {
-        return { success: false, error: `Timed out waiting for segment "${seg.id}" after ${MAX_POLL_MS / 60000} min.` }
-      }
-      try {
-        const histRes = await net.fetch(`${comfyUrl}/history/${promptId}`)
-        if (histRes.ok) {
-          const hist = await histRes.json()
-          const entry = hist?.[promptId]
-          if (entry?.status?.completed) { resultEntry = entry; break }
-          if (entry?.status?.status_str === 'error') {
-            const msgs = (entry.status.messages || []).map((m) => JSON.stringify(m)).join(' | ')
-            return { success: false, error: `ComfyUI reported synth error on segment "${seg.id}": ${msgs.slice(0, 600)}` }
-          }
-        }
-      } catch (err) {
-        emit('poll_warn', { segId: seg.id, message: err.message })
-      }
-      emit('segment_running', { segId: seg.id, elapsedSec: Math.round((Date.now() - startedAt) / 1000) })
-      await new Promise((r) => setTimeout(r, POLL_EVERY_MS))
+    try {
+      resultEntry = await waitForComfyJob({
+        comfyUrl, apiKey, promptId,
+        timeoutMs: 5 * 60 * 1000,
+        pollMs: 1500,
+        onTick: () => emit('segment_running', { segId: seg.id, elapsedSec: Math.round((Date.now() - startedAt) / 1000) }),
+      })
+    } catch (err) {
+      return { success: false, error: err?.message || `Comfy job for segment "${seg.id}" failed.` }
     }
 
-    // Extract the saved audio path from the history outputs. SaveAudio
-    // emits under `audio` in newer ComfyUI; fall back to `images` and
-    // filter by extension as we do for the video flows.
+    // Extract the saved audio reference from the history outputs.
+    // SaveAudio emits under `audio` in newer ComfyUI; fall back to
+    // `images` / `gifs` and filter by extension as we do for the video
+    // flows.
     let savedFilename = null
     let savedSubfolder = ''
+    let savedType = 'output'
     for (const out of Object.values(resultEntry.outputs || {})) {
       const candidates = [
         ...(Array.isArray(out?.audio) ? out.audio : []),
@@ -3836,6 +3996,7 @@ ipcMain.handle('analysis:synthesizeVoiceover', async (event, options) => {
         if (!VIDEO_AUDIO_RE.test(c.filename)) continue
         savedFilename = c.filename
         savedSubfolder = c.subfolder || ''
+        savedType = c.type || 'output'
         break
       }
       if (savedFilename) break
@@ -3843,8 +4004,22 @@ ipcMain.handle('analysis:synthesizeVoiceover', async (event, options) => {
     if (!savedFilename) {
       return { success: false, error: `Could not locate output audio in ComfyUI history for segment "${seg.id}".` }
     }
-    const comfyOutputDir = comfyInputDir.replace(/[\/\\]input[\/\\]?$/, (m) => m.replace('input', 'output'))
-    const sourceAudioPath = path.join(comfyOutputDir, savedSubfolder, savedFilename)
+
+    // Download the rendered audio via /view (302-redirected signed URL
+    // on cloud; direct file on local). Keep the original extension when
+    // staging so the subsequent ffmpeg transcode reads it correctly.
+    const stagedRawPath = path.join(draftDir, `_${seg.id}_raw${path.extname(savedFilename) || '.flac'}`)
+    try {
+      await downloadFromComfy({
+        comfyUrl, apiKey,
+        filename: savedFilename,
+        subfolder: savedSubfolder,
+        type: savedType,
+        destPath: stagedRawPath,
+      })
+    } catch (err) {
+      return { success: false, error: `Could not download segment "${seg.id}" audio: ${err.message}` }
+    }
 
     // Convert whatever F5/SaveAudio emitted (FLAC by default) into a
     // PCM WAV under the project — keeps downstream playback / ffmpeg
@@ -3854,7 +4029,7 @@ ipcMain.handle('analysis:synthesizeVoiceover', async (event, options) => {
       await new Promise((resolve, reject) => {
         const args = [
           '-hide_banner', '-nostats', '-y',
-          '-i', sourceAudioPath,
+          '-i', stagedRawPath,
           '-ac', '1',
           '-ar', '24000',
           '-c:a', 'pcm_s16le',
@@ -3872,6 +4047,7 @@ ipcMain.handle('analysis:synthesizeVoiceover', async (event, options) => {
     } catch (err) {
       return { success: false, error: err.message }
     }
+    try { await fs.unlink(stagedRawPath) } catch (_) { /* non-fatal */ }
     let durationSec = null
     try {
       const meta = await probeAudioDuration(finalWavPath)
@@ -4030,11 +4206,13 @@ ipcMain.handle('analysis:synthesizeMusic', async (event, options) => {
     topP = 0.9,
     seed: seedOpt,
     comfyUrl: comfyUrlOpt,
+    apiKey: apiKeyOpt,
   } = options || {}
   if (!draftId) return { success: false, error: 'draftId required.' }
   if (!projectDir) return { success: false, error: 'projectDir required.' }
   if (!tags || !String(tags).trim()) return { success: false, error: 'tags (genre/style prompt) required.' }
   const comfyUrl = comfyUrlOpt || 'http://localhost:8000'
+  const apiKey = apiKeyOpt || ''
 
   const emit = (stage, extra = {}) => {
     try { event.sender.send('analysis:synthesizeMusic:progress', { draftId, stage, ...extra }) } catch (_) { /* renderer closed */ }
@@ -4046,14 +4224,6 @@ ipcMain.handle('analysis:synthesizeMusic', async (event, options) => {
   try { await fs.mkdir(outDir, { recursive: true }) } catch (err) {
     return { success: false, error: `Could not create music output dir: ${err.message}` }
   }
-
-  const comfyInputDir = await resolveComfyInputDir(comfyUrl)
-  if (!comfyInputDir) {
-    return { success: false, error: `Could not determine ComfyUI input dir from ${comfyUrl}/system_stats — is ComfyUI running?` }
-  }
-  // ComfyUI's output dir mirrors input dir's parent — same trick the
-  // VO + extend handlers use to locate written files.
-  const comfyOutputDir = comfyInputDir.replace(/[\/\\]input[\/\\]?$/, (m) => m.replace('input', 'output'))
 
   const seed = Number.isFinite(Number(seedOpt))
     ? Math.floor(Number(seedOpt))
@@ -4152,9 +4322,9 @@ ipcMain.handle('analysis:synthesizeMusic', async (event, options) => {
   emit('queued_submit')
   let promptId
   try {
-    const submitRes = await net.fetch(`${comfyUrl}/prompt`, {
+    const submitRes = await net.fetch(`${comfyUrl}${_comfyApiPath(comfyUrl, '/prompt')}`, {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
+      headers: { 'Content-Type': 'application/json', ..._comfyHeaders(comfyUrl, apiKey) },
       body: JSON.stringify({ prompt: workflow }),
     })
     if (!submitRes.ok) {
@@ -4170,31 +4340,18 @@ ipcMain.handle('analysis:synthesizeMusic', async (event, options) => {
   emit('queued', { promptId })
 
   // Music synth is heavy — first run loads ~5.85 GB of weights from
-  // disk + does a long denoise pass. We poll for up to 15 minutes.
-  const MAX_POLL_MS = 15 * 60 * 1000
-  const POLL_EVERY_MS = 3000
+  // disk + does a long denoise pass. Cap at 15 minutes.
   const startedAt = Date.now()
   let resultEntry
-  while (true) {
-    if (Date.now() - startedAt > MAX_POLL_MS) {
-      return { success: false, error: `Timed out waiting for music synth ${promptId} after ${MAX_POLL_MS / 60000} min.` }
-    }
-    try {
-      const histRes = await net.fetch(`${comfyUrl}/history/${promptId}`)
-      if (histRes.ok) {
-        const hist = await histRes.json()
-        const entry = hist?.[promptId]
-        if (entry?.status?.completed) { resultEntry = entry; break }
-        if (entry?.status?.status_str === 'error') {
-          const msgs = (entry.status.messages || []).map((m) => JSON.stringify(m)).join(' | ')
-          return { success: false, error: `ComfyUI reported music synth error: ${msgs.slice(0, 600)}` }
-        }
-      }
-    } catch (err) {
-      emit('poll_warn', { message: err.message })
-    }
-    emit('running', { elapsedSec: Math.round((Date.now() - startedAt) / 1000) })
-    await new Promise((r) => setTimeout(r, POLL_EVERY_MS))
+  try {
+    resultEntry = await waitForComfyJob({
+      comfyUrl, apiKey, promptId,
+      timeoutMs: 15 * 60 * 1000,
+      pollMs: 3000,
+      onTick: () => emit('running', { elapsedSec: Math.round((Date.now() - startedAt) / 1000) }),
+    })
+  } catch (err) {
+    return { success: false, error: err?.message || `Comfy music job ${promptId} failed.` }
   }
 
   // Locate the saved audio in the history outputs. SaveAudioMP3 emits
@@ -4203,6 +4360,7 @@ ipcMain.handle('analysis:synthesizeMusic', async (event, options) => {
   const AUDIO_RE = /\.(mp3|wav|flac|ogg|m4a|opus)$/i
   let savedFilename = null
   let savedSubfolder = ''
+  let savedType = 'output'
   for (const out of Object.values(resultEntry.outputs || {})) {
     const candidates = [
       ...(Array.isArray(out?.audio) ? out.audio : []),
@@ -4214,6 +4372,7 @@ ipcMain.handle('analysis:synthesizeMusic', async (event, options) => {
       if (!AUDIO_RE.test(c.filename)) continue
       savedFilename = c.filename
       savedSubfolder = c.subfolder || ''
+      savedType = c.type || 'output'
       break
     }
     if (savedFilename) break
@@ -4221,9 +4380,24 @@ ipcMain.handle('analysis:synthesizeMusic', async (event, options) => {
   if (!savedFilename) {
     return { success: false, error: 'Could not locate output audio in ComfyUI history for music synth.' }
   }
-  const sourceAudioPath = path.join(comfyOutputDir, savedSubfolder, savedFilename)
   const ext = path.extname(savedFilename) || '.mp3'
   const finalAudioPath = path.join(outDir, `${sanitizeForFilename(draftId, 60)}${ext}`)
+
+  // Download the synthesised audio via /view (signed-URL redirect on
+  // cloud; direct stream on local). Stage it next to the final path so
+  // the optional ffmpeg trim has a real local file to operate on.
+  const stagedAudioPath = path.join(outDir, `_${sanitizeForFilename(draftId, 60)}_raw${ext}`)
+  try {
+    await downloadFromComfy({
+      comfyUrl, apiKey,
+      filename: savedFilename,
+      subfolder: savedSubfolder,
+      type: savedType,
+      destPath: stagedAudioPath,
+    })
+  } catch (err) {
+    return { success: false, error: `Could not download synthesised music: ${err.message}` }
+  }
 
   emit('finalizing')
   // Trim the model output to the user-requested duration. Two
@@ -4245,7 +4419,7 @@ ipcMain.handle('analysis:synthesizeMusic', async (event, options) => {
         const args = [
           '-hide_banner', '-nostats', '-y',
           '-ss', sliceStart.toFixed(3),
-          '-i', sourceAudioPath,
+          '-i', stagedAudioPath,
           '-t', safeDuration.toFixed(3),
           // Fade in at the head + fade out at the tail. Both are
           // short enough (~5% of the slice) that the user perceives
@@ -4265,20 +4439,24 @@ ipcMain.handle('analysis:synthesizeMusic', async (event, options) => {
         proc.on('error', reject)
       })
     } catch (err) {
-      // Trim failed — fall back to copying the full-length file. Better
-      // to ship "30s of music when 10s was requested" than to fail.
+      // Trim failed — fall back to keeping the full-length downloaded
+      // file. Better to ship "30s of music when 10s was requested" than
+      // to fail.
       emit('trim_warn', { message: err.message })
-      try { await copyFileOverwrite(sourceAudioPath, finalAudioPath) } catch (cpErr) {
-        return { success: false, error: `Could not copy synthesised music into project: ${cpErr.message}` }
+      try { await copyFileOverwrite(stagedAudioPath, finalAudioPath) } catch (cpErr) {
+        return { success: false, error: `Could not stage synthesised music: ${cpErr.message}` }
       }
     }
   } else {
     try {
-      await copyFileOverwrite(sourceAudioPath, finalAudioPath)
-    } catch (err) {
-      return { success: false, error: `Could not copy synthesised music into project: ${err.message}` }
+      await fs.rename(stagedAudioPath, finalAudioPath)
+    } catch (_) {
+      try { await copyFileOverwrite(stagedAudioPath, finalAudioPath) } catch (err) {
+        return { success: false, error: `Could not stage synthesised music: ${err.message}` }
+      }
     }
   }
+  try { await fs.unlink(stagedAudioPath) } catch (_) { /* either already moved, or non-fatal */ }
   let durationFinal = null
   try {
     const dur = await probeAudioDuration(finalAudioPath)

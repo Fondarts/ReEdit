@@ -85,6 +85,45 @@ D — DIRECT (clear next step)
 
 Score the current cut against A / B / C / D and propose an EDL that visibly improves every letter the current edit is weak on.`,
   },
+  {
+    // Sundogs framework — client-supplied methodology that scores ad
+    // effectiveness across four dimensions (Attention, Comprehension,
+    // Persuasion, Action), each broken into a checklist of techniques
+    // (e.g. brightness, scenes per second, has CTA). Pairs with the
+    // imported Sundogs PDF report (reeditSundogsReport.js) which
+    // carries the actual scores + recommendations from Sundogs' own
+    // analysis. When the user has imported a report, it gets injected
+    // into this prompt as a `# Sundogs Report` block so the LLM
+    // optimises against the SPECIFIC weak windows Sundogs flagged
+    // rather than guessing.
+    id: 'Sundogs',
+    label: 'Sundogs framework',
+    blurb: 'Attention · Comprehension · Persuasion · Action — per Sundogs methodology.',
+    criteria: `Sundogs methodology for ad effectiveness. Optimise across all FOUR dimensions:
+
+ATTENTION — keep eyes on screen.
+  • First 5s: open with high contrast / brightness / movement, or a face close-up; avoid static establishing shots that bleed audience.
+  • Overall: vary framing angles, include close-ups, sustain healthy scenes-per-second cadence (neither monotonous nor frenetic). Voiceover and supers should reinforce, not compete.
+  • Last 5s: don't let visual energy collapse before the resolution lands.
+  • Techniques to score: contrast, brightness, saturation, luminosity_changes, movement, static_share, scenes_per_second (first/all/last 5), framing_angles_count, unusual_angles, has_close_ups, person_in_first_5, face_close_up_first_5, voice_over, supers_match_vo, has_music, music_type, has_sfx.
+
+COMPREHENSION — make brand and product unmistakable.
+  • Branding: surface the brand within the first 5s and bring it back periodically (visual cues + verbal mention). Mix explicit and implicit branding rather than relying on a single end-card packshot.
+  • Product: show product close-ups / extreme close-ups; whenever the brief allows, frame the product interacting with people, not in isolation.
+  • Techniques to score: branding_cues, audio_mention, branding_explicitness, brand_spikes, packshot, product_close_ups, product_extreme_close_ups, product_people_interaction.
+
+PERSUASION — emotional resonance.
+  • Feature people; use extreme close-ups to convey intense emotion; show people interacting (not just present).
+  • Combine modalities (visual, audio, supers) to convey emotion; let the music carry emotional weight.
+  • Techniques to score: people_presence, people_extreme_close_ups, people_interaction, intense_emotions, emotion_modalities, emotional_complexity, emotional_music.
+
+ACTION — drive a next step.
+  • End with an explicit CTA; reinforce with audio and supers.
+  • Where the brief allows, include promotion + urgency cues.
+  • Techniques to score: has_cta, has_promotion, has_urgency.
+
+When the user has imported the Sundogs PDF report for this commercial, its findings are pinned below as # Sundogs Report. Treat that as ground truth: every window with a NEGATIVE delta (% below benchmark) and every technique flagged "evaluate" must measurably improve in the EDL you propose. Quote the technique names or "could explore" bullets you are addressing in the row notes (e.g. "address person_in_first_5 by promoting scene-007"). When no report has been imported yet, optimise against the framework above.`,
+  },
 ]
 
 // System prompt varies with the footage-generation capability: if the
@@ -106,7 +145,7 @@ function buildSystemPrompt(capabilities) {
 // garbage to reason about. Shots captioned with LM Studio / Claude
 // don't set `videoAnalysisError`, so they pass through with the
 // classical `caption + structured` data only.
-function eligibleForProposal(scene) {
+export function eligibleForProposal(scene) {
   if (!scene || scene.excluded) return false
   if (scene.videoAnalysisError) return false
   return Boolean(
@@ -121,7 +160,7 @@ function eligibleForProposal(scene) {
 // Graphics / Pacing). Any section whose fields are all missing is
 // omitted, so shots captioned with a non-video backend only emit
 // Visual + Chips and don't clutter the prompt with empty lines.
-function formatSceneBlock(scene) {
+export function formatSceneBlock(scene) {
   const st = scene.structured || {}
   const va = scene.videoAnalysis || {}
   const lines = []
@@ -274,7 +313,7 @@ function formatSceneBlock(scene) {
   return lines.join('\n')
 }
 
-function renderShotLog(scenes) {
+export function renderShotLog(scenes) {
   // `---` separator between blocks — `##` alone is enough markdown
   // structure but the HR makes the boundaries unambiguous for the LLM
   // when a shot's Visual runs long or wraps.
@@ -740,7 +779,7 @@ function renderGeneratedMusicBlock(generatedMusic) {
 A ${pieces.join(' · ')} track is locked in as the audio bed. Plan the cut to ride that bed — match hard cuts to drum hits / accents in a high-tempo track, hold contemplative shots over sustained pads in a slower one, and reserve the final beat for the brand resolution. Don't propose anything that fights the music's energy curve.`
 }
 
-function renderAdConceptBlock(adConcept) {
+export function renderAdConceptBlock(adConcept) {
   if (!adConcept) return ''
   const rows = []
   if (adConcept.concept) rows.push(`- **Concept**: ${adConcept.concept}`)
@@ -755,7 +794,114 @@ These are the creative strategist's notes on what the ORIGINAL ad is about. Your
 ${rows.join('\n')}`
 }
 
-function buildUserPrompt({ scenes, brandBrief, extraInstructions, metric, totalDurationSec, targetDurationSec, criteria, correctionNote, capabilities, adConcept, voSegments, generatedVoiceover, generatedMusic, additionalAssets }) {
+// Render the imported Sundogs PDF report (produced by
+// reeditSundogsReport.js) as a compact markdown block the proposer
+// LLM can act on. We keep this flat instead of dumping the full
+// per-technique table — the LLM only needs the deltas vs benchmark,
+// the "could explore" bullets, and the techniques flagged "evaluate"
+// to know what to fix. Numbers come straight from Sundogs' own
+// scoring (not our heuristic), so the LLM should treat them as
+// ground truth.
+export function renderSundogsReport(report) {
+  if (!report || typeof report !== 'object') return ''
+  const sections = []
+  const m = report.meta || {}
+  const o = report.overall || {}
+  const headerBits = []
+  if (m.brand && m.product) headerBits.push(`${m.brand} ${m.product}`)
+  else if (m.brand) headerBits.push(m.brand)
+  if (m.contentType) headerBits.push(m.contentType)
+  if (Number.isFinite(m.durationSec)) headerBits.push(`${m.durationSec}s`)
+  if (headerBits.length) sections.push(`- Subject: ${headerBits.join(' · ')}`)
+  if (Number.isFinite(o.finalScorePct) && Number.isFinite(o.benchmarkPct)) {
+    sections.push(`- Overall score: ${o.finalScorePct}% (vs ${o.benchmarkPct}% category benchmark)`)
+  }
+  // Per-dimension overall deltas — the headline that drives priority.
+  const dimDeltas = o.deltas || {}
+  const dimLine = ['attention', 'comprehension', 'persuasion', 'action']
+    .map((k) => Number.isFinite(dimDeltas[k]) ? `${k} ${dimDeltas[k] >= 0 ? '+' : ''}${dimDeltas[k]}%` : null)
+    .filter(Boolean)
+    .join(' · ')
+  if (dimLine) sections.push(`- Dimension deltas vs benchmark: ${dimLine}`)
+  // Differentiation — what the cut does that's rare in the benchmark.
+  const diff = report.differentiation || {}
+  if (Number.isFinite(diff.scorePct)) {
+    sections.push(`- Differentiation: ${diff.scorePct >= 0 ? '+' : ''}${diff.scorePct}%`)
+  }
+  if (Array.isArray(diff.keyElements) && diff.keyElements.length) {
+    sections.push(`- Key differentiators (uncommon strengths to preserve):\n${diff.keyElements.slice(0, 4).map((d) => `  - ${d}`).join('\n')}`)
+  }
+  const fmtDelta = (n) => Number.isFinite(n) ? `${n >= 0 ? '+' : ''}${n}%` : '—'
+  const fmtWindow = (label, w, deltaKeys) => {
+    if (!w) return null
+    const deltaPart = (deltaKeys || []).map((k) => {
+      const v = w?.deltas?.[k]
+      if (!Number.isFinite(v)) return null
+      return `${k}=${fmtDelta(v)}`
+    }).filter(Boolean).join(' · ')
+    const explore = Array.isArray(w?.couldExplore) ? w.couldExplore.slice(0, 3).join('; ') : ''
+    const exploreLine = explore ? ` · explore: ${explore}` : ''
+    return `${label}${deltaPart ? ` · ${deltaPart}` : ''}${exploreLine}`
+  }
+  // Per-technique evaluations (only those flagged "evaluate", since
+  // those are the actionable ones — "good" status doesn't drive an
+  // edit). Cap to 8 most-relevant per dimension to keep the prompt
+  // bounded.
+  const collectEvaluate = (window) => {
+    if (!window?.techniques) return []
+    return Object.entries(window.techniques)
+      .filter(([, t]) => t?.status === 'evaluate')
+      .map(([id, t]) => `${id}=${t.value}`)
+  }
+  // Attention
+  const att = report.attention
+  if (att) {
+    const row = fmtWindow('Attention', att, ['first5', 'overall', 'last5'])
+    const evals = collectEvaluate(att).slice(0, 8)
+    const lines = [row]
+    if (evals.length) lines.push(`  Evaluate: ${evals.join(', ')}`)
+    sections.push(`- ${lines.join('\n')}`)
+  }
+  // Comprehension — branding + product
+  const compr = report.comprehension || {}
+  if (compr.branding) {
+    const row = fmtWindow('Branding', compr.branding, ['first5', 'overall', 'last5'])
+    const evals = collectEvaluate(compr.branding).slice(0, 8)
+    const lines = [row]
+    if (evals.length) lines.push(`  Evaluate: ${evals.join(', ')}`)
+    sections.push(`- ${lines.join('\n')}`)
+  }
+  if (compr.product) {
+    const evals = collectEvaluate(compr.product).slice(0, 6)
+    const explore = Array.isArray(compr.product.couldExplore) ? compr.product.couldExplore.slice(0, 3).join('; ') : ''
+    const lines = [`Product${explore ? ` · explore: ${explore}` : ''}`]
+    if (evals.length) lines.push(`  Evaluate: ${evals.join(', ')}`)
+    sections.push(`- ${lines.join('\n')}`)
+  }
+  // Persuasion
+  const persEmo = report.persuasion?.emotional
+  if (persEmo) {
+    const row = fmtWindow('Emotional', persEmo, ['first5', 'overall', 'last5'])
+    const evals = collectEvaluate(persEmo).slice(0, 8)
+    const lines = [row]
+    if (evals.length) lines.push(`  Evaluate: ${evals.join(', ')}`)
+    sections.push(`- ${lines.join('\n')}`)
+  }
+  // Action
+  const act = report.action
+  if (act) {
+    const row = fmtWindow('Action', act, ['overall', 'last5'])
+    const evals = collectEvaluate(act).slice(0, 6)
+    const lines = [row]
+    if (evals.length) lines.push(`  Evaluate: ${evals.join(', ')}`)
+    sections.push(`- ${lines.join('\n')}`)
+  }
+  if (sections.length === 0) return ''
+  return `\n\n# Sundogs Report (imported PDF — treat as ground truth)
+${sections.join('\n')}`
+}
+
+function buildUserPrompt({ scenes, brandBrief, extraInstructions, metric, totalDurationSec, targetDurationSec, criteria, correctionNote, capabilities, adConcept, voSegments, generatedVoiceover, generatedMusic, additionalAssets, sundogsReport }) {
   const shotLog = renderShotLog(scenes)
   // Alternative footage block — only rendered when the capability is
   // on. The block is appended after the main shot log so the LLM treats
@@ -860,6 +1006,11 @@ function buildUserPrompt({ scenes, brandBrief, extraInstructions, metric, totalD
   // the model makes while reading the shot log. Empty string when no
   // overall analysis has been run.
   const adConceptBlock = renderAdConceptBlock(adConcept)
+  // Sundogs report — only present when the user picked the Sundogs
+  // metric and imported the client's PDF. Renders empty string
+  // otherwise so the prompt doesn't carry stale or irrelevant scoring
+  // when a different framework (ABCD / single-dimension) is active.
+  const sundogsBlock = renderSundogsReport(sundogsReport)
   // VO script block: when `generateVoiceover` is on AND a synthesised
   // draft was passed, the FIXED block wins (proposer doesn't pick or
   // reorder; the user already authored the new script). When
@@ -879,7 +1030,7 @@ function buildUserPrompt({ scenes, brandBrief, extraInstructions, metric, totalD
     : ''
 
   return `# Goal
-Re-edit this commercial to improve its ${metric} score.${framework}
+Re-edit this commercial to improve its ${metric} score.${framework}${sundogsBlock}
 
 # Brand brief
 ${brandBrief?.trim() || '(not provided — infer from the shot log)'}${extraBlock}${adConceptBlock}${voScriptBlock}${musicBedBlock}${capabilitiesBlock}
@@ -960,6 +1111,7 @@ export async function generateProposal({
   generatedVoiceover, // { segments: [{id,text,role,gapBeforeSec}], synthesis: { segmentAudio: { [id]: { path, durationSec } } } } | null
   generatedMusic,     // selected synthesised music draft — { tags, bpm, keyscale, durationSec, synthesis } | null
   additionalAssets,   // currentProject.additionalAssets — only consumed when capability `useAdditionalAssets` is on
+  sundogsReport,      // SundogsReport produced by reeditSundogsReport.js — only consumed when metric === 'Sundogs'
 } = {}) {
   if (!Array.isArray(scenes) || scenes.length === 0) {
     throw new Error('Shot log is empty — run Analysis first.')
@@ -1022,7 +1174,7 @@ export async function generateProposal({
   // so this path works for both LM Studio and the Anthropic backend
   // without the proposer knowing which is active.
   const runOnce = async (correctionNote) => {
-    const userPromptText = buildUserPrompt({ scenes, brandBrief, extraInstructions, metric: targetMetric, totalDurationSec, targetDurationSec, criteria: effectiveCriteria, correctionNote, capabilities, adConcept, voSegments, generatedVoiceover, generatedMusic, additionalAssets })
+    const userPromptText = buildUserPrompt({ scenes, brandBrief, extraInstructions, metric: targetMetric, totalDurationSec, targetDurationSec, criteria: effectiveCriteria, correctionNote, capabilities, adConcept, voSegments, generatedVoiceover, generatedMusic, additionalAssets, sundogsReport })
     // When we have a video ready, compose the user message as a
     // content array: the prompt first (order matters — Gemini treats
     // the last text as the active instruction) then the video. The

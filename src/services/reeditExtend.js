@@ -24,6 +24,7 @@ import {
   modifyWanSviExtendWorkflow,
 } from './reeditGenerate'
 import { loadCapabilitySettings } from './reeditCapabilitySettings'
+import { getActiveHttpBaseSync, getActiveComfyIpcContext } from './localComfyConnection'
 
 const DEFAULT_NEGATIVE = 'worst quality, low quality, blurry, distorted, artifacts, watermark, hard cut, shot change, scene change, camera jump, different subject'
 
@@ -119,5 +120,6 @@ export async function commitExtend({ sceneId, projectDir, extendSec, sourceDurat
     loadImageNodeId,
     loadVideoNodeId,
     modelId,
+    ...getActiveComfyIpcContext(),
   })
 }

@@ -9,6 +9,7 @@ import { THEMES, getStoredThemeId, applyTheme } from '../config/themes'
 import { getPexelsApiKey, setPexelsApiKey } from '../services/pexelsSettings'
 import WorkflowSetupSection from './WorkflowSetupSection'
 import ComfyLauncherSettingsSection from './ComfyLauncherSettingsSection'
+import ComfyCloudSettingsSection from './ComfyCloudSettingsSection'
 import ComfyLauncherLogViewer from './ComfyLauncherLogViewer'
 import CapabilitiesSettingsSection from './CapabilitiesSettingsSection'
 import ApiKeyDialog from './ApiKeyDialog'
@@ -680,7 +681,12 @@ function GeneralTab({ initialSection = null }) {
       activeSectionContent = <WorkflowSetupSection />
       break
     case 'launcher':
-      activeSectionContent = <ComfyLauncherSettingsSection onOpenLogViewer={() => setLogViewerOpen(true)} />
+      activeSectionContent = (
+        <div className="space-y-4">
+          <ComfyCloudSettingsSection />
+          <ComfyLauncherSettingsSection onOpenLogViewer={() => setLogViewerOpen(true)} />
+        </div>
+      )
       break
     case 'capabilities':
       activeSectionContent = <CapabilitiesSettingsSection />

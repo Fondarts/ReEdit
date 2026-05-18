@@ -1,5 +1,5 @@
 import { Fragment, useEffect, useState } from 'react'
-import { Copy, Minus, Settings as SettingsIcon, Square, X } from 'lucide-react'
+import { Copy, Minus, Settings as SettingsIcon, Square, X, Sparkles, SlidersHorizontal } from 'lucide-react'
 import ComfyLauncherChip from './ComfyLauncherChip'
 import { REEDIT_MODE, REEDIT_TABS } from '../config/mode'
 
@@ -12,6 +12,19 @@ const TOP_TABS = [
   { id: 'llm-assistant', label: 'LLM' },
   { id: 'export', label: 'Export' },
 ]
+
+// Tabs visibles en modo Simple (sub-conjunto de REEDIT_TABS). Esconde
+// pasos técnicos (Optimization) y la timeline pro (Editor). El user toggleable
+// queda persistido en localStorage para que sobreviva reloads.
+const UI_MODE_STORAGE_KEY = 'comfystudio-ui-mode'
+const SIMPLE_REEDIT_TAB_IDS = new Set(['projects', 'import', 'analysis', 'optimization', 'proposal', 'editor', 'export'])
+
+function readPersistedUiMode() {
+  try {
+    const v = localStorage.getItem(UI_MODE_STORAGE_KEY)
+    return v === 'simple' ? 'simple' : 'advanced'
+  } catch { return 'advanced' }
+}
 
 function TitleBar({
   projectName,
@@ -26,10 +39,40 @@ function TitleBar({
   // pipeline order and hides the generic ComfyStudio ones. The ComfyUI
   // iframe tab stays opt-in via the same showComfyUiTab setting, appended
   // at the end so power users can still jump into raw ComfyUI.
-  const baseTabs = REEDIT_MODE ? REEDIT_TABS : TOP_TABS
+  const [uiMode, setUiModeState] = useState(readPersistedUiMode)
+
+  // Notify other components of UI-mode changes via the same event-bus
+  // pattern the rest of the app uses (no global store needed). Anybody
+  // that wants to react to it can subscribe to `comfystudio-ui-mode-changed`.
+  const setUiMode = (next) => {
+    if (next === uiMode) return
+    try { localStorage.setItem(UI_MODE_STORAGE_KEY, next) } catch { /* ignore */ }
+    setUiModeState(next)
+    try {
+      window.dispatchEvent(new CustomEvent('comfystudio-ui-mode-changed', { detail: next }))
+    } catch { /* ignore */ }
+  }
+
+  const allReeditTabs = REEDIT_TABS
+  const visibleReeditTabs = uiMode === 'simple'
+    ? allReeditTabs.filter((t) => SIMPLE_REEDIT_TAB_IDS.has(t.id))
+    : allReeditTabs
+
+  const baseTabs = REEDIT_MODE ? visibleReeditTabs : TOP_TABS
   const tabs = showComfyUiTab
     ? (REEDIT_MODE ? [...baseTabs, { id: 'comfyui', label: 'ComfyUI' }] : baseTabs)
     : baseTabs.filter(t => t.id !== 'comfyui')
+
+  // If the active tab gets hidden by switching to Simple mode, bounce the
+  // user to the first visible tab. Otherwise they'd be looking at a
+  // workspace that's still mounted but unreachable from the TitleBar.
+  useEffect(() => {
+    if (!REEDIT_MODE) return
+    if (!tabs.find((t) => t.id === activeTab) && tabs.length > 0) {
+      onTabChange?.(tabs[0].id)
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [uiMode])
   const [windowState, setWindowState] = useState({
     isMaximized: false,
     isFullScreen: false,
@@ -128,6 +171,37 @@ function TitleBar({
       
       {/* Right - Launcher chip + Window Controls (Windows style) */}
       <div className="flex items-center">
+        {/* Simple / Advanced UI mode toggle. Simple hides Optimization and
+            the Resolve-style Editor; Advanced shows the full pipeline.
+            Persisted in localStorage so it survives reloads. */}
+        {REEDIT_MODE && (
+          <div className="no-drag flex items-center bg-sf-dark-800 border border-sf-dark-700 rounded-md mr-2 overflow-hidden">
+            <button
+              type="button"
+              onClick={() => setUiMode('simple')}
+              title="Simple — guided linear flow"
+              className={`h-7 px-2 flex items-center gap-1 text-[10px] transition-colors ${
+                uiMode === 'simple'
+                  ? 'bg-sf-accent text-white'
+                  : 'text-sf-text-muted hover:text-sf-text-primary hover:bg-sf-dark-700'
+              }`}
+            >
+              <Sparkles className="w-3 h-3" /> Simple
+            </button>
+            <button
+              type="button"
+              onClick={() => setUiMode('advanced')}
+              title="Advanced — full pipeline with Optimization + Editor"
+              className={`h-7 px-2 flex items-center gap-1 text-[10px] transition-colors ${
+                uiMode === 'advanced'
+                  ? 'bg-sf-accent text-white'
+                  : 'text-sf-text-muted hover:text-sf-text-primary hover:bg-sf-dark-700'
+              }`}
+            >
+              <SlidersHorizontal className="w-3 h-3" /> Advanced
+            </button>
+          </div>
+        )}
         <ComfyLauncherChip />
         {/* Quick settings entry point next to the ComfyUI pill. Jumps
             straight to the Launcher section so the most common use

@@ -21,6 +21,7 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
 import { Loader2, AlertCircle, Wand2, Sparkles, Trash2, Play, Pause, Mic, Users } from 'lucide-react'
 import { KOKORO_VOICES, KOKORO_LANGUAGE_ORDER, defaultKokoroVoiceForLanguage } from '../../services/kokoroVoices'
+import { getActiveHttpBaseSync, getActiveComfyIpcContext } from '../../services/localComfyConnection'
 
 // Single segment timing math: applies user-edited starts/ends if any,
 // then expands by leadIn / leadOut. Lead pads grow each segment a touch
@@ -537,6 +538,7 @@ export function GenerateVoiceoverPanel({
         language: draft.language || 'en',
         nfeSteps,
         speed,
+        ...getActiveComfyIpcContext(),
       })
       if (!res?.success) throw new Error(res?.error || 'Synthesis failed.')
       // Persist the voice choice on the draft so re-synth (or just

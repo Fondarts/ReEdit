@@ -7,6 +7,7 @@ import { useLlmSettings } from '../../hooks/useLlmSettings'
 import { LLM_BACKENDS, BACKEND_LABELS, ANTHROPIC_MODELS, GEMINI_MODELS } from '../../services/reeditLlmClient'
 import LlmSettingsModal from './LlmSettingsModal'
 import OptimizeFootageCell, { shotHasGraphics, OPTIMIZE_STAGE_LABEL } from './OptimizeFootageCell'
+import { getActiveHttpBaseSync, getActiveComfyIpcContext } from '../../services/localComfyConnection'
 
 // Build the comfystudio:// URL on the renderer. Mirrors what
 // `media:getFileUrl` does in main.js (`encodeURIComponent(path)`), so
@@ -244,6 +245,11 @@ function AnalysisView() {
   const [captionProgress, setCaptionProgress] = useState({ current: 0, total: 0, model: '' })
   const [captionError, setCaptionError] = useState(null)
   const abortRef = useRef(null)
+  // Auto-retry pass for shots that came back empty after the bulk
+  // captioner. Tracked separately so the captioning banner can show
+  // "Re-captioning empty shots N/M" instead of looking stalled at
+  // total/total once the bulk loop ends.
+  const [retryPass, setRetryPass] = useState({ active: false, current: 0, total: 0 })
 
   // Per-scene re-caption: { [sceneId]: 'running' | 'error' }. Kept
   // separate from the batch `captioning` flag so one failing shot can
@@ -404,21 +410,33 @@ function AnalysisView() {
       // Follow up with the overall ad-concept read. Gemini watches the
       // source video directly; LM Studio / Claude summarise from the
       // per-shot captions we just produced. If this fails we still save
-      // the captions — the user can retry the overall pass via a re-run
-      // without losing work. Wrapped in its own try so one backend
-      // failure (e.g. source video >20 MB for Gemini inline) doesn't
-      // discard the per-shot captions that just succeeded.
+      // the captions — the user can retry the overall pass via the
+      // Re-analyze button on the banner without losing work. Wrapped
+      // in its own try so one backend failure (e.g. source video >20
+      // MB for Gemini inline) doesn't discard the per-shot captions
+      // that just succeeded. We retry once automatically on failure
+      // because the most common failure modes (Gemini rate-limit, LM
+      // Studio cold-start) clear within a few seconds — same logic
+      // we apply to per-shot empties.
       setOverallRunning(true)
       setOverallError(null)
       let overall = null
+      let firstErr = null
       try {
         overall = await analyzeOverallAd(updatedScenes, { sourceVideoPath })
       } catch (err) {
-        console.warn('[reedit] overall ad analysis failed (captions saved):', err)
-        setOverallError(err?.message || String(err))
-      } finally {
-        setOverallRunning(false)
+        firstErr = err
+        console.warn('[reedit] overall ad analysis failed; auto-retrying once:', err)
       }
+      if (!overall && !abortCtrl.aborted) {
+        try {
+          overall = await analyzeOverallAd(updatedScenes, { sourceVideoPath })
+        } catch (err) {
+          console.warn('[reedit] overall ad analysis failed twice; surfacing error:', err)
+          setOverallError(err?.message || firstErr?.message || String(err))
+        }
+      }
+      setOverallRunning(false)
 
       await saveProject({
         analysis: {
@@ -431,6 +449,64 @@ function AnalysisView() {
             : (analysis?.overall || null),
         },
       })
+
+      // Auto re-caption pass for any shots that came back empty. The
+      // bulk captioner can leave a scene with no `caption` and no
+      // `videoAnalysis.visual` when the LLM truncates, the request
+      // gets blocked, or the model returns an empty response. Rather
+      // than asking the user to chase those manually we retry each
+      // empty shot once with the same model — usually a transient
+      // timeout / rate limit, and the second call succeeds. We only
+      // retry once so a permanently-bad shot (e.g. a corrupted sub-
+      // clip) doesn't loop forever; further retries are a manual
+      // click on the per-row Re-caption button.
+      const isEmpty = (s) => !s?.caption && !s?.videoAnalysis?.visual
+      const emptyIds = (updatedScenes || []).filter(isEmpty).map((s) => s.id)
+      if (emptyIds.length > 0 && !abortCtrl.aborted) {
+        let working = updatedScenes
+        setRetryPass({ active: true, current: 0, total: emptyIds.length })
+        for (let k = 0; k < emptyIds.length; k++) {
+          if (abortCtrl.aborted) break
+          const sceneId = emptyIds[k]
+          const target = working.find((s) => s.id === sceneId)
+          if (!target) continue
+          setRetryPass({ active: true, current: k + 1, total: emptyIds.length })
+          // Mark in the per-scene state so the UI shows a spinner on
+          // each row while the auto-retry runs (matches what the
+          // user sees during a manual Re-caption click).
+          setPerSceneCaptioning((prev) => ({ ...prev, [sceneId]: 'running' }))
+          try {
+            const { scenes: oneOut } = await captionScenes([target], {
+              modelId,
+              sourceVideoPath,
+              projectDir,
+            })
+            const upd = oneOut?.[0]
+            if (upd) working = working.map((s) => (s.id === sceneId ? upd : s))
+            setPerSceneCaptioning((prev) => {
+              const next = { ...prev }
+              if (upd && !isEmpty(upd)) delete next[sceneId]
+              else next[sceneId] = 'error'
+              return next
+            })
+          } catch (err) {
+            console.warn('[reedit] auto re-caption failed for', sceneId, err)
+            setPerSceneCaptioning((prev) => ({ ...prev, [sceneId]: 'error' }))
+          }
+        }
+        // Persist whatever the retry pass produced. We pull `analysis`
+        // fresh from the store so we don't clobber any other field
+        // (overall, captionedAt set by the bulk save above) with a
+        // stale closure value.
+        const latest = useProjectStore.getState().currentProject?.analysis || analysis || {}
+        await saveProject({
+          analysis: {
+            ...latest,
+            scenes: working,
+            captionedAt: new Date().toISOString(),
+          },
+        })
+      }
     } catch (err) {
       if (err?.code === 'aborted') {
         // Partial progress is already in scene state via per-iteration
@@ -453,12 +529,59 @@ function AnalysisView() {
       }
     } finally {
       setCaptioning(false)
+      setRetryPass({ active: false, current: 0, total: 0 })
       abortRef.current = null
     }
   }
 
   const cancelCaptioning = () => {
     if (abortRef.current) abortRef.current.aborted = true
+  }
+
+  // Manual re-run of just the overall ad-concept pass — the per-shot
+  // captions already exist on the scenes, so we feed those + the source
+  // video back into `analyzeOverallAd` and patch `analysis.overall` on
+  // the project. Mutually exclusive with a bulk captioning run (would
+  // race over `setOverallRunning`); the button below disables itself
+  // while `captioning` is true.
+  const runOverallOnly = async () => {
+    if (overallRunning || captioning) return
+    const sourceVideoPath = sourceVideo?.path || null
+    if (!sourceVideoPath) {
+      setOverallError('Re-analyze requires the source video path; re-import the source if it moved.')
+      return
+    }
+    const latestScenes = useProjectStore.getState().currentProject?.analysis?.scenes || scenes
+    if (!latestScenes || latestScenes.length === 0) {
+      setOverallError('Run scene detection + captioning first.')
+      return
+    }
+    setOverallRunning(true)
+    setOverallError(null)
+    let overall = null
+    let firstErr = null
+    try {
+      overall = await analyzeOverallAd(latestScenes, { sourceVideoPath })
+    } catch (err) {
+      firstErr = err
+    }
+    if (!overall) {
+      try {
+        overall = await analyzeOverallAd(latestScenes, { sourceVideoPath })
+      } catch (err) {
+        setOverallError(err?.message || firstErr?.message || String(err))
+        setOverallRunning(false)
+        return
+      }
+    }
+    const latestAnalysis = useProjectStore.getState().currentProject?.analysis || analysis || {}
+    await saveProject({
+      analysis: {
+        ...latestAnalysis,
+        overall: { ...overall, createdAt: new Date().toISOString() },
+      },
+    })
+    setOverallRunning(false)
   }
 
   // Re-caption a single scene. Reuses the same captionScenes() so both
@@ -480,6 +603,55 @@ function AnalysisView() {
       })
       const updated = updatedOne?.[0]
       if (!updated) throw new Error('Re-caption returned no scene.')
+
+      // Empty-response detection. Three failure modes that all leave
+      // us with no visual text:
+      //   1. Service-level error: captionError / videoAnalysisError set
+      //      with a concrete reason (safety filter, MAX_TOKENS, etc.)
+      //   2. Model returned JSON but the `visual` field is empty/missing
+      //      — the row looks "successful" but has nothing to render. We
+      //      surface the rawText snippet here so the user can see what
+      //      the model actually said.
+      //   3. Total empty response (no text at all).
+      const visualText = updated.caption
+        || updated.structured?.visual
+        || updated.videoAnalysis?.visual
+        || null
+      const propagatedError = updated.captionError || updated.videoAnalysisError
+      if (propagatedError || !visualText) {
+        let msg = propagatedError
+        if (!msg) {
+          const raw = (updated.videoAnalysis?.rawText || '').trim()
+          if (raw) {
+            // Got text, just missing the visual field — most likely the
+            // model returned JSON with a different schema (e.g. wrapped
+            // in {result: {...}} or describing the clip as "no scene
+            // detected"). Showing the first 240 chars makes the cause
+            // visible without dumping the entire response into the UI.
+            const snippet = raw.length > 240 ? raw.slice(0, 240) + '…' : raw
+            msg = `Model responded but didn't return a "visual" caption. Raw output: ${snippet}`
+          } else {
+            msg = 'The model returned an empty caption for this shot. Try switching the captioner (LLM backend) or check if the clip is too low-contrast / safety-filtered.'
+          }
+        }
+        // Still persist the scene with captionError so the row's tooltip
+        // surfaces the reason on the badge that appears after a failure.
+        const nextScenesErr = scenes.map((s) => (s.id === scene.id
+          ? { ...updated, captionError: msg }
+          : s))
+        await saveProject({
+          analysis: {
+            ...(analysis || {}),
+            scenes: nextScenesErr,
+            captionedAt: new Date().toISOString(),
+            captionModel: modelId,
+          },
+        })
+        setPerSceneCaptioning((prev) => ({ ...prev, [scene.id]: 'error' }))
+        setCaptionError(`Re-caption for ${scene.id}: ${msg}`)
+        return
+      }
+
       const nextScenes = scenes.map((s) => (s.id === scene.id ? updated : s))
       await saveProject({
         analysis: {
@@ -513,6 +685,7 @@ function AnalysisView() {
       const res = await window.electronAPI.optimizeFootage({
         scene: { id: scene.id, videoAnalysis: scene.videoAnalysis, caption: scene.caption },
         projectDir,
+        ...getActiveComfyIpcContext(),
       })
       if (!res?.success) {
         setOptimizeState((prev) => ({ ...prev, [scene.id]: { stage: 'error', error: res?.error || 'Unknown error.' } }))
@@ -577,6 +750,7 @@ function AnalysisView() {
       const res = await window.electronAPI.previewMask({
         scene: { id: scene.id, videoAnalysis: scene.videoAnalysis },
         projectDir,
+        ...getActiveComfyIpcContext(),
       })
       if (!res?.success) {
         setPreviewState((prev) => ({ ...prev, [scene.id]: { stage: 'error', error: res?.error || 'Unknown error.' } }))
@@ -728,9 +902,11 @@ function AnalysisView() {
       {captioning && (
         <div className="flex-shrink-0 px-6 py-2 text-xs text-sf-text-muted border-b border-sf-dark-800 flex items-center gap-2">
           <Loader2 className="w-3 h-3 animate-spin" />
-          {overallRunning
-            ? 'Reading overall ad concept…'
-            : `Analyzing scene ${captionProgress.current}/${captionProgress.total}`}
+          {retryPass.active
+            ? `Re-captioning empty shots ${retryPass.current}/${retryPass.total}…`
+            : overallRunning
+              ? 'Reading overall ad concept…'
+              : `Analyzing scene ${captionProgress.current}/${captionProgress.total}`}
           {captionProgress.model && (
             <span className="text-sf-text-muted/70">· {captionProgress.model}</span>
           )}
@@ -755,7 +931,7 @@ function AnalysisView() {
           prompt as an "original intent" block so the re-edit doesn't
           drift off the creative concept. Banner is display-only —
           re-running is just clicking Re-analyze. */}
-      {analysis?.status === 'done' && (analysis?.overall || overallRunning || overallError) && (
+      {analysis?.status === 'done' && (analysis?.overall || analysis?.captionedAt || overallRunning || overallError) && (
         <div className="flex-shrink-0 border-b border-sf-dark-800 bg-sf-dark-900/40">
           <div className="px-6 py-3">
             <div className="flex items-start gap-3">
@@ -766,6 +942,19 @@ function AnalysisView() {
                 <div className="flex items-center gap-2 mb-1">
                   <h2 className="text-xs font-semibold uppercase tracking-wider text-sf-text-muted">Ad concept (as understood by the model)</h2>
                   {overallRunning && <Loader2 className="w-3 h-3 animate-spin text-sf-text-muted" />}
+                  <button
+                    type="button"
+                    onClick={runOverallOnly}
+                    disabled={overallRunning || captioning}
+                    className={`ml-auto inline-flex items-center gap-1 text-[10px] px-2 py-0.5 rounded border transition-colors
+                      ${(overallRunning || captioning)
+                        ? 'border-sf-dark-700 bg-sf-dark-900 text-sf-text-muted/60 cursor-not-allowed'
+                        : 'border-sf-dark-700 bg-sf-dark-900 hover:bg-sf-dark-800 text-sf-text-secondary hover:text-sf-text-primary hover:border-sf-accent/60'}`}
+                    title="Re-run the overall ad-concept pass (concept / message / mood / brand role / arc) without re-captioning every shot"
+                  >
+                    {overallRunning ? <Loader2 className="w-3 h-3 animate-spin" /> : <RotateCcw className="w-3 h-3" />}
+                    Re-analyze
+                  </button>
                 </div>
                 {overallError && (
                   <div className="text-[11px] text-sf-error flex items-start gap-1.5">

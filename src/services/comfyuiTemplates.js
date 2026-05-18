@@ -5,6 +5,7 @@
  */
 import {
   getLocalComfyHttpBaseSync,
+  getActiveHttpBaseSync,
   isLoopbackHttpUrl,
 } from './localComfyConnection'
 
@@ -13,7 +14,7 @@ import {
  * @returns {Promise<{ success: boolean, templates?: Array<{ id: string, name: string, category: string, path?: string }>, error?: string }>}
  */
 export async function fetchComfyUITemplates() {
-  const comfyBase = getLocalComfyHttpBaseSync()
+  const comfyBase = getActiveHttpBaseSync() || getLocalComfyHttpBaseSync()
   try {
     const url = `${comfyBase}/workflow_templates`
     const resp = await fetch(url)
@@ -100,7 +101,7 @@ function parseComfyUITemplates(data) {
  * @returns {Promise<{ success: boolean, workflow?: object, error?: string }>}
  */
 export async function fetchComfyUIWorkflow(path) {
-  const comfyBase = getLocalComfyHttpBaseSync()
+  const comfyBase = getActiveHttpBaseSync() || getLocalComfyHttpBaseSync()
   try {
     const workflowPath = String(path || '')
     if (workflowPath.startsWith('http') && !isLoopbackHttpUrl(workflowPath)) {
