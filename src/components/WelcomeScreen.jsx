@@ -1,16 +1,11 @@
 import { useState, useEffect, useRef } from 'react'
-import { FolderOpen, Plus, Film, AlertCircle, Loader2, Trash2, KeyRound, CheckCircle2, Compass, LayoutGrid, List, Minus, Square, Copy, X } from 'lucide-react'
+import { FolderOpen, Plus, Film, AlertCircle, Loader2, Trash2, LayoutGrid, List, Minus, Square, Copy, X, Settings as SettingsIcon, Upload, FileText, Video as VideoIcon } from 'lucide-react'
 import useProjectStore from '../stores/projectStore'
 import NewReeditProjectDialog from './reedit/NewReeditProjectDialog'
 import ComfyLauncherChip from './ComfyLauncherChip'
 import CreditsChip from './CreditsChip'
-import GettingStartedModal from './GettingStartedModal'
-import ApiKeyDialog from './ApiKeyDialog'
 import SettingsModal from './SettingsModal'
-import {
-  getComfyPartnerApiKey,
-  COMFY_PARTNER_KEY_CHANGED_EVENT,
-} from '../services/comfyPartnerAuth'
+import UiModeToggle from './UiModeToggle'
 import { resolveThumbnailUrl } from '../utils/projectThumbnail'
 
 const WELCOME_ASSET_BASE_URL = (() => {
@@ -156,9 +151,6 @@ function WelcomeScreen() {
   // Resolved <img>-ready URLs for each project's on-disk thumbnail, keyed
   // by project path (Electron) or name (web fallback).
   const [thumbnailUrls, setThumbnailUrls] = useState({})
-  const [gettingStartedOpen, setGettingStartedOpen] = useState(false)
-  const [apiKeyDialogOpen, setApiKeyDialogOpen] = useState(false)
-  const [partnerKeyConfigured, setPartnerKeyConfigured] = useState(false)
   const [settingsOpen, setSettingsOpen] = useState(false)
   const [settingsInitialSection, setSettingsInitialSection] = useState(null)
   const [windowState, setWindowState] = useState({ isMaximized: false, isFullScreen: false })
@@ -193,27 +185,6 @@ function WelcomeScreen() {
   const welcomeHeroVideoSrc = getWelcomeAssetPath('welcome-hero.mp4')
   const welcomeHeroPosterSrc = getWelcomeAssetPath('hero-v1.webp')
   
-  // Keep partner-key status fresh so the chip in the header reflects
-  // changes made from the ApiKeyDialog without remounting.
-  useEffect(() => {
-    let cancelled = false
-    const hydrate = async () => {
-      try {
-        const key = await getComfyPartnerApiKey()
-        if (!cancelled) setPartnerKeyConfigured(Boolean(String(key || '').trim()))
-      } catch {
-        if (!cancelled) setPartnerKeyConfigured(false)
-      }
-    }
-    hydrate()
-    const handler = () => { hydrate() }
-    window.addEventListener(COMFY_PARTNER_KEY_CHANGED_EVENT, handler)
-    return () => {
-      cancelled = true
-      window.removeEventListener(COMFY_PARTNER_KEY_CHANGED_EVENT, handler)
-    }
-  }, [])
-
   // Load recent projects on mount
   useEffect(() => {
     const loadRecentProjects = async () => {
@@ -459,57 +430,33 @@ function WelcomeScreen() {
   const headerContent = (
     <>
       <div className="flex items-center gap-4">
-        <h1 className="text-xl font-bold text-sf-text-primary drop-shadow">ComfyStudio</h1>
+        <h1 className="text-xl font-bold text-sf-text-primary drop-shadow">Kissd ReEdit</h1>
         <div className="flex items-center gap-1.5">
           <ComfyLauncherChip />
-          <button
-            type="button"
-            onClick={() => setApiKeyDialogOpen(true)}
-            title={partnerKeyConfigured ? 'Cloud API key is set. Click to manage.' : 'Set up your Comfy.org API key to unlock cloud workflows.'}
-            className={`flex items-center gap-1.5 h-7 px-2.5 rounded-md text-[11px] font-medium transition-colors border ${partnerKeyConfigured
-              ? 'bg-sf-dark-800 hover:bg-sf-dark-700 border-sf-dark-700 text-sf-text-primary'
-              : 'bg-amber-500/10 hover:bg-amber-500/20 border-amber-500/40 text-amber-100'
-            }`}
-          >
-            {partnerKeyConfigured ? (
-              <>
-                <CheckCircle2 className="w-3.5 h-3.5 text-emerald-400" />
-                <span>API key set</span>
-              </>
-            ) : (
-              <>
-                <KeyRound className="w-3.5 h-3.5" />
-                <span>API key needed</span>
-              </>
-            )}
-          </button>
           {/* Credits chip — self-hides when no API key is configured. */}
           <CreditsChip />
         </div>
       </div>
 
       <div className="flex items-center gap-3">
+        {/* Auto / Simple / Advanced mode toggle. Same component the
+            in-project TitleBar uses, so the preference set here carries
+            over when the user opens a project. */}
+        <UiModeToggle />
+        {/* Settings — icon-only entry point so the user can reach
+            ComfyUI mode (Local / Cloud), Capabilities, etc. without
+            opening a project first. */}
         <button
-          onClick={() => setGettingStartedOpen(true)}
-          className="flex items-center gap-2 px-3 py-2 hover:bg-sf-dark-800 rounded-lg text-sm text-sf-text-muted hover:text-sf-text-primary font-medium transition-colors"
-          title="Getting started: ComfyUI setup, API keys, workflows"
+          type="button"
+          onClick={() => {
+            setSettingsInitialSection(null)
+            setSettingsOpen(true)
+          }}
+          className="h-9 w-9 flex items-center justify-center rounded-lg hover:bg-sf-dark-800 text-sf-text-muted hover:text-sf-text-primary transition-colors"
+          title="Settings"
+          aria-label="Settings"
         >
-          <Compass className="w-4 h-4" />
-          Getting started
-        </button>
-        <button
-          onClick={openProjectFromPicker}
-          className="flex items-center gap-2 px-4 py-2 bg-sf-dark-800 hover:bg-sf-dark-700 border border-sf-dark-500 rounded-lg text-sm text-sf-text-secondary font-medium transition-colors"
-        >
-          <FolderOpen className="w-4 h-4" />
-          Open Project
-        </button>
-        <button
-          onClick={() => setShowNewProjectDialog(true)}
-          className="flex items-center gap-2 px-4 py-2 bg-sf-accent hover:bg-sf-accent-hover border border-sf-accent rounded-lg text-sm text-white font-medium shadow-lg shadow-sf-accent/20 transition-colors"
-        >
-          <Plus className="w-4 h-4" />
-          New Project
+          <SettingsIcon className="w-4 h-4" />
         </button>
       </div>
     </>
@@ -526,122 +473,65 @@ function WelcomeScreen() {
         {headerContent}
       </div>
 
-      {showHeroBackground ? (
-        /* Hero band: full-bleed dark outer, centered cinematic inner.
-           On ultrawide monitors the image is capped at max-w-[2400px] so it keeps
-           roughly the same ~2.9:1 aspect as on 1080p, with the viewport edges
-           fading softly into the dark background. */
-        <div className="welcome-hero relative flex-shrink-0 h-[62vh] min-h-[420px] max-h-[720px] overflow-hidden select-none bg-sf-dark-950">
-          <div className="relative mx-auto h-full w-full max-w-[2400px] overflow-hidden">
-            {/* Animated hero with a 5-second cross-dissolve between loop
-                iterations — see HeroVideoLoop for the why and how. The
-                static WebP acts as the poster so the initial paint is
-                instant even before the MP4 has buffered. Audio is
-                stripped from the source and both <video> tags are
-                `muted` so Chromium's autoplay policy lets us start
-                unattended. */}
-            <HeroVideoLoop
-              src={welcomeHeroVideoSrc}
-              poster={welcomeHeroPosterSrc}
-              fadeSeconds={5}
-              className="absolute inset-0 w-full h-full object-cover"
-              style={{ objectPosition: 'center 10%' }}
-            />
-            {/* Fallback static image for users with reduced motion. The CSS
-                `prefers-reduced-motion` media query hides the video above
-                and shows this instead. */}
-            <img
-              src={welcomeHeroPosterSrc}
-              alt=""
-              aria-hidden="true"
-              draggable={false}
-              className="hero-reduced-motion-fallback absolute inset-0 w-full h-full object-cover"
-              style={{ objectPosition: 'center 10%' }}
-            />
-            {/* Cinematic vignette — subtle darkening toward corners */}
-            <div
-              className="absolute inset-0 pointer-events-none"
-              style={{
-                background: 'radial-gradient(ellipse 90% 80% at 50% 45%, transparent 40%, rgba(0,0,0,0.55) 100%)',
-              }}
-            />
-            {/* Left / right edge fades — invisible on 1080p (image fills viewport),
-                softly blend into the dark background on ultrawide. */}
-            <div className="absolute inset-y-0 left-0 w-24 bg-gradient-to-r from-sf-dark-950 to-transparent pointer-events-none" />
-            <div className="absolute inset-y-0 right-0 w-24 bg-gradient-to-l from-sf-dark-950 to-transparent pointer-events-none" />
-          </div>
-          {/* Bottom fade into the recents surface (spans the full viewport width) */}
-          <div className="absolute inset-x-0 bottom-0 h-40 bg-gradient-to-t from-sf-dark-950 via-sf-dark-950/70 to-transparent pointer-events-none" />
-          {/* Subtle attribution */}
-          <div className="absolute bottom-3 right-4 text-[10px] uppercase tracking-wider text-white/40 pointer-events-none">
-            Made with ComfyStudio
-          </div>
-        </div>
-      ) : null}
+      {/* Body — two-column layout.
+          Left  = single list of projects (with "+ New project" at top).
+          Right = Import panel (drop slots for the next session).
+          Each column scrolls independently so a long project list
+          doesn't push the Import slots off-screen. */}
+      <div className="flex-1 overflow-hidden flex flex-row min-h-0">
 
-      {/* Content. When the hero is visible we pull the recents panel UP into
-          the hero band with a negative top margin so more projects are
-          visible above the fold. The panel background is a vertical gradient
-          that fades from fully transparent at the very top into solid
-          sf-dark-950 over the first ~96px, so the hero's existing bottom
-          fade bleeds through the panel's upper edge and the overlap looks
-          like a soft dissolve rather than a hard cut. relative + z-10 keeps
-          it layered above the hero's own pointer-events overlays. */}
-      <div
-        className={`flex-1 overflow-auto px-6 pb-8 ${showHeroBackground
-          ? 'relative z-10 -mt-[280px] pt-12'
-          : 'py-8'}`}
-        style={showHeroBackground ? {
-          // Gradient-only background (no backgroundColor) so the hero is
-          // visible through the alpha=0 region at the very top. The last
-          // stop is alpha=1, and a linear-gradient's final color extends
-          // to the bottom of the element, so everything below the final
-          // stop is effectively solid sf-dark-950.
-          background:
-            'linear-gradient(to bottom, rgb(var(--sf-dark-950) / 0) 0, rgb(var(--sf-dark-950) / 0.35) 100px, rgb(var(--sf-dark-950) / 0.75) 200px, rgb(var(--sf-dark-950) / 1) 275px)',
-        } : undefined}
-      >
-        <div className="max-w-5xl mx-auto">
-        {/* Error Display */}
+        {/* ─── Left: project list ─── */}
+        <main className="flex-1 basis-1/2 min-w-0 overflow-y-auto px-6 py-6 border-r border-sf-dark-800">
+        <div className="max-w-3xl mx-auto">
         {error && (
-          <div className="mb-6 p-4 bg-sf-error/20 border border-sf-error/50 rounded-lg flex items-start gap-3">
-            <AlertCircle className="w-5 h-5 text-sf-error flex-shrink-0" />
-            <div className="flex-1">
-              <p className="text-sm text-sf-text-primary">{error}</p>
+          <div className="mb-4 rounded-lg border border-sf-error/50 bg-sf-error/15 p-3 flex items-start gap-2">
+            <AlertCircle className="w-4 h-4 text-sf-error flex-shrink-0 mt-0.5" />
+            <div className="flex-1 min-w-0">
+              <p className="text-xs text-sf-text-primary">{error}</p>
               {canOpenLatestAutosave && (
                 <button
                   onClick={openLatestAutosaveForFailedProject}
-                  className="mt-3 inline-flex items-center gap-2 rounded-lg border border-sf-dark-500 bg-sf-dark-900 px-3 py-2 text-xs text-sf-text-primary hover:border-sf-dark-400 hover:text-white transition-colors"
+                  className="mt-2 inline-flex items-center gap-1.5 rounded border border-sf-dark-500 bg-sf-dark-900 px-2 py-1 text-[11px] text-sf-text-primary hover:border-sf-dark-400 hover:text-white transition-colors"
                 >
-                  <FolderOpen className="w-3.5 h-3.5" />
+                  <FolderOpen className="w-3 h-3" />
                   Open latest autosave{lastFailedProjectName ? ` for ${lastFailedProjectName}` : ''}
                 </button>
               )}
+              <button
+                onClick={clearError}
+                className="ml-2 text-[10px] text-sf-text-muted hover:text-sf-text-primary"
+              >
+                Dismiss
+              </button>
             </div>
-            <button 
-              onClick={clearError}
-              className="text-xs text-sf-text-muted hover:text-sf-text-primary"
-            >
-              Dismiss
-            </button>
           </div>
         )}
-        
+
         {/* Recent Projects Section */}
         <div className="mb-8">
-          <div className="flex items-end justify-between mb-4">
-            {/* Dark glass pill behind the title cluster. The hero's fade
-                makes plain drop-shadow text look thin and ghostly up here,
-                so we tuck the title into a semi-transparent panel with a
-                hairline border + backdrop blur. That gives the title the
-                same "readable surface" the project cards have without
-                extending into a full-width bar (which would fight the
-                cards visually). */}
-            <div className="inline-flex items-center rounded-full border border-white/10 bg-black/55 px-3 py-1 shadow-lg shadow-black/40 backdrop-blur-md">
-              <h2 className="text-[13px] font-semibold text-sf-text-primary tracking-tight leading-none">
-                Select a project
-              </h2>
+          {/* "+ New project" sits at the very top of the list so it
+              reads as the first row of the projects column. Clicking
+              opens the rename dialog (NewReeditProjectDialog) and the
+              project lands in the list as soon as it's created. */}
+          <button
+            onClick={() => setShowNewProjectDialog(true)}
+            className="w-full mb-3 flex items-center gap-3 px-4 py-3 rounded-lg border border-sf-accent/40 bg-sf-accent/10 hover:bg-sf-accent/15 hover:border-sf-accent/60 transition-colors shadow-lg shadow-sf-accent/10 text-left"
+          >
+            <div className="w-9 h-9 rounded-md bg-sf-accent/20 flex items-center justify-center flex-shrink-0">
+              <Plus className="w-4 h-4 text-sf-accent" />
             </div>
+            <div className="flex-1 min-w-0">
+              <div className="text-sm font-semibold text-sf-text-primary">New project</div>
+              <div className="text-[11px] text-sf-text-muted leading-snug">
+                Click to name it; resolution + fps come from the imported video.
+              </div>
+            </div>
+          </button>
+
+          <div className="flex items-end justify-between mb-3">
+            <h2 className="text-[13px] font-semibold text-sf-text-primary tracking-tight leading-none">
+              Select a project
+            </h2>
             {/* Grid / list toggle */}
             {recentProjectsList.length > 0 && (
               <div className="inline-flex items-center gap-0.5 rounded-md border border-sf-dark-700 bg-sf-dark-900 p-0.5" role="group" aria-label="View mode">
@@ -831,43 +721,98 @@ function WelcomeScreen() {
           )}
         </div>
         
-        {/* Projects Location Info */}
-        <div className="text-center text-xs text-sf-text-muted">
-          <p>
-            Projects and media are saved to: <span className="text-sf-text-secondary">{defaultProjectsLocation || 'Not set'}</span>
-            {' '}
-            <button 
-              onClick={selectDefaultProjectsLocation}
-              className="text-sf-accent hover:underline"
+        </div>{/* /max-w-3xl */}
+        </main>{/* /left column (projects list) */}
+
+        {/* ─── Right: Import slots ─── */}
+        <aside className="flex-1 basis-1/2 min-w-0 overflow-y-auto bg-sf-dark-900/30">
+          <div className="max-w-md mx-auto p-6 space-y-4">
+            <div>
+              <h2 className="text-base font-semibold text-sf-text-primary mb-1">Import</h2>
+              <p className="text-xs text-sf-text-muted leading-snug">
+                Drop the source video and (for Auto mode) the Sundogs PDF.
+                You'll be asked to name the project before the import runs.
+              </p>
+            </div>
+
+            {/* Drop zone — video. Visual surface for now: clicking
+                "+ New project" first is the recommended flow; if the
+                user drops here we open the rename dialog and ask them
+                to confirm the project name, then the import handlers
+                inside the project take over. Full auto-create-on-drop
+                is a follow-up. */}
+            <button
+              type="button"
+              onClick={() => setShowNewProjectDialog(true)}
+              className="w-full flex flex-col items-center justify-center gap-2 px-4 py-8 rounded-xl border-2 border-dashed border-sf-dark-700 bg-sf-dark-900/40 hover:border-sf-accent/50 hover:bg-sf-accent/5 transition-colors text-center"
             >
-              Change
+              <VideoIcon className="w-6 h-6 text-sf-text-muted" />
+              <div className="text-sm font-medium text-sf-text-primary">Source video</div>
+              <div className="text-[11px] text-sf-text-muted leading-snug max-w-[260px]">
+                Click to start a new project and pick the main video in the next step.
+              </div>
             </button>
-          </p>
-        </div>
-        </div>{/* /max-w-5xl */}
-      </div>
-      
+
+            {/* Sundogs PDF slot — same idea: visual hint that this
+                exists, click routes to the new-project flow where the
+                Auto Import view does the real upload. */}
+            <button
+              type="button"
+              onClick={() => setShowNewProjectDialog(true)}
+              className="w-full flex items-center gap-3 px-3 py-3 rounded-lg border border-sf-dark-700 bg-sf-dark-900/40 hover:bg-sf-dark-800 transition-colors text-left"
+            >
+              <FileText className="w-4 h-4 text-amber-400 flex-shrink-0" />
+              <div className="flex-1 min-w-0">
+                <div className="text-sm font-medium text-sf-text-primary">Sundogs PDF</div>
+                <div className="text-[11px] text-sf-text-muted leading-snug">
+                  Required only for Auto mode (grades the proposal against
+                  benchmark scores).
+                </div>
+              </div>
+              <Upload className="w-3.5 h-3.5 text-sf-text-muted" />
+            </button>
+
+            {/* Open existing — secondary path for users who saved a
+                project on disk somewhere outside the default folder. */}
+            <button
+              onClick={openProjectFromPicker}
+              className="w-full flex items-start gap-3 p-3 rounded-lg border border-sf-dark-800 bg-sf-dark-900/30 hover:bg-sf-dark-800 text-left transition-colors"
+            >
+              <FolderOpen className="w-4 h-4 mt-0.5 text-sf-text-muted flex-shrink-0" />
+              <div>
+                <div className="text-sm font-medium text-sf-text-primary">Open project…</div>
+                <div className="text-[11px] text-sf-text-muted leading-snug">
+                  Pick a <span className="text-sf-text-secondary">.comfystudio</span> file from disk.
+                </div>
+              </div>
+            </button>
+
+            {/* Projects folder location */}
+            <div className="rounded-lg border border-sf-dark-800 bg-sf-dark-900/60 p-3">
+              <div className="text-[10px] uppercase tracking-wider text-sf-text-muted mb-1">
+                Projects folder
+              </div>
+              <div className="text-[11px] text-sf-text-secondary break-words leading-snug">
+                {defaultProjectsLocation || 'Not set'}
+              </div>
+              <button
+                onClick={selectDefaultProjectsLocation}
+                className="mt-2 text-[11px] text-sf-accent hover:underline"
+              >
+                Change…
+              </button>
+            </div>
+          </div>
+        </aside>
+      </div>{/* /two-column body */}
+
       {/* New Project Dialog */}
       <NewReeditProjectDialog
         isOpen={showNewProjectDialog}
         onClose={() => setShowNewProjectDialog(false)}
       />
 
-      {/* Getting Started Modal */}
-      <GettingStartedModal
-        isOpen={gettingStartedOpen}
-        onClose={() => setGettingStartedOpen(false)}
-        projectName={null}
-        defaultProjectsLocation={defaultProjectsLocation}
-        onOpenSettings={(section) => {
-          setSettingsInitialSection(section || null)
-          setSettingsOpen(true)
-          setGettingStartedOpen(false)
-        }}
-        onNavigate={null}
-      />
-
-      {/* Settings Modal (reachable from Getting Started while no project is open) */}
+      {/* Settings Modal — reachable from the gear icon in the header. */}
       {settingsOpen && (
         <SettingsModal
           isOpen={settingsOpen}
@@ -876,12 +821,6 @@ function WelcomeScreen() {
         />
       )}
 
-      {/* API Key Dialog */}
-      <ApiKeyDialog
-        open={apiKeyDialogOpen}
-        onClose={() => setApiKeyDialogOpen(false)}
-        onSaved={(value) => setPartnerKeyConfigured(Boolean(String(value || '').trim()))}
-      />
     </div>
   )
 }

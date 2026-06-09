@@ -187,6 +187,19 @@ function DescriptionCell({ scene }) {
         </div>
       )}
 
+      {/* End-card flag — surfaces the analyzer's `is_end_card`
+          detection so the user sees at a glance that this shot is
+          locked off from optimize/edits. Optimize skips end-cards
+          automatically; the proposer is told to keep them verbatim. */}
+      {va?.is_end_card && (
+        <div className="border-l-2 border-fuchsia-500/40 pl-2 space-y-0.5">
+          <div className="text-[9px] uppercase tracking-wider text-fuchsia-300/80 font-medium">End-card</div>
+          <div className="text-[11px] text-fuchsia-200/90 leading-snug">
+            Detected as the ad's brand-signature frame. Never optimized, kept verbatim in the cut.
+          </div>
+        </div>
+      )}
+
       {graphicsHasAnything && (
         <div className="border-l-2 border-amber-500/30 pl-2 space-y-0.5">
           <div className="text-[9px] uppercase tracking-wider text-amber-300/80 font-medium">Graphics</div>

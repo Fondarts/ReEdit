@@ -489,6 +489,18 @@ class ComfyUIService {
 
   /**
    * Resolve optional Comfy account API key for paid API nodes.
+   *
+   * Lookup order:
+   *   1. Dedicated setting `comfyApiKeyComfyOrg` (Electron store).
+   *   2. localStorage fallback under `comfystudio-comfy-api-key`.
+   *   3. The active Cloud connection's API key (when the user is in
+   *      Cloud mode). The Comfy Cloud connection key and the Partner
+   *      Nodes key are issued by the same comfy.org account and are
+   *      the same string — so if the user only filled the Cloud
+   *      connection settings, that key authorises API Nodes too.
+   *      Without this fallback the Seedance / Kling / Grok requests
+   *      hit "Unauthorized: Please login first to use this node" even
+   *      though the user is logged in and has credits.
    */
   async getComfyOrgApiKey() {
     try {
@@ -503,10 +515,21 @@ class ComfyUIService {
 
     try {
       if (typeof localStorage !== 'undefined') {
-        return String(localStorage.getItem(COMFY_ORG_API_KEY_LOCAL_KEY) || '').trim()
+        const local = String(localStorage.getItem(COMFY_ORG_API_KEY_LOCAL_KEY) || '').trim()
+        if (local) return local
       }
     } catch (_) {
       // Ignore storage access errors.
+    }
+
+    // Fall back to the active Cloud connection's key.
+    try {
+      if (getActiveModeSync() === COMFY_MODE_CLOUD) {
+        const cloudKey = String(getActiveApiKeySync() || '').trim()
+        if (cloudKey) return cloudKey
+      }
+    } catch (_) {
+      // Ignore — leave empty.
     }
     return ''
   }

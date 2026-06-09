@@ -1,4 +1,4 @@
-const { app, BrowserWindow, ipcMain, dialog, protocol, net, clipboard, shell } = require('electron')
+const { app, BrowserWindow, ipcMain, dialog, protocol, net, clipboard, shell, session } = require('electron')
 const crypto = require('crypto')
 const path = require('path')
 const fs = require('fs').promises
@@ -1102,8 +1102,8 @@ function createSplashWindow() {
   const splashPath = isDev
     ? path.join(__dirname, '../public/splash.html')
     : path.join(__dirname, '../dist/splash.html')
-  // Match your splash image aspect ratio (1632×656); extra height for status bar
-  const SPLASH_ASPECT = 1632 / 656
+  // Match your splash image aspect ratio (1672×941); extra height for status bar
+  const SPLASH_ASPECT = 1672 / 941
   const splashWidth = 1200
   const statusBarHeight = 44
   const splashHeight = Math.round(splashWidth / SPLASH_ASPECT) + statusBarHeight
@@ -2241,8 +2241,41 @@ async function downloadFromComfy({
 // something exotic.
 //
 // Returns the history-shaped object: { outputs: { [nodeId]: { ... } }, status }
-const TERMINAL_OK_STATES = new Set(['completed', 'finished', 'succeeded', 'success', 'done'])
-const TERMINAL_FAIL_STATES = new Set(['failed', 'cancelled', 'canceled', 'error', 'errored'])
+const TERMINAL_OK_STATES = new Set([
+  'completed', 'finished', 'succeeded', 'success', 'done', 'ok',
+  'complete', 'completed_at', 'ready', 'ran', 'finalized',
+])
+const TERMINAL_FAIL_STATES = new Set([
+  'failed', 'fail', 'cancelled', 'canceled', 'error', 'errored',
+  'timeout', 'timed_out', 'aborted',
+])
+
+// Sniff a Comfy Cloud `/api/jobs/<id>` body for "this looks done" signals.
+// Different deployments use different shapes; we accept any of:
+//   - body.outputs (top-level dict mapping node ids to output records)
+//   - body.job.outputs (same, nested one level)
+//   - body.completed === true / body.completed_at present
+//   - body.status / body.state in TERMINAL_OK_STATES
+//   - body.result / body.results present
+// Returns the canonical { outputs, ...rest } shape on success, null otherwise.
+function _sniffCompletedJobBody(body) {
+  if (!body || typeof body !== 'object') return null
+  const outputs = body.outputs
+    || body.job?.outputs
+    || body.result?.outputs
+    || body.results?.outputs
+  if (outputs && typeof outputs === 'object' && Object.keys(outputs).length > 0) {
+    return { ...body, outputs }
+  }
+  const rawState = String(
+    body.status ?? body.state ?? body.job?.status ?? body.job?.state ?? ''
+  ).toLowerCase().trim()
+  if (TERMINAL_OK_STATES.has(rawState) && (body.outputs || body.job?.outputs)) {
+    return { ...body, outputs: body.outputs || body.job?.outputs }
+  }
+  return null
+}
+
 async function waitForComfyJob({
   comfyUrl, apiKey, promptId, timeoutMs = 30 * 60 * 1000, pollMs = 2000, onTick,
 }) {
@@ -2250,6 +2283,12 @@ async function waitForComfyJob({
   const startedAt = Date.now()
   const cloud = isCloudComfyUrl(comfyUrl)
   const seenStates = new Set()
+  // How often to fall through to a direct `/api/jobs/<id>` poke even when
+  // /status looks unfinished. Some Cloud deployments leave /status stuck
+  // on "running" indefinitely after the job actually finished — pinging
+  // the outputs endpoint directly rescues those cases. Every 5 ticks
+  // (≈10-15s with the typical pollMs) keeps the cost low.
+  let tick = 0
   while (true) {
     if (Date.now() - startedAt > timeoutMs) {
       throw new Error(`Comfy job ${promptId} timed out after ${Math.round(timeoutMs / 60000)} min.`)
@@ -2268,7 +2307,10 @@ async function waitForComfyJob({
         ).toLowerCase().trim()
         if (rawState && !seenStates.has(rawState)) {
           seenStates.add(rawState)
-          console.log(`[waitForComfyJob] cloud status for ${promptId}: "${rawState}"`)
+          // Dump the whole status response the first time we see a new
+          // state, so a stuck poll leaves an audit trail we can debug
+          // later without asking the user for DevTools.
+          console.log(`[waitForComfyJob] cloud status for ${promptId}: "${rawState}" · body: ${JSON.stringify(s).slice(0, 500)}`)
         }
         if (TERMINAL_OK_STATES.has(rawState)) {
           const outRes = await net.fetch(`${comfyUrl}/api/jobs/${encodeURIComponent(promptId)}`, { headers })
@@ -2276,10 +2318,32 @@ async function waitForComfyJob({
           return await outRes.json()
         }
         if (TERMINAL_FAIL_STATES.has(rawState)) {
-          // Surface any error text the API included so the user sees
-          // why the job failed instead of a generic "failed".
-          const detail = s?.error || s?.message || s?.job?.error || ''
-          throw new Error(`Comfy job ${promptId} ${rawState}${detail ? `: ${String(detail).slice(0, 300)}` : '.'}`)
+          // Surface every error text the API included so the user sees
+          // why the job failed instead of a generic "failed". /status
+          // usually only carries the top-level state — the full traceback
+          // lives on /api/jobs/<id> under `error` / `messages` / `logs`.
+          // Fetch it as a follow-up so the throw carries the actionable
+          // detail.
+          let detail = s?.error || s?.message || s?.job?.error || ''
+          try {
+            const jobRes = await net.fetch(`${comfyUrl}/api/jobs/${encodeURIComponent(promptId)}`, { headers })
+            if (jobRes.ok) {
+              const body = await jobRes.json().catch(() => ({}))
+              const candidates = [
+                body?.error, body?.message, body?.job?.error, body?.job?.message,
+                Array.isArray(body?.messages) ? body.messages.map((m) => typeof m === 'string' ? m : JSON.stringify(m)).join(' | ') : null,
+                Array.isArray(body?.job?.messages) ? body.job.messages.map((m) => typeof m === 'string' ? m : JSON.stringify(m)).join(' | ') : null,
+                typeof body?.logs === 'string' ? body.logs.slice(-800) : null,
+                typeof body?.job?.logs === 'string' ? body.job.logs.slice(-800) : null,
+              ].filter(Boolean)
+              if (candidates.length > 0) detail = candidates.join(' · ')
+              else if (!detail) detail = JSON.stringify(body).slice(0, 600)
+              console.log(`[waitForComfyJob] cloud error body for ${promptId}: ${JSON.stringify(body).slice(0, 800)}`)
+            }
+          } catch (err) {
+            console.log(`[waitForComfyJob] could not fetch detailed error for ${promptId}: ${err?.message}`)
+          }
+          throw new Error(`Comfy job ${promptId} ${rawState}${detail ? `: ${String(detail).slice(0, 500)}` : '.'}`)
         }
       } else if (statusRes.status === 404) {
         // Some deployments retire the status row once the job finishes
@@ -2288,10 +2352,27 @@ async function waitForComfyJob({
         const outRes = await net.fetch(`${comfyUrl}/api/jobs/${encodeURIComponent(promptId)}`, { headers })
         if (outRes.ok) {
           const body = await outRes.json().catch(() => null)
-          if (body && (body.outputs || body.job?.outputs)) {
-            return body.outputs ? body : { outputs: body.job.outputs, ...body }
-          }
+          const canonical = _sniffCompletedJobBody(body)
+          if (canonical) return canonical
         }
+      }
+      // Even when /status said something non-terminal, the job may
+      // actually be done — happens when the deployment doesn't update
+      // /status promptly. Every few ticks, ask the outputs endpoint
+      // directly and accept it as terminal if we see outputs.
+      tick += 1
+      if (tick % 5 === 0) {
+        try {
+          const outRes = await net.fetch(`${comfyUrl}/api/jobs/${encodeURIComponent(promptId)}`, { headers })
+          if (outRes.ok) {
+            const body = await outRes.json().catch(() => null)
+            const canonical = _sniffCompletedJobBody(body)
+            if (canonical) {
+              console.log(`[waitForComfyJob] ${promptId} recovered via /api/jobs while /status was still non-terminal.`)
+              return canonical
+            }
+          }
+        } catch (_) { /* ignore — keep polling /status */ }
       }
     } else {
       const res = await net.fetch(`${comfyUrl}/history/${encodeURIComponent(promptId)}`, { headers })
@@ -2309,6 +2390,199 @@ async function waitForComfyJob({
     }
     await new Promise((r) => setTimeout(r, pollMs))
   }
+}
+
+// ============================================
+// LTX 2.3 IC-Edit watermark removal workflow loader
+// ============================================
+//
+// Loads the joyfox/LTX2.3-ICEdit-Insight reference workflow (UI format)
+// from disk and turns it into the prompt-API format that ComfyUI's
+// /prompt endpoint expects. The workflow is checked into the repo at
+// reedit/workflows/LTX-2.3-ICLORA-edit-official.json — when the user
+// updates the workflow there, the next run picks up the changes
+// automatically (we cache parsed JSON until the file mtime changes).
+//
+// Conversion rules:
+//   - Each node's `inputs[]` is walked in order. If an input has a
+//     `link`, the value becomes `[srcNodeId, srcSlot]`. If an input has
+//     `widget: {name}`, the value is pulled from `widgets_values` —
+//     positionally when the latter is an array, or by name when it's an
+//     object (VHS_* nodes use the object shape).
+//   - `Seed (rgthree)` doesn't declare any inputs in the UI JSON; we
+//     synthesise `{seed: <int>}` so the downstream RandomNoise node has
+//     something to read.
+//   - Nodes with `mode: 4` (muted/bypass in ComfyUI UI) are skipped.
+//
+// Patches applied for our use case:
+//   - text encoder swap (we ship the fp8_scaled gemma, not the
+//     fp8_e4m3fn the workflow author shipped with).
+//   - IC-LoRA filename swap (the author's v2 file isn't published; we
+//     point at the public `*-general.safetensors`).
+//   - Wire 5097 (SageAttention) to the WATERMARK IC-LoRA (5133) and
+//     5097/2483 to the watermark prompt (5131) instead of the upscale
+//     prompt (5132). The reference workflow ships configured for
+//     upscale; this flips it to watermark removal.
+//   - The video filename uploaded for this scene, a random seed, and a
+//     project-scoped output filename prefix.
+
+const LTX_IC_EDIT_WORKFLOW_PATH = path.resolve(__dirname, '..', 'workflows', 'LTX-2.3-ICLORA-edit-official.json')
+let _ltxIcEditCache = { mtimeMs: 0, json: null }
+
+async function loadLtxIcEditWorkflowJson() {
+  let stat
+  try { stat = await fs.stat(LTX_IC_EDIT_WORKFLOW_PATH) } catch (err) {
+    throw new Error(`LTX IC-Edit workflow JSON missing at ${LTX_IC_EDIT_WORKFLOW_PATH}. Re-clone the repo or restore it from workflows/LTX-2.3-ICLORA-edit-official.json.`)
+  }
+  if (_ltxIcEditCache.json && _ltxIcEditCache.mtimeMs === stat.mtimeMs) {
+    return _ltxIcEditCache.json
+  }
+  const raw = await fs.readFile(LTX_IC_EDIT_WORKFLOW_PATH, 'utf-8')
+  const json = JSON.parse(raw)
+  _ltxIcEditCache = { mtimeMs: stat.mtimeMs, json }
+  return json
+}
+
+function convertUiWorkflowToApi(uiJson) {
+  // Build linkId → [srcNodeId, srcSlot] map. ComfyUI link format:
+  //   [linkId, srcNode, srcSlot, dstNode, dstSlot, type]
+  const linkMap = {}
+  for (const link of uiJson.links || []) {
+    if (!Array.isArray(link) || link.length < 3) continue
+    linkMap[link[0]] = [String(link[1]), Number(link[2])]
+  }
+
+  const api = {}
+  for (const node of uiJson.nodes || []) {
+    if (!node || typeof node.id === 'undefined') continue
+    if (node.mode === 4 || node.mode === 2) continue  // muted / bypassed
+    const nid = String(node.id)
+    const inputsObj = {}
+    const wv = node.widgets_values
+    const wvIsArray = Array.isArray(wv)
+    const wvIsObject = wv !== null && typeof wv === 'object' && !wvIsArray
+    let widgetIdx = 0
+    for (const inp of (node.inputs || [])) {
+      if (!inp?.name) continue
+      const name = inp.name
+      if (inp.link != null) {
+        const src = linkMap[inp.link]
+        if (src) inputsObj[name] = src
+        continue
+      }
+      // Widget input — pull from widgets_values.
+      if (inp.widget) {
+        if (wvIsObject) {
+          if (name in wv) inputsObj[name] = wv[name]
+        } else if (wvIsArray) {
+          if (widgetIdx < wv.length) {
+            inputsObj[name] = wv[widgetIdx]
+            widgetIdx += 1
+          }
+        }
+      }
+    }
+    api[nid] = {
+      class_type: node.type,
+      inputs: inputsObj,
+      _meta: { title: node.title || node.type },
+    }
+  }
+
+  // ── Special-case fixups for nodes the converter can't handle from
+  // schema alone:
+  //
+  // `Seed (rgthree)` has no inputs[] entries in the UI JSON but its
+  // first widgets_values element is the seed (-1 = random in rgthree's
+  // convention). The /prompt API needs an explicit `seed` input.
+  for (const node of uiJson.nodes || []) {
+    if (node?.type !== 'Seed (rgthree)') continue
+    const nid = String(node.id)
+    if (!api[nid]) continue
+    const wv = Array.isArray(node.widgets_values) ? node.widgets_values : []
+    const seed = Number.isFinite(Number(wv[0])) && Number(wv[0]) >= 0
+      ? Number(wv[0])
+      : Math.floor(Math.random() * 1e15)
+    api[nid].inputs = { seed }
+  }
+
+  return api
+}
+
+// Build the API-format LTX 2.3 IC-Edit watermark removal workflow with
+// the per-scene knobs patched in. Caller passes the filename already
+// uploaded to Comfy + the desired output prefix; we return the workflow
+// object plus the metadata the caller needs to find the saved video in
+// /history (the VHS_VideoCombine node id, the filename prefix, etc.).
+async function buildLtxIcEditWatermarkWorkflow({
+  comfyInputName, outputPrefix, seed,
+}) {
+  const uiJson = await loadLtxIcEditWorkflowJson()
+  const api = convertUiWorkflowToApi(uiJson)
+
+  // ── Text encoder. The reference workflow ships pointing at
+  // gemma_3_12B_it_fp8_e4m3fn.safetensors — most installs (ours
+  // included) have the fp8_scaled variant from Comfy-Org's mirror,
+  // which is the same model with scale factors pre-applied. Drop in the
+  // scaled version when available; fall back to whatever the workflow
+  // shipped with otherwise (user can fix the dropdown manually).
+  if (api['5023']) {
+    api['5023'].inputs.text_encoder = 'gemma_3_12B_it_fp8_scaled.safetensors'
+  }
+
+  // ── IC-LoRA filename. Author's v2 file isn't on HF (only the
+  // *-general.safetensors is published). Point both IC-LoRA loaders at
+  // files we actually have. 5011 is the upscale variant — we don't use
+  // it for watermark removal but the workflow keeps it loaded, so we
+  // hand it the watermark file too (loaded but bypassed downstream).
+  if (api['5133']) {
+    api['5133'].inputs.lora_name = 'ltx2.3-train/ltx2.3-ic-watermark-remove-general.safetensors'
+  }
+  if (api['5011']) {
+    api['5011'].inputs.lora_name = 'ltx2.3-train/ltx2.3-ic-watermark-remove-general.safetensors'
+    // Set strength to 0 so it loads but contributes nothing — saves us
+    // from rewiring the SageAttention node downstream.
+    api['5011'].inputs.strength_model = 0
+  }
+
+  // ── Switch the workflow from "upscale" mode to "watermark removal".
+  // The reference JSON has 5097 (SageAttention) reading from 5011
+  // (upscale LoRA) and 2483 (positive CLIP encode) reading from 5132
+  // (upscale prompt). Repoint both to the watermark side.
+  if (api['5097']) api['5097'].inputs.model = ['5133', 0]
+  if (api['2483']) api['2483'].inputs.text = ['5131', 0]
+
+  // ── Source video. VHS_LoadVideo accepts the filename of an asset
+  // that was already uploaded to ComfyUI's input/ dir via /upload/image.
+  if (api['5099']) {
+    api['5099'].inputs.video = comfyInputName
+    // Drop the default 121-frame cap so we process the whole clip.
+    // (Caller can clamp upstream if VRAM is the issue.)
+    api['5099'].inputs.frame_load_cap = 0
+  }
+
+  // ── Output prefix on VHS_VideoCombine.
+  if (api['5069']) {
+    api['5069'].inputs.filename_prefix = outputPrefix
+    // Force-disable the videopreview's cos_url cache the author left
+    // pointing at a remote bucket — we want the local /view route.
+    delete api['5069'].inputs.videopreview
+  }
+
+  // ── Seed. Patch both the rgthree Seed node and the RandomNoise node
+  // (whichever the workflow actually wires to the sampler) so a re-run
+  // of the same scene produces a different result.
+  const finalSeed = Number.isFinite(seed) ? seed : Math.floor(Math.random() * 1e15)
+  if (api['5104']) api['5104'].inputs = { seed: finalSeed }
+  if (api['5106'] && api['5106'].inputs) {
+    // RandomNoise expects noise_seed as either an int or a link. If
+    // 5104 is wired (link), keep the link; otherwise pin the int.
+    if (!Array.isArray(api['5106'].inputs.noise_seed)) {
+      api['5106'].inputs.noise_seed = finalSeed
+    }
+  }
+
+  return { workflow: api, saveNodeId: '5069', filenamePrefix: outputPrefix, seed: finalSeed }
 }
 
 function buildWanVaceWorkflow({
@@ -2339,27 +2613,25 @@ function buildWanVaceWorkflow({
   }
 }
 
-// Bare upscale workflow — load video → RealESRGAN upscale → scale to
-// target → save. No VACE, no text encoder, no sampler. Used by the
-// Commit reframe path where the reframe was already baked into a
-// pre-cropped MP4 via ffmpeg and all ComfyUI needs to do is bring the
-// resolution back up for delivery. Roughly 1/20th the cost of a VACE
-// pass for a clip of the same length.
+// Bare upscale workflow — load video → upscale x4 → scale to target →
+// save. No VACE, no text encoder, no sampler. Used by the Commit
+// reframe path where the reframe was already baked into a pre-cropped
+// MP4 via ffmpeg and all ComfyUI needs to do is bring the resolution
+// back up for delivery. Roughly 1/20th the cost of a VACE pass for a
+// clip of the same length.
+//
+// Cloud-compatible: built only out of nodes shipped with ComfyUI core
+// + VideoHelperSuite (the latter is the de-facto standard, present in
+// Comfy Cloud's stock image). The previous version used the KJNodes
+// `ImageUpscaleWithModelBatched` which isn't preinstalled there.
+// Default model is `RealESRGAN_x4plus.pth` — the one upscale model
+// that has been bundled with ComfyUI for years, so it's always present
+// regardless of where the workflow runs.
 function buildUpscaleOnlyWorkflow({ inputName, outputPrefix, targetW, targetH, fps, upscaleModel }) {
-  // per_batch=1: the commit reframe pre-crop is full-frame (e.g. ~1500×840
-  // for a 1.3× zoom into 1920×1080), and the 4x upscale model blows that up
-  // to ~6000×3360 per frame before the ImageScale downstream brings it back
-  // to delivery size. With per_batch=4 the 4070's 12 GiB budget overflows
-  // after the upscale model itself is loaded (~9.5 GiB resident) —
-  // one frame at a time fits. downscale_ratio is a POST-upscale factor in
-  // the 0.01–1.0 range: 1.0 keeps the full 4x output, 0.5 halves it back
-  // (so net 2x), 0.25 brings it back to input size. 0.5 cuts the peak
-  // intermediate tensor by 4x without visible quality loss since ImageScale
-  // is downsizing it anyway, and stays well within 12 GiB.
   return {
     '1': { class_type: 'VHS_LoadVideo', inputs: { video: inputName, force_rate: 0, custom_width: 0, custom_height: 0, frame_load_cap: 0, skip_first_frames: 0, select_every_nth: 1, format: 'AnimateDiff' } },
-    '2': { class_type: 'UpscaleModelLoader', inputs: { model_name: upscaleModel || '4x_NMKD-Siax_200k.pth' } },
-    '3': { class_type: 'ImageUpscaleWithModelBatched', inputs: { upscale_model: ['2', 0], images: ['1', 0], per_batch: 1, downscale_ratio: 0.5, downscale_method: 'lanczos', precision: 'float16' } },
+    '2': { class_type: 'UpscaleModelLoader', inputs: { model_name: upscaleModel || 'RealESRGAN_x4plus.pth' } },
+    '3': { class_type: 'ImageUpscaleWithModel', inputs: { upscale_model: ['2', 0], image: ['1', 0] } },
     '4': { class_type: 'ImageScale', inputs: { image: ['3', 0], upscale_method: 'lanczos', width: targetW, height: targetH, crop: 'disabled' } },
     '5': { class_type: 'VHS_VideoCombine', inputs: { images: ['4', 0], frame_rate: fps, loop_count: 0, filename_prefix: outputPrefix, format: 'video/h264-mp4', pingpong: false, save_output: true } },
   }
@@ -2984,6 +3256,201 @@ ipcMain.handle('analysis:optimizeFootage', async (event, options) => {
 })
 
 // ============================================
+// Optimize footage — LTX 2.3 IC-Edit watermark/overlay removal
+// ============================================
+//
+// Alternative engine to the VACE pipeline above. Same end goal (remove
+// on-screen graphics from a shot), totally different mechanics:
+//   - No external mask. The IC-LoRA infers what's an overlay from the
+//     reference image of the first frame and the natural-language prompt.
+//   - No Python helper. The whole pipeline lives in ComfyUI as a single
+//     workflow (the joyfox/LTX2.3-ICEdit-Insight reference graph).
+//   - Single model family: LTX 2.3 base FP8 + Gemma encoder + the
+//     distilled-LoRA + the watermark IC-LoRA. Shares VRAM with our
+//     existing extend / LipDub flows so the model load amortises.
+//
+// Versions land in the same `.reedit/optimized/<sceneId>_*` stack as
+// VACE outputs, but use an `L{NN}` tag (`L01`, `L02`, …) so the user
+// can A/B them against VACE's `V{NN}` outputs in the version dropdown.
+ipcMain.handle('analysis:optimizeFootageLTX', async (event, options) => {
+  const { scene, projectDir, comfyUrl: comfyUrlOpt, apiKey: apiKeyOpt, promptOverride } = options || {}
+  if (!scene?.id) return { success: false, error: 'scene.id required.' }
+  if (!projectDir) return { success: false, error: 'projectDir required.' }
+  const sceneId = scene.id
+  const comfyUrl = comfyUrlOpt || 'http://localhost:8000'
+  const apiKey = apiKeyOpt || ''
+
+  const emit = (stage, extra = {}) => {
+    try { event.sender.send('analysis:optimizeFootageLTX:progress', { sceneId, stage, ...extra }) } catch (_) { /* renderer may be closed */ }
+  }
+  emit('starting')
+
+  // Locate the cached sub-clip the captioner already wrote. Same
+  // contract as the VACE handler — the analyzer is responsible for
+  // ensuring this clip exists.
+  const projectDirFwd = projectDir.replace(/\\/g, '/')
+  const sourceClipPath = path.join(projectDirFwd, '.reedit', 'clips', `${sceneId}.mp4`)
+  try {
+    const st = await fs.stat(sourceClipPath)
+    if (!st || st.size < 1024) throw new Error('empty')
+  } catch {
+    return { success: false, error: `Shot clip not found at ${sourceClipPath}. Re-run Caption all so the cached sub-clip exists.` }
+  }
+
+  const meta = await probeVideoMeta(sourceClipPath)
+  if (!meta?.width || !meta?.height || !meta?.fps) {
+    return { success: false, error: 'ffprobe failed to read clip metadata.' }
+  }
+
+  // Upload the source clip. VHS_LoadVideo inside the workflow reads it
+  // from ComfyUI's input/ folder (or remote staging on Cloud).
+  emit('uploading')
+  const prefix = `reedit_${sanitizeForFilename(path.basename(projectDir))}_${sanitizeForFilename(sceneId)}`
+  let comfyInputName
+  try {
+    const up = await uploadFileToComfy({
+      comfyUrl, apiKey,
+      localFilePath: sourceClipPath,
+      filename: `${prefix}_source.mp4`,
+    })
+    comfyInputName = up?.name || `${prefix}_source.mp4`
+  } catch (err) {
+    return { success: false, error: `Failed to upload source clip to ComfyUI: ${err.message}` }
+  }
+
+  // Pick the next L-tagged version slot. Scan existing files matching
+  // `<sceneId>_LNN` and increment. Two-digit padding for sortable names.
+  const projectOptimizedDir = path.join(projectDirFwd, '.reedit', 'optimized')
+  try { await fs.mkdir(projectOptimizedDir, { recursive: true }) } catch (_) { /* ignore */ }
+  const existing = await fs.readdir(projectOptimizedDir).catch(() => [])
+  const versionRe = new RegExp(`^${sceneId.replace(/[.*+?^${}()|[\\]\\\\]/g, '\\$&')}_L(\\d{2,})(?:[_.]|$)`)
+  let nextVersion = 1
+  for (const name of existing) {
+    const m = name.match(versionRe)
+    if (m) {
+      const n = parseInt(m[1], 10)
+      if (Number.isFinite(n) && n >= nextVersion) nextVersion = n + 1
+    }
+  }
+  const versionTag = `L${String(nextVersion).padStart(2, '0')}`
+  emit('note', { message: `Writing version ${versionTag}.` })
+
+  // Build the patched workflow JSON. The output prefix is namespaced
+  // under reedit/ so a user with many projects doesn't end up with one
+  // huge flat output dir on the Comfy side.
+  const outputPrefix = `reedit_optimized/${sanitizeForFilename(path.basename(projectDir))}_${sanitizeForFilename(sceneId)}_${versionTag}`
+  const seed = Math.floor(Math.random() * 1e12)
+  let built
+  try {
+    built = await buildLtxIcEditWatermarkWorkflow({
+      comfyInputName,
+      outputPrefix,
+      seed,
+    })
+  } catch (err) {
+    return { success: false, error: `Could not load LTX IC-Edit workflow: ${err.message}` }
+  }
+  const { workflow } = built
+
+  // Optional prompt override. The reference workflow ships with the
+  // joyfox-authored Chinese prompt; English usually works fine for the
+  // ad-cleanup use case, but expose it so the user can swap if a
+  // particular shot needs steering.
+  if (promptOverride && typeof promptOverride === 'string' && workflow['5131']?.inputs) {
+    workflow['5131'].inputs.text = promptOverride
+  }
+
+  emit('queued_submit')
+  let promptId
+  try {
+    const submitRes = await net.fetch(`${comfyUrl}${_comfyApiPath(comfyUrl, '/prompt')}`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', ..._comfyHeaders(comfyUrl, apiKey) },
+      body: JSON.stringify({ prompt: workflow }),
+    })
+    if (!submitRes.ok) {
+      const body = await submitRes.text().catch(() => '')
+      return { success: false, error: `ComfyUI rejected the LTX IC-Edit workflow (${submitRes.status}): ${body.slice(0, 600)}` }
+    }
+    const submitJson = await submitRes.json()
+    promptId = submitJson?.prompt_id
+    if (!promptId) return { success: false, error: 'ComfyUI returned no prompt_id for LTX IC-Edit.' }
+  } catch (err) {
+    return { success: false, error: `Could not reach ComfyUI at ${comfyUrl}: ${err.message}` }
+  }
+  emit('queued', { promptId })
+
+  // LTX 2.3 at ~920k px / 6 steps with the distilled LoRA is fast —
+  // 30-90s on a 4070 for typical ad shots. 20-min ceiling covers cold
+  // model load + Cloud queue wait.
+  let result
+  const startedAt = Date.now()
+  try {
+    result = await waitForComfyJob({
+      comfyUrl, apiKey, promptId,
+      timeoutMs: 20 * 60 * 1000,
+      pollMs: 3000,
+      onTick: () => emit('running', { elapsedSec: Math.round((Date.now() - startedAt) / 1000) }),
+    })
+  } catch (err) {
+    return { success: false, error: err?.message || `Comfy LTX IC-Edit job ${promptId} failed.` }
+  }
+
+  // VHS_VideoCombine writes to `gifs[]` in the history (filename ends
+  // in `.mp4` despite the key name — Comfy historical baggage).
+  const VIDEO_RE = /\.(mp4|mov|webm|mkv|gif|avi|m4v)$/i
+  let outFilename = null, outSubfolder = '', outType = 'output'
+  for (const out of Object.values(result.outputs || {})) {
+    const candidates = [
+      ...(Array.isArray(out?.gifs) ? out.gifs : []),
+      ...(Array.isArray(out?.videos) ? out.videos : []),
+      ...(Array.isArray(out?.images) ? out.images : []),
+    ]
+    for (const c of candidates) {
+      if (!c?.filename) continue
+      if (!VIDEO_RE.test(c.filename)) continue
+      outFilename = c.filename
+      outSubfolder = c.subfolder || ''
+      outType = c.type || 'output'
+      break
+    }
+    if (outFilename) break
+  }
+  if (!outFilename) {
+    return { success: false, error: 'LTX IC-Edit workflow completed but no video output was reported in history.' }
+  }
+
+  emit('finalizing')
+  const finalPath = path.join(projectOptimizedDir, `${sceneId}_${versionTag}.mp4`)
+  try {
+    await downloadFromComfy({
+      comfyUrl, apiKey,
+      filename: outFilename,
+      subfolder: outSubfolder,
+      type: outType,
+      destPath: finalPath,
+    })
+  } catch (err) {
+    return { success: false, error: `Could not download LTX IC-Edit output: ${err.message}` }
+  }
+
+  const workflowJsonPath = await saveWorkflowAlongsideOutput(finalPath, workflow, {
+    kind: 'optimize-ltx-ic-edit', version: versionTag, sceneId, modelId: 'ltx-2.3-ic-edit-watermark', promptId, seed,
+  })
+  emit('done', { promptId, outputPath: finalPath, version: versionTag, workflowJsonPath })
+  return {
+    success: true,
+    promptId,
+    outputPath: finalPath,
+    workflowJsonPath,
+    inProjectDir: true,
+    version: versionTag,
+    modelId: 'ltx-2.3-ic-edit-watermark',
+    engine: 'ltx-ic-edit',
+  }
+})
+
+// ============================================
 // Commit reframe (zoom/pan → upscale + crop)
 // ============================================
 //
@@ -3015,7 +3482,11 @@ ipcMain.handle('analysis:commitReframe', async (event, options) => {
   const apiKey = apiKeyOpt || ''
   // Fall back to the shipped default when the renderer didn't pass one;
   // older callers (before capability settings existed) omit the field.
-  const upscaleModel = upscaleModelOpt || '4x_NMKD-Siax_200k.pth'
+  // Default to RealESRGAN_x4plus.pth — the one upscale model
+  // universally bundled with ComfyUI (local + Cloud). The
+  // capability-settings dropdown still lets a power user pick NMKD or
+  // others, but only the canonical name works on stock Cloud images.
+  const upscaleModel = upscaleModelOpt || 'RealESRGAN_x4plus.pth'
 
   const emit = (stage, extra = {}) => {
     try { event.sender.send('analysis:commitReframe:progress', { sceneId, stage, ...extra }) } catch (_) { /* renderer closed */ }
@@ -3039,8 +3510,27 @@ ipcMain.handle('analysis:commitReframe', async (event, options) => {
   const srcW = meta.width
   const srcH = meta.height
   const fps = meta.fps
-  const outW = Math.round(Number(targetW) || srcW)
-  const outH = Math.round(Number(targetH) || srcH)
+  // Output target. When the caller didn't supply explicit dims, bump
+  // the result up to 4K (preserving the source aspect) if the source
+  // is 1080p or smaller — that's what the upscale pass is here for in
+  // the first place. Above 1080p we keep the native dims; the upscale
+  // pass is still useful because we're undoing a ffmpeg pre-crop that
+  // softens detail, even when not changing the final resolution.
+  let outW = Math.round(Number(targetW) || srcW)
+  let outH = Math.round(Number(targetH) || srcH)
+  if (!targetW && !targetH && Math.max(srcW, srcH) <= 1920) {
+    // Aspect-preserving fit-inside (3840×2160 box). The crop math below
+    // re-derives crop from the chosen aspect, so feeding it a 4K-sized
+    // target just means the upscale tail brings the pixel count up.
+    const aspect = srcW / srcH
+    if (aspect >= (3840 / 2160)) {
+      outW = 3840
+      outH = Math.round(3840 / aspect / 2) * 2  // even dims for h264
+    } else {
+      outH = 2160
+      outW = Math.round(2160 * aspect / 2) * 2
+    }
+  }
 
   // Derive crop window from zoom + anchor. The cropped region is the
   // rectangle centered on (anchorX, anchorY) whose dimensions are the
@@ -4675,6 +5165,484 @@ ipcMain.handle('analysis:extractThumbnail', async (event, options) => {
   })
 })
 
+// ============================================
+// Placeholder fill generation — Kling i2v via Comfy Cloud
+// ============================================
+//
+// The proposer can emit `kind: 'placeholder'` rows that need to be
+// filled with AI-generated footage. Each placeholder carries a
+// `referenceFrame: { sourceSceneId, framePosition }` chosen by the LLM
+// to keep the generated clip visually consistent with the rest of the
+// cut. This handler:
+//   1. Extracts the referenced frame from the source video as a PNG
+//      (ffmpeg -ss N -vframes 1).
+//   2. Uploads the PNG to Comfy Cloud via /upload/image.
+//   3. Builds the Kling Omni image-to-video workflow inline, patched
+//      with our prompt + duration + reference image.
+//   4. Submits + polls + downloads the MP4 to
+//      `<projectDir>/.reedit/fills/<placeholderId>.mp4`.
+//
+// Bulk orchestration (loop over placeholders, persist results) lives
+// in the renderer-side `reeditFills.js` service — this handler stays
+// focused on one fill at a time.
+// Registry of available i2v fill models on Comfy Cloud. Each entry
+// exposes a builder that returns the workflow JSON patched with the
+// caller's prompt / reference image / duration / seed. Adding a model
+// is one entry here + one option in the renderer-side picker UI.
+const FILL_MODEL_REGISTRY = {
+  'kling-v3-omni':           buildKlingI2vWorkflow,
+  'grok-imagine-video-beta': buildGrokI2vWorkflow,
+  'viduq2-pro-fast':         buildVidu2I2vWorkflow,
+  'seedance-2':              buildSeedance2I2vWorkflow,
+}
+
+// Sanitise + bound a seed so every model gets a positive int32 value.
+// Each provider has slightly different limits but int32 max is the
+// strictest among them.
+function _safeSeed(seed) {
+  const INT32_MAX = 2147483647
+  return Number.isFinite(seed)
+    ? Math.abs(Math.floor(Number(seed))) % (INT32_MAX + 1)
+    : Math.floor(Math.random() * INT32_MAX)
+}
+
+// Per-model prompt formatters. The proposer writes one generic
+// "director's shot instruction" per placeholder; each i2v provider
+// has its own structural preferences we tune the prompt to here so
+// the same note lands well on every backend. The formatters never
+// hallucinate content — they only re-order, clip, and prepend/append
+// boilerplate that the model's official prompting guide recommends.
+
+// Strip trailing punctuation so prepended / appended clauses chain
+// cleanly without ugly ". ." sequences.
+function _trimEnd(s) { return String(s || '').trim().replace(/[.;,]\s*$/, '') }
+
+// Hard-cap a prompt to N words. Some providers (Seedance) explicitly
+// recommend ≤150; we keep 180 for safety margin without truncating
+// notes the proposer wrote tightly.
+function _capWords(s, max = 180) {
+  const words = String(s || '').trim().split(/\s+/)
+  if (words.length <= max) return words.join(' ')
+  return words.slice(0, max).join(' ') + '…'
+}
+
+// Kling 3 Omni — scene → character → action → camera → progression.
+// The proposer notes are already short cinematic shot instructions so
+// we just append a continuity cue + cap to 4-ish sentences. Kling
+// supports up to 15 s but our notes describe 1-3 s beats; the model
+// fills the gap with the camera move described.
+function formatPromptForKling(note) {
+  const body = _trimEnd(note) || 'A subtle moment of atmosphere consistent with the reference image'
+  // Append a continuity reinforcer so the generated motion blends back
+  // into the surrounding cut.
+  return _capWords(
+    `${body}. Match the lighting, palette, and tone of the reference image. Smooth, deliberate camera motion. Photoreal, cinematic.`,
+    180,
+  )
+}
+
+// Grok Imagine — natural sentences, 1 subject + 1 action + 1 camera
+// move + emotion tag. Strip a second camera move if the proposer
+// stacked two ("dolly + push" → keep "dolly"), and append an emotion
+// keyword if the note has none.
+function formatPromptForGrok(note) {
+  let body = _trimEnd(note) || 'A quiet moment of atmosphere consistent with the reference image'
+  // Heuristic: if the note mentions two camera verbs, keep only the
+  // first. Grok degrades sharply with multiple movements.
+  const CAMERA_VERBS = /\b(pan|tilt|dolly|track|push\s+in|pull\s+out|crane|orbit|zoom|tracking shot|aerial|whip\s+pan|handheld)\b/gi
+  const verbs = body.match(CAMERA_VERBS) || []
+  if (verbs.length > 1) {
+    // Replace the second+ occurrences with "" — leaves prose mostly
+    // readable; the worst case is a slightly awkward sentence but the
+    // model gets a single-motion shot instead of jittery output.
+    const seen = new Set()
+    body = body.replace(CAMERA_VERBS, (match) => {
+      const key = match.toLowerCase()
+      if (seen.has(key)) return ''
+      // First occurrence is also added but only once per phrase to keep
+      // dedupe consistent.
+      if (seen.size >= 1) return ''
+      seen.add(key)
+      return match
+    })
+  }
+  // Append an atmospheric tag if the note is purely descriptive.
+  const hasMood = /\b(nostalgic|melancholic|electric|tense|dreamlike|serene|cinematic|atmospheric|moody|peaceful|romantic|warm|cool|epic|tranquil)\b/i.test(body)
+  const mood = hasMood ? '' : ', atmospheric and cinematic'
+  return _capWords(`${body}${mood}.`, 120)
+}
+
+// Seedance 2.0 — i2v omits subject re-description. Prepend the
+// preservation clause + animation instruction, keep ONE camera move,
+// 60-100 words target.
+function formatPromptForSeedance(note) {
+  const body = _trimEnd(note) || 'Subtle motion consistent with the reference image'
+  return _capWords(
+    `Animate the provided image. Preserve composition, color palette, and lighting from the reference. ${body}. Single, smooth camera move. Photoreal, natural motion, no flicker.`,
+    120,
+  )
+}
+
+// Vidu Q2 — provider's guide is sparse; treat as generic prompt
+// passthrough with a light cinematic suffix that matches their demo
+// captions.
+function formatPromptForVidu(note) {
+  const body = _trimEnd(note) || 'Subtle motion consistent with the reference image'
+  return _capWords(`${body}. Photoreal, cinematic, natural motion.`, 150)
+}
+
+// Pick the canonical aspect bucket the provider accepts. Most i2v
+// providers reject anything that isn't 16:9 / 9:16 / 1:1.
+function _aspectBucket(aspectRatio) {
+  const ASPECT_BUCKETS = new Set(['16:9', '9:16', '1:1'])
+  return ASPECT_BUCKETS.has(String(aspectRatio)) ? String(aspectRatio) : '16:9'
+}
+
+function buildKlingI2vWorkflow({ referenceFilename, prompt, durationSec, aspectRatio, resolution, outputPrefix, seed }) {
+  // Kling's KlingOmniProImageToVideoNode requires duration in [3, 15].
+  // We always request 3 s from the model; the timeline applier trims
+  // the clip down to whatever the EDL row actually needs.
+  const safeDur = Math.max(3, Math.min(15, Math.round(Number(durationSec) || 3)))
+  const formattedPrompt = formatPromptForKling(prompt)
+  return {
+    '17': { class_type: 'LoadImage', inputs: { image: referenceFilename }, _meta: { title: 'Reference frame' } },
+    '21': {
+      class_type: 'KlingOmniProImageToVideoNode',
+      inputs: {
+        model_name: 'kling-v3-omni',
+        prompt: formattedPrompt.slice(0, 2000),
+        aspect_ratio: _aspectBucket(aspectRatio),
+        duration: safeDur,
+        resolution: resolution || '720p',
+        storyboards: 'disabled',
+        generate_audio: false,
+        seed: _safeSeed(seed),
+        reference_images: ['17', 0],
+      },
+      _meta: { title: 'Kling 3 Omni i2v' },
+    },
+    '20': {
+      class_type: 'SaveVideo',
+      inputs: { filename_prefix: outputPrefix, format: 'auto', codec: 'auto', video: ['21', 0] },
+      _meta: { title: 'Save Video' },
+    },
+  }
+}
+
+// Grok image-to-video. Single image reference, faster + cheaper than
+// Kling but no multi-reference support and slightly less "stylised"
+// outputs. Duration is best-effort 1–6 s.
+function buildGrokI2vWorkflow({ referenceFilename, prompt, durationSec, aspectRatio, outputPrefix, seed }) {
+  const safeDur = Math.max(1, Math.min(6, Math.round(Number(durationSec) || 3)))
+  const formattedPrompt = formatPromptForGrok(prompt)
+  return {
+    '3': { class_type: 'LoadImage', inputs: { image: referenceFilename }, _meta: { title: 'Reference frame' } },
+    '1': {
+      class_type: 'GrokVideoNode',
+      inputs: {
+        model: 'grok-imagine-video-beta',
+        prompt: formattedPrompt.slice(0, 2000),
+        resolution: '720p',
+        aspect_ratio: 'auto',          // Grok accepts 'auto' and infers from the reference image
+        duration: safeDur,
+        seed: _safeSeed(seed),
+        image: ['3', 0],
+      },
+      _meta: { title: 'Grok Video i2v' },
+    },
+    '2': {
+      class_type: 'SaveVideo',
+      inputs: { filename_prefix: outputPrefix, format: 'auto', codec: 'auto', video: ['1', 0] },
+      _meta: { title: 'Save Video' },
+    },
+  }
+}
+
+// Vidu Q2 image-to-video. 1080p native (heavier file but cleaner
+// frames). Movement amplitude is "auto" by default; we surface it as
+// a tunable later if needed.
+function buildVidu2I2vWorkflow({ referenceFilename, prompt, durationSec, outputPrefix, seed }) {
+  const safeDur = Math.max(4, Math.min(8, Math.round(Number(durationSec) || 5)))
+  const formattedPrompt = formatPromptForVidu(prompt)
+  return {
+    '40': { class_type: 'LoadImage', inputs: { image: referenceFilename }, _meta: { title: 'Reference frame' } },
+    '39': {
+      class_type: 'Vidu2ImageToVideoNode',
+      inputs: {
+        model: 'viduq2-pro-fast',
+        prompt: formattedPrompt.slice(0, 2000),
+        duration: safeDur,
+        seed: _safeSeed(seed),
+        resolution: '1080p',
+        movement_amplitude: 'auto',
+        image: ['40', 0],
+      },
+      _meta: { title: 'Vidu 2 i2v' },
+    },
+    '37': {
+      class_type: 'SaveVideo',
+      inputs: { filename_prefix: outputPrefix, format: 'auto', codec: 'auto', video: ['39', 0] },
+      _meta: { title: 'Save Video' },
+    },
+  }
+}
+
+// Seedance 2.0 reference-to-video (ByteDance). The upstream Comfy
+// `ByteDance2ReferenceNode` flipped its signature in late 2025 — all
+// of prompt / resolution / ratio / duration / reference images now
+// live nested inside a single `model` dict that also carries the
+// selected variant name ("Seedance 2.0" vs "Seedance 2.0 Fast").
+// Reference images go in as a sub-dict keyed `image_1` … `image_9`
+// (the node supports up to 9). Top-level inputs are limited to
+// `model`, `seed`, `watermark`.
+// Schema reference:
+//   https://github.com/comfyanonymous/ComfyUI/blob/master/comfy_api_nodes/nodes_bytedance.py
+//   (class ByteDance2ReferenceNode, _seedance2_reference_inputs)
+function buildSeedance2I2vWorkflow({ referenceFilename, prompt, durationSec, aspectRatio, outputPrefix, seed }) {
+  // Seedance 2.0 duration is bounded [4, 15] s. Clamp accordingly.
+  const safeDur = Math.max(4, Math.min(15, Math.round(Number(durationSec) || 5)))
+  const formattedPrompt = formatPromptForSeedance(prompt)
+  return {
+    '10': { class_type: 'LoadImage', inputs: { image: referenceFilename }, _meta: { title: 'Reference frame' } },
+    '11': {
+      class_type: 'ByteDance2ReferenceNode',
+      // ByteDance2ReferenceNode wraps its real inputs in a DynamicCombo
+      // widget called `model`. Comfy serialises that as FLAT, dotted
+      // keys at the API layer ("model", "model.prompt", "model.ratio"
+      // …) — NOT as a nested dict. The server's `build_nested_inputs`
+      // pass walks the `dynamic_paths` registered by the schema and
+      // re-packs the flat keys into the nested dict the `execute()`
+      // method actually receives. Sending a nested `model: {…}` here
+      // produces "missing 1 required positional argument: 'model'"
+      // because the flat key `"model"` (the selected variant string)
+      // is missing.
+      //
+      // Reference-image slots live under another nested widget
+      // (`reference_images` is an Autogrow with template names
+      // image_1…image_9), which finalises to `"model.reference_images.image_1"`.
+      inputs: {
+        // Selected DynamicCombo variant — must match one of the
+        // option keys defined in the schema ("Seedance 2.0" or
+        // "Seedance 2.0 Fast").
+        model: 'Seedance 2.0',
+        'model.prompt': formattedPrompt.slice(0, 2000),
+        'model.resolution': '720p',
+        'model.ratio': _aspectBucket(aspectRatio),
+        'model.duration': safeDur,
+        // Generated placeholders ride under the existing music bed —
+        // we don't want Seedance synthesising its own audio track.
+        'model.generate_audio': false,
+        // Reference image slot 1 of up to 9. The Autogrow widget
+        // packs these into `model.reference_images` at execute time.
+        'model.reference_images.image_1': ['10', 0],
+        seed: _safeSeed(seed),
+        // Required boolean since the late-2025 node update. False so
+        // outputs don't carry the ByteDance overlay.
+        watermark: false,
+      },
+      _meta: { title: 'Seedance 2.0 r2v' },
+    },
+    '12': {
+      class_type: 'SaveVideo',
+      inputs: { filename_prefix: outputPrefix, format: 'auto', codec: 'auto', video: ['11', 0] },
+      _meta: { title: 'Save Video' },
+    },
+  }
+}
+
+ipcMain.handle('analysis:generateFill', async (event, options) => {
+  const {
+    placeholderId,
+    projectDir,
+    sourceVideoPath,
+    referenceTcSec,         // absolute source timecode for the reference frame
+    prompt,
+    durationSec,
+    aspectRatio,
+    modelId: modelIdOpt,    // which entry of FILL_MODEL_REGISTRY to use
+    comfyUrl: comfyUrlOpt,
+    apiKey: apiKeyOpt,
+  } = options || {}
+  const modelId = String(modelIdOpt || 'kling-v3-omni')
+  const buildWorkflow = FILL_MODEL_REGISTRY[modelId]
+  if (!buildWorkflow) {
+    return { success: false, error: `Unknown fill model "${modelId}". Available: ${Object.keys(FILL_MODEL_REGISTRY).join(', ')}.` }
+  }
+  if (!placeholderId) return { success: false, error: 'placeholderId required.' }
+  if (!projectDir)    return { success: false, error: 'projectDir required.' }
+  if (!sourceVideoPath) return { success: false, error: 'sourceVideoPath required.' }
+  if (!Number.isFinite(referenceTcSec)) return { success: false, error: 'referenceTcSec must be a finite number.' }
+  const comfyUrl = comfyUrlOpt || 'http://localhost:8000'
+  const apiKey = apiKeyOpt || ''
+  // Kling is a Cloud-only model — there's no local backend. Fail fast
+  // with a useful message instead of letting the upload silently 404.
+  if (!isCloudComfyUrl(comfyUrl)) {
+    return { success: false, error: 'Placeholder generation needs Comfy Cloud. Switch the ComfyUI mode to Cloud in the launcher chip or in Settings → ComfyUI before running this.' }
+  }
+
+  const emit = (stage, extra = {}) => {
+    try { event.sender.send('analysis:generateFill:progress', { placeholderId, stage, ...extra }) } catch (_) { /* renderer closed */ }
+  }
+  emit('starting')
+
+  const projectDirFwd = projectDir.replace(/\\/g, '/')
+  const fillsDir = path.join(projectDirFwd, '.reedit', 'fills')
+  try { await fs.mkdir(fillsDir, { recursive: true }) } catch (err) {
+    return { success: false, error: `Could not create fills dir: ${err.message}` }
+  }
+
+  // 1. Extract reference frame from source.
+  emit('extracting_reference', { tcSec: referenceTcSec })
+  const refPath = path.join(fillsDir, `${sanitizeForFilename(placeholderId)}_ref.png`)
+  try {
+    await new Promise((resolve, reject) => {
+      const args = [
+        '-hide_banner', '-nostats',
+        '-ss', String(Math.max(0, Number(referenceTcSec))),
+        '-i', sourceVideoPath,
+        '-vframes', '1',
+        '-q:v', '2',
+        '-y', refPath,
+      ]
+      const proc = spawn(ffmpegPath, args, { windowsHide: true })
+      let stderr = ''
+      proc.stderr.on('data', (d) => { stderr += d.toString() })
+      proc.on('close', (code) => {
+        if (code === 0) resolve()
+        else reject(new Error(`ffmpeg frame extract failed (${code}): ${stderr.slice(-300)}`))
+      })
+      proc.on('error', reject)
+    })
+  } catch (err) {
+    return { success: false, error: err.message }
+  }
+
+  // 2. Upload reference frame to Comfy Cloud.
+  emit('uploading_reference')
+  const prefix = `reedit_${sanitizeForFilename(path.basename(projectDir))}_${sanitizeForFilename(placeholderId)}`
+  let comfyRefName
+  try {
+    const up = await uploadFileToComfy({
+      comfyUrl, apiKey,
+      localFilePath: refPath,
+      filename: `${prefix}_ref.png`,
+    })
+    comfyRefName = up?.name || `${prefix}_ref.png`
+  } catch (err) {
+    return { success: false, error: `Failed to upload reference frame: ${err.message}` }
+  }
+
+  // 3. Build patched workflow + submit. The model-specific builder
+  // picks the right node class names + clamps duration to the
+  // provider's allowed range. All providers accept int32 seeds; we
+  // roll once here and let the builder re-clamp.
+  const outputPrefix = `reedit_fills/${sanitizeForFilename(path.basename(projectDir))}_${sanitizeForFilename(placeholderId)}`
+  const seed = Math.floor(Math.random() * 2147483647)
+  const workflow = buildWorkflow({
+    referenceFilename: comfyRefName,
+    prompt,
+    durationSec,
+    aspectRatio,
+    resolution: '720p',
+    outputPrefix,
+    seed,
+  })
+
+  emit('queued_submit')
+  let promptId
+  try {
+    // Partner Nodes (Kling / Grok / Vidu / Nano Banana / Seedream)
+    // authenticate against comfyapi.com using the user's Comfy.org key
+    // — and that auth MUST travel in the POST body under
+    // `extra_data.api_key_comfy_org`. The X-API-Key header only
+    // authenticates the Cloud endpoint itself; without the body field
+    // the worker hits "Unauthorized: Please login first to use this
+    // node" the moment the Partner Node tries to dispatch. See
+    // https://docs.comfy.org/development/cloud/api-reference.
+    const submitRes = await net.fetch(`${comfyUrl}${_comfyApiPath(comfyUrl, '/prompt')}`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', ..._comfyHeaders(comfyUrl, apiKey) },
+      body: JSON.stringify({
+        prompt: workflow,
+        extra_data: { api_key_comfy_org: apiKey },
+      }),
+    })
+    if (!submitRes.ok) {
+      const body = await submitRes.text().catch(() => '')
+      return { success: false, error: `Comfy Cloud rejected the Kling workflow (${submitRes.status}): ${body.slice(0, 400)}` }
+    }
+    const submitJson = await submitRes.json()
+    promptId = submitJson?.prompt_id
+    if (!promptId) return { success: false, error: 'Comfy Cloud returned no prompt_id for the fill job.' }
+  } catch (err) {
+    return { success: false, error: `Could not reach Comfy Cloud at ${comfyUrl}: ${err.message}` }
+  }
+  emit('queued', { promptId })
+
+  // 4. Poll. Kling Omni typically returns in 60-180 s; allow 10 min
+  //    so a queue spike doesn't time us out.
+  let result
+  const startedAt = Date.now()
+  try {
+    result = await waitForComfyJob({
+      comfyUrl, apiKey, promptId,
+      timeoutMs: 10 * 60 * 1000,
+      pollMs: 4000,
+      onTick: () => emit('running', { elapsedSec: Math.round((Date.now() - startedAt) / 1000) }),
+    })
+  } catch (err) {
+    return { success: false, error: err?.message || `Comfy Cloud fill job ${promptId} failed.` }
+  }
+
+  // 5. Extract the saved MP4 path from history outputs.
+  const VIDEO_RE = /\.(mp4|mov|webm|mkv|gif|avi|m4v)$/i
+  let outFilename = null, outSubfolder = '', outType = 'output'
+  for (const out of Object.values(result.outputs || {})) {
+    const candidates = [
+      ...(Array.isArray(out?.videos) ? out.videos : []),
+      ...(Array.isArray(out?.gifs) ? out.gifs : []),
+      ...(Array.isArray(out?.images) ? out.images : []),
+    ]
+    for (const c of candidates) {
+      if (!c?.filename) continue
+      if (!VIDEO_RE.test(c.filename)) continue
+      outFilename = c.filename
+      outSubfolder = c.subfolder || ''
+      outType = c.type || 'output'
+      break
+    }
+    if (outFilename) break
+  }
+  if (!outFilename) {
+    return { success: false, error: 'Fill workflow completed but no video output was reported in history.' }
+  }
+
+  // 6. Download the MP4 into the project.
+  emit('finalizing')
+  const finalPath = path.join(fillsDir, `${sanitizeForFilename(placeholderId)}.mp4`)
+  try {
+    await downloadFromComfy({
+      comfyUrl, apiKey,
+      filename: outFilename,
+      subfolder: outSubfolder,
+      type: outType,
+      destPath: finalPath,
+    })
+  } catch (err) {
+    return { success: false, error: `Could not download fill output: ${err.message}` }
+  }
+
+  emit('done', { promptId, outputPath: finalPath })
+  return {
+    success: true,
+    promptId,
+    outputPath: finalPath,
+    referenceFramePath: refPath,
+    seed,
+    modelId,
+  }
+})
+
 const audioWaveformCache = new Map()
 
 function resolveMediaInputPath(mediaInput) {
@@ -6147,6 +7115,18 @@ ipcMain.handle('export:checkNvenc', async () => {
 
 app.whenReady().then(() => {
   registerFileProtocol()
+  // Auto-approve `local-fonts` so window.queryLocalFonts() works
+  // without a permission prompt — the Text panel and Inspector need
+  // it to enumerate the user's installed fonts. Every other
+  // permission stays default-deny.
+  try {
+    session.defaultSession.setPermissionRequestHandler((_webContents, permission, callback) => {
+      if (permission === 'local-fonts') return callback(true)
+      return callback(false)
+    })
+  } catch (err) {
+    console.warn('[main] could not install local-fonts permission handler:', err?.message || err)
+  }
   initComfyLauncher()
     .then(() => maybeAutoStartComfyLauncher())
     .catch((error) => {

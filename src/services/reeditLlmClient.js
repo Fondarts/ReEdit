@@ -39,9 +39,10 @@ const DEFAULT_SETTINGS = {
   backend: LLM_BACKENDS.LM_STUDIO,
   anthropicModel: 'claude-sonnet-4-6',
   anthropicApiKey: '',
-  geminiModel: 'gemini-2.5-flash',
-  geminiAnalysisModel: 'gemini-2.5-flash',
-  geminiProposalModel: 'gemini-2.5-pro',
+  geminiModel: 'gemini-3.5-flash',
+  geminiAnalysisModel: 'gemini-3.5-flash',
+  geminiProposalModel: 'gemini-3.5-flash',
+  geminiReviewModel: 'gemini-3.5-flash',
   geminiEmbeddingModel: 'gemini-embedding-2',
   geminiApiKey: '',
   // When true, the proposer attaches the source video to the user
@@ -59,6 +60,7 @@ const DEFAULT_SETTINGS = {
 export const LLM_TASKS = {
   ANALYSIS: 'analysis',
   PROPOSAL: 'proposal',
+  REVIEW: 'review',
 }
 
 export function loadLlmSettings() {
@@ -115,12 +117,22 @@ async function pickLmStudioChatModel(preferVision = false) {
 // `geminiModel` field so old code paths keep working.
 export function resolveGeminiModelForTask(settings, task) {
   if (task === LLM_TASKS.ANALYSIS) {
-    return settings.geminiAnalysisModel || settings.geminiModel || 'gemini-2.5-flash'
+    return settings.geminiAnalysisModel || settings.geminiModel || 'gemini-3.5-flash'
   }
   if (task === LLM_TASKS.PROPOSAL) {
-    return settings.geminiProposalModel || settings.geminiModel || 'gemini-2.5-pro'
+    // 3.5 Flash beats 3.1 Pro on Google's published benchmarks, so the
+    // proposer uses it too instead of the older 2.5 Pro thinking model
+    // we used to default to. Users on a 2.5/Pro override are unaffected.
+    return settings.geminiProposalModel || settings.geminiModel || 'gemini-3.5-flash'
   }
-  return settings.geminiModel || 'gemini-2.5-flash'
+  if (task === LLM_TASKS.REVIEW) {
+    // Review (internal Sundogs-style AI review of the new cut) used to
+    // piggyback on the Analysis model. Now it gets its own slot so the
+    // user can pick a higher-fidelity model for the one-off review pass
+    // without paying for it on every per-shot caption.
+    return settings.geminiReviewModel || settings.geminiAnalysisModel || settings.geminiModel || 'gemini-3.5-flash'
+  }
+  return settings.geminiModel || 'gemini-3.5-flash'
 }
 
 /**

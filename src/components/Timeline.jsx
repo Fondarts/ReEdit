@@ -27,6 +27,8 @@ import {
   matchEditorHotkey,
 } from '../services/editorHotkeys'
 import MasterAudioMeter from './AudioMeter'
+import { swapPlaceholderActiveVersion } from '../services/reeditEdlToTimeline'
+import { placeholderVersionsFor } from '../services/placeholderVersions'
 
 const TRANSITION_DEFAULT_DURATION_KEY = 'comfystudio-transition-default-duration-frames'
 const DEFAULT_WAVEFORM_SAMPLES = 4096
@@ -582,6 +584,7 @@ function Timeline({ onOpenAudioGenerate, hideToolbar = false }) {
   // Clip context menu state
   const [clipContextMenu, setClipContextMenu] = useState(null) // { x, y, clipId }
   const [maskSubmenuOpen, setMaskSubmenuOpen] = useState(false)
+  const [versionSubmenuOpen, setVersionSubmenuOpen] = useState(false)
   // Refs + viewport-clamped positions keep the menus from spilling below
   // the taskbar or off the right edge when you right-click near a screen
   // boundary. See useViewportClampedPosition for how it measures and flips.
@@ -2871,6 +2874,7 @@ function Timeline({ onOpenAudioGenerate, hideToolbar = false }) {
       clipId: clip.id
     })
     setMaskSubmenuOpen(false)
+    setVersionSubmenuOpen(false)
   }
 
   // Close clip context menu. We listen in the CAPTURE phase because
@@ -3044,6 +3048,17 @@ function Timeline({ onOpenAudioGenerate, hideToolbar = false }) {
     setClipContextMenu(null)
   }
 
+  // Switch a generated placeholder clip to another version. Resolves the
+  // clip's placeholder row from its asset metadata, then persists +
+  // live-swaps the asset via swapPlaceholderActiveVersion.
+  const handleSwitchVersionFromContextMenu = (rowArrayIndex, versionId) => {
+    setVersionSubmenuOpen(false)
+    setClipContextMenu(null)
+    swapPlaceholderActiveVersion({ rowArrayIndex, versionId }).catch((err) => {
+      console.error('[reedit] switch version failed:', err)
+    })
+  }
+
   // Handle clip deletion (deletes all selected if multiple)
   const handleDeleteClip = (e, clipId) => {
     e.stopPropagation()
@@ -3092,10 +3107,22 @@ function Timeline({ onOpenAudioGenerate, hideToolbar = false }) {
   }
 
   const handleFadeDragStart = (e, clip, edge) => {
+    if (!clip || clip.type !== 'audio') return
+
+    // The fade handle's hit area visually overlaps the trim handle when
+    // the fade is small / zero (handle sits ~6px from the clip edge,
+    // same neighbourhood as the trim grab). Plain edge-drag should trim
+    // — that's the dominant action — so without ALT we forward to the
+    // trim handler and let the fade handle behave like an ALT-only
+    // affordance. The fade-in handle maps to the LEFT trim, fade-out
+    // to the RIGHT trim.
+    if (!e.altKey) {
+      handleTrimStart(e, clip.id, edge === 'in' ? 'left' : 'right')
+      return
+    }
+
     e.stopPropagation()
     e.preventDefault()
-
-    if (!clip || clip.type !== 'audio') return
 
     if (clipDragState) setClipDragState(null)
     if (transitionDragState) setTransitionDragState(null)
@@ -5579,7 +5606,7 @@ function Timeline({ onOpenAudioGenerate, hideToolbar = false }) {
                       onMouseDown={(e) => handleFadeDragStart(e, clip, 'in')}
                       className="absolute top-[3px] bottom-0 z-20 w-4 -translate-x-1/2 cursor-ew-resize flex items-center justify-center"
                       style={{ left: `${fadeInHandleX}px` }}
-                      title={`Drag fade in (${formatSecondsFrames(fadeIn, timecodeFps)})`}
+                      title={`Alt + drag to set fade in (${formatSecondsFrames(fadeIn, timecodeFps)}). Plain drag trims the clip.`}
                     >
                       <div className={`h-full w-1.5 rounded-full shadow-[0_0_8px_rgba(0,0,0,0.35)] transition-colors ${
                         fadeDragState?.clipId === clip.id && fadeDragState?.edge === 'in'
@@ -5592,7 +5619,7 @@ function Timeline({ onOpenAudioGenerate, hideToolbar = false }) {
                       onMouseDown={(e) => handleFadeDragStart(e, clip, 'out')}
                       className="absolute top-[3px] bottom-0 z-20 w-4 -translate-x-1/2 cursor-ew-resize flex items-center justify-center"
                       style={{ left: `${fadeOutHandleX}px` }}
-                      title={`Drag fade out (${formatSecondsFrames(fadeOut, timecodeFps)})`}
+                      title={`Alt + drag to set fade out (${formatSecondsFrames(fadeOut, timecodeFps)}). Plain drag trims the clip.`}
                     >
                       <div className={`h-full w-1.5 rounded-full shadow-[0_0_8px_rgba(0,0,0,0.35)] transition-colors ${
                         fadeDragState?.clipId === clip.id && fadeDragState?.edge === 'out'
@@ -5917,6 +5944,63 @@ function Timeline({ onOpenAudioGenerate, hideToolbar = false }) {
           }}
           onClick={(e) => e.stopPropagation()}
         >
+          {(() => {
+            // Generated-fill version switcher. Shows only when this clip
+            // is an AI placeholder fill (tagged at Apply time) that has
+            // more than one saved version.
+            const contextClip = clips.find(c => c.id === clipContextMenu.clipId)
+            const asset = contextClip ? assetsById.get(contextClip.assetId) : null
+            const rowArrayIndex = asset?.settings?.reeditPlaceholderRowArrayIndex
+            if (rowArrayIndex == null) return null
+            const project = useProjectStore.getState().currentProject
+            const info = placeholderVersionsFor({ project, rowArrayIndex })
+            if (!info || info.versions.length < 2) return null
+
+            return (
+              <>
+                <div className="relative">
+                  <button
+                    onClick={() => setVersionSubmenuOpen((prev) => !prev)}
+                    className="w-full px-3 py-1.5 text-left text-xs text-sf-text-primary hover:bg-sf-dark-700 flex items-center gap-2 transition-colors"
+                  >
+                    <span>Generated version…</span>
+                    <span className="ml-1 text-[10px] text-sf-text-muted">({info.versions.length})</span>
+                    <ChevronRight className="ml-auto w-3 h-3 text-sf-text-muted" />
+                  </button>
+
+                  {versionSubmenuOpen && (() => {
+                    const SUBMENU_MIN_WIDTH = 220
+                    const PARENT_MIN_WIDTH = 160
+                    const EDGE_MARGIN = 12
+                    const viewportWidth = typeof window !== 'undefined' ? window.innerWidth : Infinity
+                    const wouldOverflowRight =
+                      clipContextMenuPosition.x + PARENT_MIN_WIDTH + SUBMENU_MIN_WIDTH + EDGE_MARGIN > viewportWidth
+                    const sideClasses = wouldOverflowRight ? 'right-full mr-1' : 'left-full ml-1'
+                    return (
+                      <div
+                        className={`absolute top-0 ${sideClasses} bg-sf-dark-800 border border-sf-dark-600 rounded-lg shadow-xl py-1 min-w-[220px] z-50 max-h-60 overflow-y-auto overflow-x-hidden`}
+                        onClick={(e) => e.stopPropagation()}
+                      >
+                        {info.versions.map((v, idx) => (
+                          <button
+                            key={v.id}
+                            onClick={() => handleSwitchVersionFromContextMenu(rowArrayIndex, v.id)}
+                            className="w-full px-3 py-1.5 text-left text-xs text-sf-text-primary hover:bg-sf-dark-700 flex items-center gap-2 transition-colors"
+                            title={v.prompt || ''}
+                          >
+                            <span className={`w-1.5 h-1.5 rounded-full flex-shrink-0 ${v.isActive ? 'bg-emerald-400' : 'bg-transparent'}`} />
+                            <span className="truncate">v{idx + 1}{v.model ? ` · ${v.model}` : ''}</span>
+                            {v.isActive && <span className="ml-auto text-[9px] uppercase tracking-wider text-emerald-400">active</span>}
+                          </button>
+                        ))}
+                      </div>
+                    )
+                  })()}
+                </div>
+                <div className="h-px bg-sf-dark-600 my-1" />
+              </>
+            )
+          })()}
           {(() => {
             const contextClip = clips.find(c => c.id === clipContextMenu.clipId)
             const canUseMask = contextClip?.type === 'video' || contextClip?.type === 'image'

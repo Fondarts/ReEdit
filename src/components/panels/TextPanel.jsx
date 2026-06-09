@@ -2,12 +2,7 @@ import { Type, AlignLeft, AlignCenter, AlignRight } from 'lucide-react'
 import { useMemo, useState } from 'react'
 import { useTimelineStore } from '../../stores/timelineStore'
 import { TEXT_ANIMATION_PRESETS, TEXT_ANIMATION_MODE_OPTIONS } from '../../utils/textAnimationPresets'
-
-// Available fonts for text clips
-const FONT_OPTIONS = [
-  'Inter', 'Arial', 'Helvetica', 'Times New Roman', 'Georgia', 
-  'Courier New', 'Verdana', 'Impact', 'Comic Sans MS', 'Trebuchet MS'
-]
+import { useSystemFonts } from '../../hooks/useSystemFonts'
 
 function TextPanel() {
   // Timeline store for adding text clips
@@ -19,7 +14,11 @@ function TextPanel() {
     activeTrackId,
     requestTextEdit,
   } = useTimelineStore()
-  
+
+  // OS-installed fonts (or the small fallback list while the
+  // queryLocalFonts() call resolves / when the API is unavailable).
+  const fontOptions = useSystemFonts()
+
   // Text generation state
   const [textContent, setTextContent] = useState('Sample Text')
   const [textFontFamily, setTextFontFamily] = useState('Inter')
@@ -93,7 +92,7 @@ function TextPanel() {
               onChange={(e) => setTextFontFamily(e.target.value)}
               className="w-full bg-sf-dark-800 border border-sf-dark-600 rounded px-2 py-1.5 text-xs text-sf-text-primary focus:outline-none focus:border-sf-accent"
             >
-              {FONT_OPTIONS.map(font => (
+              {fontOptions.map(font => (
                 <option key={font} value={font} style={{ fontFamily: font }}>{font}</option>
               ))}
             </select>

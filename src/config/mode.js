@@ -10,20 +10,26 @@ export const REEDIT_MODE = true
 
 // Tabs visible in the TitleBar under REEDIT_MODE, in display order.
 // Ids must match the branches in App.jsx's render switch.
+//
+// `projects` and `import` used to be two separate rails; they're collapsed
+// into one tab here (id stays `import` so existing deep-links keep working,
+// label becomes "Projects") and the view itself is a two-column split —
+// project picker on the left, import slots on the right — mirroring the
+// WelcomeScreen layout.
 export const REEDIT_TABS = [
-  { id: 'projects', label: 'Projects' },
-  { id: 'import', label: 'Import' },
+  { id: 'import', label: 'Projects' },
   { id: 'analysis', label: 'Analysis' },
   { id: 'optimization', label: 'Optimization' },
   { id: 'proposal', label: 'Proposal' },
   { id: 'editor', label: 'Editor' },
+  { id: 'review', label: 'Review' },
   { id: 'export', label: 'Export' },
 ]
 
 // Tab ids that render a single full-screen workspace (no left panel /
 // inspector / timeline docked around them). The editor tab keeps the
 // Resolve-style layout; the other re-edit tabs are single-panel.
-export const REEDIT_FULLSCREEN_TABS = new Set(['projects', 'import', 'analysis', 'optimization', 'proposal'])
+export const REEDIT_FULLSCREEN_TABS = new Set(['import', 'analysis', 'optimization', 'proposal', 'review'])
 
 // Decide the initial tab when a project is opened or created.
 // - No sourceVideo yet → Import.

@@ -314,6 +314,37 @@ contextBridge.exposeInMainWorld('electronAPI', {
   optimizeFootage: (options) => ipcRenderer.invoke('analysis:optimizeFootage', options),
 
   /**
+   * Alternative footage-cleanup engine: LTX 2.3 IC-Edit (watermark-remove
+   * IC-LoRA) running entirely inside ComfyUI — no Python mask helper, no
+   * VACE. Versions land in `.reedit/optimized/` with an `L{NN}` tag so
+   * they coexist with VACE's `V{NN}` outputs in the same per-scene stack.
+   * Progress stream arrives via `onOptimizeFootageLTXProgress`.
+   * @param {{ scene: object, projectDir: string, comfyUrl?: string, apiKey?: string, promptOverride?: string }} options
+   * @returns {Promise<{success: boolean, promptId?: string, outputPath?: string, version?: string, modelId?: string, engine?: string, workflowJsonPath?: string, error?: string}>}
+   */
+  optimizeFootageLTX: (options) => ipcRenderer.invoke('analysis:optimizeFootageLTX', options),
+  onOptimizeFootageLTXProgress: (cb) => {
+    const handler = (_, payload) => cb(payload)
+    ipcRenderer.on('analysis:optimizeFootageLTX:progress', handler)
+    return () => ipcRenderer.removeListener('analysis:optimizeFootageLTX:progress', handler)
+  },
+
+  /**
+   * Generate a single placeholder fill via Kling i2v on Comfy Cloud.
+   * Extracts a reference frame from the source video at `referenceTcSec`,
+   * uploads it, runs the Kling Omni workflow patched with the prompt +
+   * duration, and downloads the MP4 into `<projectDir>/.reedit/fills/`.
+   * @param {{ placeholderId: string, projectDir: string, sourceVideoPath: string, referenceTcSec: number, prompt: string, durationSec: number, aspectRatio?: string, comfyUrl?: string, apiKey?: string }} options
+   * @returns {Promise<{success: boolean, outputPath?: string, referenceFramePath?: string, modelId?: string, error?: string}>}
+   */
+  generateFill: (options) => ipcRenderer.invoke('analysis:generateFill', options),
+  onGenerateFillProgress: (cb) => {
+    const handler = (_, payload) => cb(payload)
+    ipcRenderer.on('analysis:generateFill:progress', handler)
+    return () => ipcRenderer.removeListener('analysis:generateFill:progress', handler)
+  },
+
+  /**
    * Preview-only mask pass: runs make_mask.py and returns paths to the
    * generated mask / blank videos, skipping ComfyUI + composite. Use to
    * iterate on ROI / threshold / persistence cheaply.

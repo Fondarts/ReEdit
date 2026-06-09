@@ -377,10 +377,13 @@ export { INLINE_BYTE_LIMIT }
 // Embedding 2 is preview-only as of March 2026 — kept separate because
 // it's only used by the embedding calls, never by chatCompletion.
 export const GEMINI_MODELS = [
-  { id: 'gemini-2.5-flash', label: 'Gemini 2.5 Flash', blurb: 'Default for per-shot video analysis. Fast + native video.' },
-  { id: 'gemini-2.5-pro', label: 'Gemini 2.5 Pro', blurb: 'Strongest reasoning in the 2.5 line. Runs in thinking mode by default.' },
-  { id: 'gemini-3-pro', label: 'Gemini 3 Pro', blurb: 'Latest generation. Best narrative + creative reasoning. Requires project access.' },
+  { id: 'gemini-3.5-flash', label: 'Gemini 3.5 Flash', blurb: 'Default. Released May 2026 at I/O — beats 3.1 Pro on agentic + coding. Native video, 1M ctx. $1.50/M in, $9/M out.' },
+  { id: 'gemini-3.1-flash-lite', label: 'Gemini 3.1 Flash Lite', blurb: 'Cheapest 3.x. Use when latency + cost matter more than reasoning depth.' },
+  { id: 'gemini-3-flash-preview', label: 'Gemini 3 Flash (preview)', blurb: 'Older 3.x flash preview, kept for fallback if 3.5 is unstable on your project.' },
+  { id: 'gemini-3-pro', label: 'Gemini 3 Pro', blurb: 'Strongest reasoning in the 3.x line so far. Requires project access.' },
   { id: 'gemini-3-ultra', label: 'Gemini 3 Ultra', blurb: 'Top-tier. Use only when final-cut quality justifies the cost.' },
+  { id: 'gemini-2.5-flash', label: 'Gemini 2.5 Flash', blurb: 'Previous default. Kept for projects pinned to 2.5.' },
+  { id: 'gemini-2.5-pro', label: 'Gemini 2.5 Pro', blurb: 'Older proposer default. Thinking mode by default.' },
 ]
 
 export const GEMINI_EMBEDDING_MODELS = [

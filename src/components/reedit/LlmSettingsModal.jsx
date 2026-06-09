@@ -18,12 +18,13 @@ import {
  * to Electron safeStorage is a todo before this ships externally.
  */
 function LlmSettingsModal({ isOpen, settings, onClose, onSave }) {
-  // Defaults for the two Gemini task-specific models. Analysis runs per
-  // shot → Flash (cheap + fast); Proposal runs once per re-edit with
-  // high quality stakes → Pro. If the user never saved anything, fall
-  // back to those picks the first time the modal opens.
-  const defaultAnalysis = settings?.geminiAnalysisModel || settings?.geminiModel || 'gemini-2.5-flash'
-  const defaultProposal = settings?.geminiProposalModel || 'gemini-2.5-pro'
+  // Defaults for the two Gemini task-specific models. As of May 2026
+  // both default to gemini-3.5-flash — it beats Gemini 3.1 Pro on
+  // agentic + coding benchmarks while staying flash-priced, so there's
+  // no reason to keep the proposer on the older 2.5 Pro thinking model
+  // anymore. Users with persisted overrides keep their picks.
+  const defaultAnalysis = settings?.geminiAnalysisModel || settings?.geminiModel || 'gemini-3.5-flash'
+  const defaultProposal = settings?.geminiProposalModel || 'gemini-3.5-flash'
 
   const [backend, setBackend] = useState(settings?.backend || LLM_BACKENDS.LM_STUDIO)
   const [anthropicModel, setAnthropicModel] = useState(settings?.anthropicModel || ANTHROPIC_MODELS[0].id)
@@ -43,8 +44,8 @@ function LlmSettingsModal({ isOpen, settings, onClose, onSave }) {
     setBackend(settings?.backend || LLM_BACKENDS.LM_STUDIO)
     setAnthropicModel(settings?.anthropicModel || ANTHROPIC_MODELS[0].id)
     setAnthropicApiKey(settings?.anthropicApiKey || '')
-    setGeminiAnalysisModel(settings?.geminiAnalysisModel || settings?.geminiModel || 'gemini-2.5-flash')
-    setGeminiProposalModel(settings?.geminiProposalModel || 'gemini-2.5-pro')
+    setGeminiAnalysisModel(settings?.geminiAnalysisModel || settings?.geminiModel || 'gemini-3.5-flash')
+    setGeminiProposalModel(settings?.geminiProposalModel || 'gemini-3.5-flash')
     setGeminiEmbeddingModel(settings?.geminiEmbeddingModel || GEMINI_EMBEDDING_MODELS[GEMINI_EMBEDDING_MODELS.length - 1].id)
     setGeminiApiKey(settings?.geminiApiKey || '')
     setGeminiSendSourceVideo(Boolean(settings?.geminiSendSourceVideo))

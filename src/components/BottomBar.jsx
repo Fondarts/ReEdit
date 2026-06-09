@@ -1,9 +1,9 @@
 import { useState, useRef, useEffect } from 'react'
-import { Settings, LogOut, Save, FolderOpen, Minus, Maximize2, BookOpen } from 'lucide-react'
+import { Settings, LogOut, Save, FolderOpen, Minus, Maximize2 } from 'lucide-react'
 import useTimelineStore from '../stores/timelineStore'
 import useProjectStore from '../stores/projectStore'
 
-function BottomBar({ onOpenSettings, onOpenGettingStarted, projectName }) {
+function BottomBar({ onOpenSettings, projectName }) {
   const [menuOpen, setMenuOpen] = useState(false)
   const menuRef = useRef(null)
 
@@ -70,11 +70,6 @@ function BottomBar({ onOpenSettings, onOpenGettingStarted, projectName }) {
     await closeProject()
   }
 
-  const handleOpenGettingStarted = () => {
-    setMenuOpen(false)
-    onOpenGettingStarted?.()
-  }
-
   const handleMinimize = () => {
     setMenuOpen(false)
     window.electronAPI?.minimizeWindow?.()
@@ -114,14 +109,16 @@ function BottomBar({ onOpenSettings, onOpenGettingStarted, projectName }) {
         {projectName || 'Untitled'}
       </div>
       <Separator />
-      {/* ComfyStudio - dropdown: Leave, Settings, Project Selection, Save Project (with dividers) */}
+      {/* Kissd ReEdit chip - dropdown: Leave, Settings, Project Selection, Save Project (with dividers).
+          Red brand color matches the Kissd wordmark in the TitleBar so the
+          two app-identity touchpoints read as the same brand. */}
       <div className="relative" ref={menuRef}>
         <button
           onClick={() => setMenuOpen((o) => !o)}
-          className="flex items-center gap-2 px-2 py-1 rounded text-sf-text-muted hover:text-sf-text-primary hover:bg-sf-dark-800 transition-colors"
-          title="ComfyStudio"
+          className="flex items-center gap-2 px-2 py-1 rounded hover:bg-sf-dark-800 transition-colors"
+          title="Kissd ReEdit"
         >
-          <span className="text-[11px] font-semibold text-sf-text-primary">ComfyStudio</span>
+          <span className="text-[11px] font-semibold" style={{ color: '#EC1C24' }}>Kissd ReEdit</span>
         </button>
 
         {menuOpen && (
@@ -132,14 +129,6 @@ function BottomBar({ onOpenSettings, onOpenGettingStarted, projectName }) {
             >
               <LogOut className="w-3.5 h-3.5" />
               Leave
-            </button>
-            <div className="h-px bg-sf-dark-600 my-0.5 mx-2" />
-            <button
-              onClick={handleOpenGettingStarted}
-              className="w-full flex items-center gap-2 px-3 py-2 text-left text-xs text-sf-text-primary hover:bg-sf-dark-700 transition-colors"
-            >
-              <BookOpen className="w-3.5 h-3.5 text-sf-text-muted" />
-              Getting Started
             </button>
             <div className="h-px bg-sf-dark-600 my-0.5 mx-2" />
             <button

@@ -111,7 +111,8 @@ const USER_PROMPT = `Watch this clip end-to-end, including audio if present. Ret
     }
   },
   "cut_type": "Shot boundary character. One of: 'hard_cut', 'match_cut', 'fade', 'dissolve', 'whip_pan', 'motion_blur', 'unknown'.",
-  "tempo_cue": "One of: 'slow', 'mid', 'fast', 'frenetic'."
+  "tempo_cue": "One of: 'slow', 'mid', 'fast', 'frenetic'.",
+  "is_end_card": "boolean. TRUE only when this shot is the ad's end-card / brand-signature frame: a near-static composition whose primary purpose is to display a logo + tagline + (optional) URL / legal-disclaimer line over a flat / minimal background. Symptoms: the camera is essentially locked off, the live-action footage from the rest of the ad has ended, and what's on screen is graphics-first (logo + text occupying the center of attention). Set false for any other shot, including shots where graphics OVERLAY live footage but the live footage is still the main subject (e.g. a lower-third over a driving shot — that's NOT an end-card, it's an overlay on a normal shot)."
 }
 
 Rules:
@@ -223,10 +224,16 @@ export function sceneOriginalClipPath(projectDir, scene) {
 // through here so switching the active version in one place swaps it
 // everywhere else in the same render.
 export function resolveActiveClipPath(scene, projectDir) {
-  const version = scene?.activeOptimizationVersion
+  // Accept the legacy `activeOptimization` (sans "Version") field too —
+  // an earlier Lucky-pipeline build wrote it that way, and projects
+  // saved before the rename keep ignoring their optimized clips until
+  // they re-optimize otherwise. Same goes for `entry.outputPath`
+  // (legacy) vs `entry.path` (canonical).
+  const version = scene?.activeOptimizationVersion || scene?.activeOptimization
   if (version && Array.isArray(scene?.optimizations)) {
     const entry = scene.optimizations.find((o) => o?.version === version)
-    if (entry?.path) return entry.path
+    const candidatePath = entry?.path || entry?.outputPath
+    if (candidatePath) return candidatePath
   }
   return sceneOriginalClipPath(projectDir, scene)
 }
@@ -434,6 +441,13 @@ export async function analyzeSceneVideo(scene, {
     })(),
     cut_type: parsed.cut_type || null,
     tempo_cue: parsed.tempo_cue || null,
+    // True when this shot is the ad's end-card / brand-signature frame.
+    // The optimize pipeline skips these (the whole frame IS the
+    // graphic, "removing" it would leave nothing), and the proposer is
+    // told to keep them as-is. See OptimizeFootageCell.shotHasGraphics
+    // for the filter that prevents the user from running optimize on
+    // an end-card from the UI.
+    is_end_card: Boolean(parsed.is_end_card),
     clipPath,
     rawText,
     model,

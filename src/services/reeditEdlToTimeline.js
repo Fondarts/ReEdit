@@ -32,6 +32,7 @@ import useTimelineStore from '../stores/timelineStore'
 import useProjectStore from '../stores/projectStore'
 import { resolveActiveClipPath, sceneOriginalClipPath } from './reeditVideoAnalyzer'
 import { loadCapabilitySettings } from './reeditCapabilitySettings'
+import { buildActiveVersionPatch } from './placeholderVersions'
 
 // Translate a `row.reframe` into the clip.transform shape the timeline
 // store expects. We don't touch crop* — zoom alone produces the visual
@@ -323,7 +324,7 @@ function registerFrameAsset(sourceVideo, row, candidate) {
 // Register a generated MP4 (from reeditGenerate.js) as a scene-like
 // video asset. Mirrors registerSceneAsset's shape but with a distinct
 // tag so cleanupStaleReeditAssets sweeps both on re-apply.
-function registerGeneratedAsset(sourceVideo, row, generatedPath) {
+function registerGeneratedAsset(sourceVideo, row, generatedPath, { placeholderId, rowArrayIndex } = {}) {
   const assetsStore = useAssetsStore.getState()
   const gen = row.genSpec || {}
   const duration = Math.max(0.1, Number(gen.durationSec) || (Number(row.newTcOut) - Number(row.newTcIn)) || 1.5)
@@ -349,6 +350,10 @@ function registerGeneratedAsset(sourceVideo, row, generatedPath) {
       reeditGeneratedModel: gen.model || null,
       reeditGeneratedPrompt: gen.prompt || row.note || '',
       reeditGeneratedAt: gen.generatedAt || null,
+      // Link back to the placeholder so the Editor's right-click "switch
+      // version" menu can resolve this clip's other generated versions.
+      reeditPlaceholderId: placeholderId || null,
+      reeditPlaceholderRowArrayIndex: rowArrayIndex != null ? rowArrayIndex : null,
     },
   })
 }
@@ -666,6 +671,58 @@ export function swapSceneActiveVersion({ sceneId, version, scene, projectDir, ca
 }
 
 /**
+ * Editor: flip a placeholder clip to a different generated version.
+ * Persists the new active version (genSpec rewrite or fills patch, via
+ * buildActiveVersionPatch) and live-swaps the on-timeline asset so the
+ * preview/MP4 updates without re-applying the whole EDL. Modelled on
+ * swapSceneActiveVersion. Returns true when the project state changed.
+ */
+export async function swapPlaceholderActiveVersion({ rowArrayIndex, versionId }) {
+  if (rowArrayIndex == null || !versionId) return false
+  const projectStore = useProjectStore.getState()
+  const project = projectStore.currentProject
+  if (!project) return false
+
+  const result = buildActiveVersionPatch({ project, rowArrayIndex, versionId })
+  if (!result || !result.activePath) return false
+
+  // Persist the active-version flip (fills map or proposal.edl rewrite).
+  await projectStore.saveProject(result.patch)
+
+  // Live-swap the on-timeline asset. registerGeneratedAsset tags it with
+  // reeditPlaceholderRowArrayIndex / reeditPlaceholderId at Apply time.
+  const assetsStore = useAssetsStore.getState()
+  const timelineStore = useTimelineStore.getState()
+  const asset = (assetsStore.assets || []).find(
+    (a) => a?.settings?.reeditPlaceholderRowArrayIndex === rowArrayIndex
+      || (result.pid && a?.settings?.reeditPlaceholderId === result.pid)
+  )
+  if (!asset) return true   // nothing on the timeline yet; project state is updated
+
+  const newDur = Math.max(0.1, Number(result.activeDurationSec) || asset.duration || 1.5)
+  const newUrl = toFileUrl(result.activePath)
+  assetsStore.updateAsset(asset.id, {
+    url: newUrl,
+    path: result.activePath,
+    absolutePath: result.activePath,
+    duration: newDur,
+    settings: { ...asset.settings, duration: newDur },
+  })
+
+  // Re-point every clip on this asset at the full new file length.
+  const clips = (timelineStore.clips || []).filter((c) => c.assetId === asset.id)
+  for (const clip of clips) {
+    timelineStore.updateClipTrim?.(clip.id, {
+      sourceDuration: newDur,
+      trimStart: 0,
+      trimEnd: newDur,
+      duration: newDur,
+    })
+  }
+  return true
+}
+
+/**
  * Called when the user swaps the source video. Anything on a video
  * track is derived from (and scoped to) the old source — leaving it
  * behind just confuses the Editor view once the new analysis runs.
@@ -718,6 +775,12 @@ export async function applyEdlToTimeline({
   // imported shot in instead of a source-ad shot). Required when the
   // `useAdditionalAssets` capability is on; ignored otherwise.
   additionalAssets = null,
+  // Generated placeholder fills produced by `reeditFills.generateFillsForProposal`.
+  // Map of `placeholderId → { path, modelId, createdAt, ... }`. When a
+  // placeholder row has an entry here we drop the rendered MP4 onto
+  // the timeline as a real video clip; otherwise the row falls back
+  // through the existing genSpec / frame / card cascade below.
+  fills = null,
 } = {}) {
   if (!Array.isArray(edl) || edl.length === 0) {
     throw new Error('EDL is empty.')
@@ -825,12 +888,23 @@ export async function applyEdlToTimeline({
       // what would actually get generated.
       const maxGenDur = Math.max(0.5, Number(loadCapabilitySettings()?.footageGeneration?.maxDurationSec) || 4)
       const gapDur = Math.min(maxGenDur, Math.max(0.5, declaredGap || 1.5))
-      // `useGeneratedVideos: false` lets the user preview / ship the
-      // re-edit with the frame stills instead of the AI-generated
-      // motion — handy when the i2v output feels off but the
-      // composition of the chosen first frame is still good. The
-      // video files stay on disk and the toggle is fully reversible.
-      const generatedPath = useGeneratedVideos ? row.genSpec?.generatedPath : null
+      // Resolve which generated MP4 to drop on the timeline. Both
+      // backends can leave one behind:
+      //   - cloud fills (reeditFills.js / Kling) on `fills['placeholder-i']`
+      //   - local i2v (reeditGenerate.js)        on `row.genSpec.generatedPath`
+      // Whichever was generated more recently wins, so re-generating in
+      // one backend doesn't get silently overruled by a stale render in
+      // the other. `useGeneratedVideos: false` is still an explicit
+      // opt-out: it drops the genSpec video so frame stills land instead.
+      const fillId = `placeholder-${i}`
+      const klingFill = (fills && fills[fillId]) || null
+      const klingFillPath = klingFill?.path || null
+      const klingTs = klingFill?.createdAt ? Date.parse(klingFill.createdAt) || 0 : 0
+      const genPath = useGeneratedVideos ? (row.genSpec?.generatedPath || null) : null
+      const genTs = row.genSpec?.generatedAt ? Date.parse(row.genSpec.generatedAt) || 0 : 0
+      const generatedPath = klingFillPath && genPath
+        ? (genTs >= klingTs ? genPath : klingFillPath)
+        : (klingFillPath || genPath)
       const candidates = Array.isArray(row.genSpec?.frameCandidates) ? row.genSpec.frameCandidates : []
 
       // Helper — applies the row's COLOR directive (if any) to the clip
@@ -847,7 +921,10 @@ export async function applyEdlToTimeline({
         // EDL row's declared gap; honor the clip's actual length via
         // trimEnd so playback doesn't try to read past EOF.
         const actualDur = Math.max(0.1, Number(row.genSpec?.durationSec) || gapDur)
-        const asset = registerGeneratedAsset(sourceVideo, row, generatedPath)
+        const asset = registerGeneratedAsset(sourceVideo, row, generatedPath, {
+          placeholderId: row.fillId || fillId,
+          rowArrayIndex: i,
+        })
         const clip = timelineStore.addClip(videoTrack.id, asset, cursor, null, {
           duration: actualDur,
           trimStart: 0,
@@ -1280,6 +1357,29 @@ export async function applyEdlToTimeline({
         ? Math.max(0, (slack - autoHeadPad) / picked.length)
         : 0
 
+      // Gemini's segment timestamps mark phoneme onset late on purpose
+      // and phoneme offset early (its segmentation is centered on the
+      // "vocalised" part of the word, not the breath / fricative attack
+      // that precedes it nor the trailing consonant / release that
+      // follows). Trimming exactly at `seg.startSec` / `seg.endSec`
+      // consistently clips ~150-350 ms off BOTH ends of every line —
+      // sounds like the line "starts on the second word" AND swallows
+      // the last consonant. Four-pronged fix:
+      //   1. HEAD_PAD pulls trimStart earlier into the stem so the
+      //      lead-in actually gets included in the clip.
+      //   2. TAIL_PAD pushes trimEnd later into the stem so the trailing
+      //      consonant / release isn't swallowed.
+      //   3. SOFT_FADE_IN adds a short fade so any residual abrupt edge
+      //      at the very start of the clip sounds intentional, not a
+      //      jump cut. Even if HEAD_PAD over-shoots into silence, the
+      //      fade keeps the entrance smooth.
+      //   4. SOFT_FADE_OUT mirrors that on the trailing edge.
+      // Both pads are capped per-segment by the gap to the neighbouring
+      // segment to avoid pulling audio out of an adjacent line.
+      const HEAD_PAD = 0.35
+      const TAIL_PAD = 0.35
+      const SOFT_FADE_IN = 0.06
+      const SOFT_FADE_OUT = 0.06
       let voCursor = 0
       for (let segIdx = 0; segIdx < picked.length; segIdx++) {
         const seg = picked[segIdx]
@@ -1304,11 +1404,35 @@ export async function applyEdlToTimeline({
         // tail segment so it ends exactly at totalReeditDur.
         const remaining = totalReeditDur - voCursor
         if (remaining <= 0.05) break
-        const segDur = Math.min(fullSegDur, remaining)
+        // Head-pad: shift trimStart earlier into the source stem so we
+        // hear the breath/onset preceding the marked start.
+        // Tail-pad: push trimEnd later into the source stem so the
+        // trailing consonant / release isn't swallowed.
+        // Cap both pads so they can't reach into a neighbouring
+        // segment — otherwise back-to-back lines would overlap each
+        // other inside the source stem and we'd hear two voices.
+        const rawStart   = Number(seg.startSec) || 0
+        const rawEnd     = Number(seg.endSec)   || (rawStart + fullSegDur)
+        const prevEnd    = segIdx > 0
+          ? (Number(picked[segIdx - 1].endSec) || 0)
+          : 0
+        const nextStart  = segIdx < picked.length - 1
+          ? (Number(picked[segIdx + 1].startSec) || stemNaturalDur)
+          : stemNaturalDur
+        const headRoom   = Math.max(0, rawStart - prevEnd)
+        const tailRoom   = Math.max(0, nextStart - rawEnd)
+        const allowedHead = Math.min(HEAD_PAD, headRoom)
+        const allowedTail = Math.min(TAIL_PAD, tailRoom)
+        const padStart   = Math.max(0, rawStart - allowedHead)
+        const padEnd     = Math.min(stemNaturalDur, rawEnd + allowedTail)
+        const wantedDur  = padEnd - padStart       // fullSegDur + head + tail
+        const segDur     = Math.min(wantedDur, remaining)
         tlStore.addClip(track.id, asset, voCursor, null, {
           duration: segDur,
-          trimStart: Number(seg.startSec),
-          trimEnd: Number(seg.startSec) + segDur,
+          trimStart: padStart,
+          trimEnd: padStart + segDur,
+          fadeIn:  Math.min(SOFT_FADE_IN,  segDur / 3),
+          fadeOut: Math.min(SOFT_FADE_OUT, segDur / 3),
           saveHistory: false,
           selectAfterAdd: false,
         })
@@ -1337,13 +1461,13 @@ export async function applyEdlToTimeline({
     }
   }
 
-  // Auto-duck the music under VO. Walks the placed clips, finds the
-  // music clip(s) and the VO clips, splits each music clip into
-  // alternating segments (full-volume where there's no VO, ducked
-  // where there is) with short fades at the boundaries. Cheap, no
-  // engine changes — just multiple clips referencing the same asset
-  // with different gainDb values.
-  applyMusicDuckingForVO()
+  // Auto-duck disabled per user request — music stays at native
+  // gain across the whole track. The previous implementation split
+  // the music clip into alternating -6 dB / 0 dB intervals around
+  // every VO line; user prefers to hand-mix later instead of the
+  // automatic broadcast-style duck. `applyMusicDuckingForVO` is
+  // kept (no-op return inside it) so the call site here stays
+  // small if we ever turn it back on behind a capability flag.
 
   onProgress?.({ index: total, total, done: true })
   return { placed, placeholdersPlaced, skippedMissingScene, stemsPlaced }
@@ -1357,6 +1481,13 @@ export async function applyEdlToTimeline({
 // music clip from scratch and re-runs this — so editing the VO
 // segments + re-applying refreshes the duck shape.
 function applyMusicDuckingForVO() {
+  // Disabled. User wants the music track to play at its native gain
+  // for the full duration regardless of VO overlap. Hand-mix later in
+  // the editor if a duck is needed for a specific shot. Body kept
+  // intact below in case we need to revive it behind a capability
+  // flag — `return` here makes the whole effect a no-op.
+  return
+  // eslint-disable-next-line no-unreachable
   const tlStore = useTimelineStore.getState()
   const assetsStore = useAssetsStore.getState()
   const allClips = tlStore.clips || []

@@ -126,16 +126,37 @@ When the user has imported the Sundogs PDF report for this commercial, its findi
   },
 ]
 
+// ─── Editable rule templates ───────────────────────────────────────
+//
+// The proposer prompt is split into ~12 blocks; some are pure data
+// (shot log, sundogs report, voiceover script, budget math) and some
+// are static text rules (role, editing craft, placeholder quality,
+// output schema). The user can override the static-text blocks from
+// the Instructions panel and save the overrides as a rule preset that
+// follows them across projects. Each `rules?.<key>` below is used
+// when present; otherwise we fall back to the DEFAULT_* exported
+// here.
+//
+// `{{footageRoleAddendum}}` is the only placeholder we honour inside
+// an editable block — it resolves to the footage-generation clause
+// based on the capability flag, keeping that branch from drifting out
+// of sync with the rest of the prompt.
+
+export const DEFAULT_SYSTEM_ROLE = `You are a senior advertising creative director helping to re-edit an existing commercial {{footageRoleAddendum}}. You work from a shot log and return a concrete, ordered edit decision list (EDL) with per-shot rationale. You return ONLY a JSON object, no commentary, no markdown fences.`
+
 // System prompt varies with the footage-generation capability: if the
 // user doesn't allow AI fill shots, it would be contradictory (and
 // often confusing to the model) to advertise them in the role
 // description. The rest of the brief stays identical regardless.
-function buildSystemPrompt(capabilities) {
+export function buildSystemPrompt(capabilities, { rules } = {}) {
   const allowFill = Boolean(capabilities?.footageGeneration)
   const roleTail = allowFill
     ? 'using only its already-filmed shots plus, when a structural gap truly requires it, a few AI-generated placeholder shots you explicitly propose'
     : 'using only its already-filmed shots — you cannot add, generate, or invent new footage'
-  return `You are a senior advertising creative director helping to re-edit an existing commercial ${roleTail}. You work from a shot log and return a concrete, ordered edit decision list (EDL) with per-shot rationale. You return ONLY a JSON object, no commentary, no markdown fences.`
+  const template = (typeof rules?.systemRole === 'string' && rules.systemRole.trim())
+    ? rules.systemRole
+    : DEFAULT_SYSTEM_ROLE
+  return template.replace(/\{\{\s*footageRoleAddendum\s*\}\}/g, roleTail)
 }
 
 // A scene is eligible for the proposal when the user hasn't excluded
@@ -173,8 +194,21 @@ export function formatSceneBlock(scene) {
   // shot that will actually play on the timeline, so the LLM's mental
   // model should match that reality (e.g. a shot with its CTA removed
   // is now available to reuse in places it wasn't before).
-  if (scene.activeOptimizationVersion) {
-    lines.push(`Optimized: ${scene.activeOptimizationVersion} — on-screen graphics (text / logo overlays) have been removed via Wan VACE; the Graphics block below describes the ORIGINAL overlays, which are no longer visible on the active clip.`)
+  // Accept both the canonical `activeOptimizationVersion` and the
+  // legacy `activeOptimization` (sans suffix) field — projects whose
+  // Optimize pass was run via an older Lucky-pipeline build still
+  // carry the legacy name and the proposer needs to know the clip
+  // has been cleaned.
+  const activeOptVersion = scene.activeOptimizationVersion || scene.activeOptimization
+  if (activeOptVersion) {
+    lines.push(`Optimized: ${activeOptVersion} — on-screen graphics (text / logo overlays) have been removed; the Graphics block below describes the ORIGINAL overlays, which are no longer visible on the active clip.`)
+  }
+  // End-card frames are sacred: they ARE the brand sign-off. The
+  // optimize pass skips them, and the proposer must reuse them
+  // verbatim if it wants the end-card beat at all. Do not REFRAME,
+  // COLOR, EXTEND, or otherwise alter an end-card shot.
+  if (va?.is_end_card) {
+    lines.push(`End-card: TRUE — this shot is the ad's brand-signature frame. Use it AS-IS in the cut: do not annotate it with REFRAME, COLOR, EXTEND, or any directive. If the metric calls for ending on the brand, place this row last with no modifications. If you don't need a brand sign-off, simply omit this shot. Never propose generating a replacement end-card via a placeholder.`)
   }
 
   const visual = va.visual || scene.caption || st.visual
@@ -627,16 +661,29 @@ function renderCapabilitiesBlock(capabilities) {
   const allowFaces = kn?.footageGeneration?.allowFaces !== false
   const allowText = Boolean(kn?.footageGeneration?.allowText)
   const genFilterLines = [
-    allowProducts ? null : 'You MUST NOT propose placeholder shots whose subject is a product, packaging, or product label. Skip any idea that requires generating a product shot.',
-    allowFaces ? null : 'You MUST NOT propose placeholder shots whose subject is a human face (actors, drivers, close-ups of faces). Describe hands, silhouettes, or environment-level shots instead when brand presence calls for a human beat.',
-    allowText ? null : 'You MUST NOT propose placeholder shots that require on-screen text, titles, taglines, or wordmarks — text generation is unreliable. If a beat needs to SAY something, write the note so it\'s conveyed through imagery alone.',
+    allowProducts
+      ? null
+      : 'HARD BAN — PRODUCTS + BRANDING. You MUST NOT propose any placeholder whose subject, foreground, or focal element is a product, product part (steering wheel, grille, badge, car body, packaging, label, screen, device), brand logo, brand mark, or branded surface. If the original brief talks about the product, find a way to suggest it through CONTEXT (the road, the driver\'s reaction, the environment), not through a generated shot of the product itself. The image generator misrenders products and brand marks; every output here would be a discardable shot. When in doubt, skip the placeholder entirely — fewer, safer placeholders is better than a logo-fake.',
+    allowFaces
+      ? null
+      : 'You MUST NOT propose placeholder shots whose subject is a human face (actors, drivers, close-ups of faces). Describe hands, silhouettes, or environment-level shots instead when a human beat is needed.',
+    allowText
+      ? null
+      : 'HARD BAN — TEXT + GRAPHICS. You MUST NOT propose placeholder shots that contain any of: on-screen text, titles, taglines, wordmarks, lower thirds, supers, end-cards, logo cards, brand-signature frames, callouts, captions, graphic overlays, animated typography, or any compositing element a motion designer would normally add in post. The model can\'t spell or align graphics reliably. If the beat needs to "deliver a brand signature" or "land the headline", write the note as a pure cinematic image (e.g. "tail-lights disappearing into a sunset"), NOT as a graphic. End-cards in particular are forbidden — never propose one as a placeholder; if the cut needs an end-card the post team will composite one over the last shot.',
   ].filter(Boolean).map((line) => `      ${line}`).join('\n')
   const lines = []
   lines.push('# Capabilities (HARD RULES — respect exactly)')
   lines.push(c.footageGeneration
     ? [
         `- Footage generation: ENABLED. You MAY add 1–3 \`placeholder\` rows to fill structural gaps, as specified in the output schema below.`,
-        `      Each placeholder shot is capped at **${maxGenDurSec.toFixed(1)} s maximum** — longer generated footage drifts. Do NOT propose placeholders longer than this.`,
+        `      Each placeholder is HARD-CAPPED at **${maxGenDurSec.toFixed(1)} s** — longer generated footage drifts and starts looking AI-rendered. Treat the cap as a CEILING, not a target.`,
+        `      Pick the SHORTEST duration that serves the beat. Sweet spot for ad intercuts is **1.0–2.0 s**; reserve 2.5–3 s ONLY when a held look or a slow camera move genuinely needs the breath. Default to 1.5 s when uncertain. Long placeholders age faster than short ones — short, decisive placeholders read more cinematic.`,
+        `      EVERY placeholder MUST carry a \`referenceFrame\` field naming an existing shot to copy the visual style from. The downstream Kling image-to-video model uses that frame as the reference image, so the generated clip stays consistent with the rest of the cut.`,
+        `      Pick the reference deliberately:`,
+        `        * If the placeholder is a CONTINUATION of the previous shot (same scene, same moment, beat extension): set \`referenceFrame.sourceSceneId\` to the shot that ENDS just before the placeholder, with \`framePosition: "end"\`.`,
+        `        * If the placeholder bridges INTO the next shot: use the next shot with \`framePosition: "start"\`.`,
+        `        * If the placeholder is its OWN beat / a new mini-scene: pick the shot whose lighting + setting most closely matches the look you want (use the structured Visual / Lighting / Color fields from the shot log) and use \`framePosition: "middle"\`.`,
+        `      Always pick a referenceFrame from a shot that EXISTS in the shot log — never null. The generated fill will steal that frame's palette, lighting, and (when applicable) subject, so choose carefully.`,
         genFilterLines || null,
       ].filter(Boolean).join('\n')
     : '- Footage generation: DISABLED. You MUST NOT propose any `placeholder` rows. Every row in the EDL must be `kind: "original"` and reference a scene that exists in the shot log.')
@@ -901,7 +948,98 @@ export function renderSundogsReport(report) {
 ${sections.join('\n')}`
 }
 
-function buildUserPrompt({ scenes, brandBrief, extraInstructions, metric, totalDurationSec, targetDurationSec, criteria, correctionNote, capabilities, adConcept, voSegments, generatedVoiceover, generatedMusic, additionalAssets, sundogsReport }) {
+// General editing-craft principles. These apply to every re-edit
+// regardless of metric, framework, or capability flags — sloppy cuts
+// erode the same Attention / Comprehension / Persuasion / Action we
+// are trying to lift, no matter which framework is active. The block
+// is deliberately framed as a rulebook the LLM applies WHILE reading
+// the shot log: every bullet names the structured fields (Motion,
+// Subject, Cinematography.shot_size, etc.) the proposer should
+// consult to make the call, so the rules ground out in concrete
+// data instead of abstract editor-speak. Sourced from a creative-
+// director skill brief, translated to English to match the rest of
+// the system message.
+export const DEFAULT_EDITING_CRAFT = `Professional editing principles. Apply them while ordering shots and writing notes, using the shot log's \`Motion\`, \`Subject\`, and \`Cinematography\` lines as the data you reason over.
+
+- **Jump cuts** — use them to tighten pacing, sustain attention on VO-driven beats, or reinforce a modern / social tone. Avoid them when they break a continuous action mid-gesture, make the subject look erratic without intent, or read as a mistake. When the natural jump would be clumsy, cover it: cut to a different shot scale of the same subject, an environment / B-roll insert, a clean detail, or a motion-motivated cut. A visible-but-functional jump cut is fine; one that reads as an accident is not.
+- **180° / screen direction** — keep eyeline and movement direction consistent across cuts. Read each shot's \`Subject\` bbox (left- vs right-of-frame) and \`Motion.subject\` direction: a subject exiting frame-right should re-enter the next shot from frame-left, never from the same side (that reads as a reversal). Break the axis only with intent — for impact, deliberate disorientation, or when a neutral / movement-bridging shot sits between the two opposing-direction shots.
+- **Cut on motion** — a cut that lands MID-gesture or mid-camera-move feels invisible; a cut between two static beats feels like a bump. Pair shots whose \`Motion\` and \`Cinematography.camera_movement_quality\` continue across the boundary (handheld → handheld, push-in → push-in, tracking-left → tracking-left).
+- **Action continuity** — when a real-world action begins on shot N and continues on shot N+1, character position, hand / prop position, and energy level have to match. Source-ad mismatches are unavoidable in a re-edit, so when continuity would break, INSERT a cutaway between the two shots (different shot scale of the same subject, a related detail, an environment insert) instead of slamming them together. Use \`shot_size\` and \`framing\` to find a safe insert candidate in the shot log.
+- **Camera continuity** — do not slam-cut between two camera moves that fight each other (right-pan into left-pan, fast push-in into slow pull-back, locked-off into frantic handheld) unless that contradiction IS the point. Resolve the conflict with a static / neutral shot between them, or cut to a different angle of the same beat. Match-energy cuts read as deliberate; cross-energy cuts need a narrative reason.
+- **Rhythm with intent** — rhythm follows emotional intent, not mechanics. Earn density (faster scenes-per-second) on product reveals, high-energy beats, and information-dense sections; earn held shots on human, emotional, and persuasion beats. Do not blanket-accelerate every cut — frantic ≠ engaging, and a wall of sub-second cuts reads as nervous, not modern.
+- **Hook in the first 1–3s** — the opening row's pull compounds across the whole watch. Lead with the single strongest visual moment available, a provocative VO line, an immediate visible result / transformation, a human reaction (face, body language), a product-in-use action, a recognisable problem the audience identifies with, or a concrete promise. Avoid opening on a logo card, a slow establishing shot, or context that delays the point — these bleed audience before the message lands.
+- **No churn** — do not reorder for the sake of reordering, and do not chase visible difference from the source cut as a goal in itself. If a sequence in the original already serves the metric well, keep it. The proposal is judged by what it improves, not by how different it looks from the original. Equally, do not keep a weak shot just because it was in the original — strength of filming is not a reason to retain a shot that drags the metric.`
+
+function renderEditingCraftBlock(rulesOverride) {
+  const body = (typeof rulesOverride === 'string' && rulesOverride.trim())
+    ? rulesOverride
+    : DEFAULT_EDITING_CRAFT
+  return `\n\n# Editing craft (cut-quality rules — apply on every ordering decision)\n${body}`
+}
+
+// Default text of the "Return ONLY a JSON object" block — schema example + rules.
+// `{{metric}}` is replaced at build time with the active metric name so the
+// rationale-template line stays correct even when the user edits the rest.
+export const DEFAULT_OUTPUT_RULES = `Return ONLY a JSON object in this schema:
+
+{
+  "rationale": "2–4 sentence overall strategy explaining how this re-edit improves {{metric}}.",
+  "edl": [
+    {
+      "index": 1,
+      "kind": "original",
+      "sourceSceneId": "scene-001",
+      "newTcIn": 0.00,
+      "newTcOut": 2.00,
+      "note": "1 sentence on why this shot is here at this timecode (rationale, not a prompt)."
+    },
+    {
+      "index": 2,
+      "kind": "placeholder",
+      "sourceSceneId": null,
+      "newTcIn": 2.00,
+      "newTcOut": 3.50,
+      "note": "Close-up of a hand gripping a black leather steering wheel with the chrome Honda logo centered in-frame; subtle tilt-up as the grip tightens; golden-hour warm side-light; shallow depth of field with the dashboard softly out of focus.",
+      "referenceFrame": { "sourceSceneId": "scene-003", "framePosition": "end" }
+    }
+  ]
+}
+
+Rules:
+- "original" rows must reference a sourceSceneId that exists in the shot log.
+- "placeholder" rows have sourceSceneId: null AND a required referenceFrame object pointing to an existing shot (see the Capabilities block above for how to choose it). framePosition is one of "start" | "middle" | "end".
+- Consecutive rows must be contiguous (newTcIn of row N+1 equals newTcOut of row N).
+- First row starts at 0.
+- JSON only. No prose around the JSON. No markdown fences.`
+
+export const DEFAULT_PLACEHOLDER_QUALITY = `PLACEHOLDER QUALITY (critical — these notes are fed directly to a video-generation model that has NO access to the rest of the cut or to any other shot. The note is the model's ENTIRE world.):
+- Write each placeholder's note as a concrete DIRECTOR'S SHOT INSTRUCTION, not a meta description ("add a shot of X" is forbidden).
+- **SELF-CONTAINED — HARD RULE.** The downstream i2v model only sees this single string. Phrases like "matching the surrounding shots", "same look as the previous scene", "continuing the previous camera move", "in keeping with the rest of the edit", "consistent with the cut", "as established earlier" are FORBIDDEN — they evaluate to nothing for the model and waste tokens. INLINE every visual detail you'd want the model to copy. If the prior shot is a cold-blue twilight handheld push-in on a rocky ridge, write that out: "cold blue twilight, handheld micro-shake, slow forward push, rocky alpine ridge in fog". Never refer to another shot — describe its properties directly inside this note.
+- **Style anchor — REQUIRED first clause.** Open every note with the rendering register so the i2v model latches onto it before anything else. Pick from (or combine): "realistic, cinematic", "high-contrast commercial polish", "documentary handheld grit", "moody anamorphic film look", "glossy product hero", "dynamic action-cam energy", "soft naturalistic ad cinematography". Do NOT write "matching the surrounding look" — name the look itself.
+- **Camera-motion continuity — REQUIRED, inlined.** Read the Motion field of the shots IMMEDIATELY BEFORE and AFTER this placeholder in the EDL. Translate that continuity into CONCRETE motion words inside this note. Never sandwich a locked-off static shot between two dynamic shots, or drop a high-motion shot between two contemplative locked frames. Rules of thumb:
+        * If both neighbours are MOVING (push-in, pan, dolly, handheld): write the exact compatible move ("slow forward dolly, gentle handheld breath, left-to-right drift at walking pace") — do NOT write "match the previous shot's movement".
+        * If both neighbours are STATIC / LOCKED: write "locked-off, tripod-stable, no camera movement" or "barely-perceptible 1% drift". Never describe motion you don't want.
+        * If neighbours DIFFER (static → dynamic, or vice versa): write a bridge in concrete terms ("starts locked-off then builds into a confident forward push at the halfway mark").
+- **Inline the look itself, never reference other shots.** Include explicit values for: lighting (key direction, hardness, color temperature in K or words like "warm tungsten 3200K", "overcast 6500K", "magic-hour orange", "moonlit cyan"), color palette (2-4 dominant colors), atmosphere (haze / clear / smoke / rain), lens feel ("anamorphic flare", "telephoto compression", "wide 24mm distortion", "shallow depth of field"), grain/texture if relevant.
+- After style + motion + look, include: subject + action, framing (ECU / close-up / medium / wide / aerial), motion intensity + direction, time of day.
+- 35–70 words per note. Concrete nouns + verbs, never adjectives like "cool", "epic", "beautiful", "stunning". Specific over evocative ("a winding mountain road at golden hour with low fog drifting across the asphalt, slow forward dolly at 5km/h, warm amber 3000K key from camera-left, shallow depth of field on the centre line" beats "cool-looking landscape shot matching the surrounding mood").
+- HARD BAN, restated for emphasis: NO products, NO brand logos / marks / badges / wordmarks, NO close-ups of branded surfaces (steering wheels, grilles, packaging, screens). NO on-screen text, NO end-cards, NO graphic overlays. NO faces if face-generation is disabled above. These rules override anything the brief or the metric framework says — products and graphics are out of scope for generated placeholders.
+- Generated placeholders are CONTEXT cuts: landscapes, environments, hands, silhouettes, atmospheres, abstract motion (light rays, dust, wind in grass), aerial reveals, weather, time-of-day shifts. They exist to set mood / bridge beats / extend a moment — NEVER to be the hero shot.
+- If you can't write a placeholder that obeys these rules, return one fewer placeholder. Quality over quota.
+- Banned referential phrases (auto-rejected): "matching", "as in", "consistent with", "continuing", "in keeping with", "same look as", "established earlier", "the rest of the cut", "the surrounding shots". Also banned content-wise: "generic brand shot", "establishing shot", "product hero", "cutaway", "end-card", "brand signature".
+- If the same placeholder intent repeats, vary the angle/framing so the final edit doesn't feel looped.`
+
+// Bundled rule-preset defaults — exposed so the Instructions panel can
+// hydrate its textareas with the factory copy and so the proposer can
+// reach for the same strings when no preset is active.
+export const DEFAULT_RULES = {
+  systemRole: DEFAULT_SYSTEM_ROLE,
+  editingCraft: DEFAULT_EDITING_CRAFT,
+  placeholderQuality: DEFAULT_PLACEHOLDER_QUALITY,
+  outputRules: DEFAULT_OUTPUT_RULES,
+}
+
+export function buildUserPrompt({ scenes, brandBrief, extraInstructions, metric, totalDurationSec, targetDurationSec, criteria, correctionNote, capabilities, adConcept, voSegments, generatedVoiceover, generatedMusic, additionalAssets, sundogsReport, strictDuration, rules }) {
   const shotLog = renderShotLog(scenes)
   // Alternative footage block — only rendered when the capability is
   // on. The block is appended after the main shot log so the LLM treats
@@ -927,8 +1065,15 @@ function buildUserPrompt({ scenes, brandBrief, extraInstructions, metric, totalD
   const userKnobs = loadCapabilitySettings()
   const maxExtendSecForBudget = Number(userKnobs?.footageExtend?.maxExtendSec) || 2.0
   if (Number.isFinite(targetDurationSec) && targetDurationSec > 0) {
-    const lo = Math.max(1, targetDurationSec * 0.85)
-    const hi = targetDurationSec * 1.15
+    // Strict mode = the user asked for an EXACT duration. We shrink the
+    // acceptable window from ±15 % to ±3 % so the LLM treats the target
+    // as a hard target, not a hint. The correction retry below uses the
+    // same tightness, and the failure mode is much more honest: a 30 s
+    // strict request that the LLM tries to satisfy with a 24 s EDL will
+    // fire a correction round instead of silently passing.
+    const tolPct = strictDuration ? 0.03 : 0.15
+    const lo = Math.max(1, targetDurationSec * (1 - tolPct))
+    const hi = targetDurationSec * (1 + tolPct)
     const gapSec = targetDurationSec - totalNatural
     const needsMoreSec = gapSec > totalNatural * 0.05  // > 5% short
     // Budget for what EXTEND alone can buy: max +Xs per eligible
@@ -964,8 +1109,11 @@ function buildUserPrompt({ scenes, brandBrief, extraInstructions, metric, totalD
     if (extendAllowed) tools.push(`EXTEND seconds (max +${maxExtendSecForBudget.toFixed(1)}s per shot)`)
     if (placeholdersAllowed) tools.push('placeholder rows')
 
+    const headline = strictDuration
+      ? `**HARD BUDGET (STRICT) — ${targetDurationSec.toFixed(1)}s total, EXACT. Acceptable window ${lo.toFixed(1)}–${hi.toFixed(1)}s (±${(tolPct * 100).toFixed(0)} %). The user explicitly turned on STRICT DURATION — landing 5+ s under target is a HARD FAILURE, not a "close enough". If your toolset can't hit the budget, add more EXTEND seconds and/or more placeholder rows until the sum lands inside the window. Do NOT under-shoot for the sake of a "cleaner" cut.**`
+      : `**HARD BUDGET — ${targetDurationSec.toFixed(1)}s total (acceptable ${lo.toFixed(1)}–${hi.toFixed(1)}s).**`
     const lines = [
-      `**HARD BUDGET — ${targetDurationSec.toFixed(1)}s total (acceptable ${lo.toFixed(1)}–${hi.toFixed(1)}s).**`,
+      headline,
       `You have ${eligibleScenes.length} scenes, ${totalNatural.toFixed(1)}s of source footage, average ${avgDur.toFixed(2)}s per shot.`,
       `Each row's on-timeline duration = source-scene length${extendAllowed ? ' + any EXTEND seconds you flag (capped at +' + maxExtendSecForBudget.toFixed(1) + 's per shot)' : ''}.`,
       gapLine,
@@ -1029,11 +1177,31 @@ function buildUserPrompt({ scenes, brandBrief, extraInstructions, metric, totalD
     ? renderGeneratedMusicBlock(generatedMusic)
     : ''
 
+  // Editing-craft block — universal rules about cut quality (jump
+  // cuts, 180° line, cut-on-motion, continuity, hook, rhythm). Sits
+  // right after the capabilities so the LLM has both the WHAT (tools)
+  // and the HOW (craft) loaded before it starts scoring shots.
+  // Overridable via `rules.editingCraft`.
+  const editingCraftBlock = renderEditingCraftBlock(rules?.editingCraft)
+
+  // Output schema + Rules + Placeholder quality blocks — all editable
+  // via `rules.outputRules` / `rules.placeholderQuality`. Default copy
+  // lives in the DEFAULT_* exports above. `{{metric}}` placeholder in
+  // the output rules resolves to the active metric so the rationale
+  // template stays correct.
+  const outputRulesBody = (typeof rules?.outputRules === 'string' && rules.outputRules.trim())
+    ? rules.outputRules
+    : DEFAULT_OUTPUT_RULES
+  const outputRulesBlock = outputRulesBody.replace(/\{\{\s*metric\s*\}\}/g, String(metric))
+  const placeholderQualityBlock = (typeof rules?.placeholderQuality === 'string' && rules.placeholderQuality.trim())
+    ? rules.placeholderQuality
+    : DEFAULT_PLACEHOLDER_QUALITY
+
   return `# Goal
 Re-edit this commercial to improve its ${metric} score.${framework}${sundogsBlock}
 
 # Brand brief
-${brandBrief?.trim() || '(not provided — infer from the shot log)'}${extraBlock}${adConceptBlock}${voScriptBlock}${musicBedBlock}${capabilitiesBlock}
+${brandBrief?.trim() || '(not provided — infer from the shot log)'}${extraBlock}${adConceptBlock}${voScriptBlock}${musicBedBlock}${capabilitiesBlock}${editingCraftBlock}
 
 # Shot log (from the current cut)
 Each shot below is a multi-line block separated by \`---\`:
@@ -1054,44 +1222,9 @@ Propose a new edit decision list that improves ${metric}. The tools available to
 
 ${budget}
 
-Return ONLY a JSON object in this schema:
+${outputRulesBlock}
 
-{
-  "rationale": "2–4 sentence overall strategy explaining how this re-edit improves ${metric}.",
-  "edl": [
-    {
-      "index": 1,
-      "kind": "original",
-      "sourceSceneId": "scene-001",
-      "newTcIn": 0.00,
-      "newTcOut": 2.00,
-      "note": "1 sentence on why this shot is here at this timecode (rationale, not a prompt)."
-    },
-    {
-      "index": 2,
-      "kind": "placeholder",
-      "sourceSceneId": null,
-      "newTcIn": 2.00,
-      "newTcOut": 3.50,
-      "note": "Close-up of a hand gripping a black leather steering wheel with the chrome Honda logo centered in-frame; subtle tilt-up as the grip tightens; golden-hour warm side-light; shallow depth of field with the dashboard softly out of focus."
-    }
-  ]
-}
-
-Rules:
-- "original" rows must reference a sourceSceneId that exists in the shot log.
-- "placeholder" rows have sourceSceneId: null.
-- Consecutive rows must be contiguous (newTcIn of row N+1 equals newTcOut of row N).
-- First row starts at 0.
-- JSON only. No prose around the JSON. No markdown fences.
-
-PLACEHOLDER QUALITY (critical — these notes are fed directly to a video-generation model):
-- Write each placeholder's note as a concrete DIRECTOR'S SHOT INSTRUCTION, not a meta description ("add a shot of X" is forbidden).
-- Include: subject + action, camera framing (ECU / close-up / medium / wide / aerial), motion (static / slow / moderate / high, and direction — pan left, push in, etc.), lighting/mood, and explicit brand presence if relevant to the re-edit strategy.
-- Match the visual language of the surrounding original scenes (look at their structured fields: brand, emotion, framing, motion). A placeholder that breaks style looks like a generic stock cut.
-- 15–40 words per note. Concrete nouns, not adjectives ("red Honda Armada on wet asphalt at dusk" beats "cool-looking shot of a car").
-- No placeholder should read "generic brand shot", "establishing shot", "product hero", "cutaway", etc. unless paired with specific subject details.
-- If the same placeholder intent repeats, vary the angle/framing so the final edit doesn't feel looped.`
+${placeholderQualityBlock}`
 }
 
 export async function generateProposal({
@@ -1112,6 +1245,8 @@ export async function generateProposal({
   generatedMusic,     // selected synthesised music draft — { tags, bpm, keyscale, durationSec, synthesis } | null
   additionalAssets,   // currentProject.additionalAssets — only consumed when capability `useAdditionalAssets` is on
   sundogsReport,      // SundogsReport produced by reeditSundogsReport.js — only consumed when metric === 'Sundogs'
+  strictDuration,     // boolean — when true, the proposer treats the target duration as an EXACT requirement (±3 %) and retries more aggressively on under/over shoot. Default false (±15 % tolerance, single retry).
+  rules,              // RulePreset.rules — { systemRole, editingCraft, placeholderQuality, outputRules }. Each field is optional; falls back to DEFAULT_RULES.
 } = {}) {
   if (!Array.isArray(scenes) || scenes.length === 0) {
     throw new Error('Shot log is empty — run Analysis first.')
@@ -1174,7 +1309,7 @@ export async function generateProposal({
   // so this path works for both LM Studio and the Anthropic backend
   // without the proposer knowing which is active.
   const runOnce = async (correctionNote) => {
-    const userPromptText = buildUserPrompt({ scenes, brandBrief, extraInstructions, metric: targetMetric, totalDurationSec, targetDurationSec, criteria: effectiveCriteria, correctionNote, capabilities, adConcept, voSegments, generatedVoiceover, generatedMusic, additionalAssets, sundogsReport })
+    const userPromptText = buildUserPrompt({ scenes, brandBrief, extraInstructions, metric: targetMetric, totalDurationSec, targetDurationSec, criteria: effectiveCriteria, correctionNote, capabilities, adConcept, voSegments, generatedVoiceover, generatedMusic, additionalAssets, sundogsReport, strictDuration, rules })
     // When we have a video ready, compose the user message as a
     // content array: the prompt first (order matters — Gemini treats
     // the last text as the active instruction) then the video. The
@@ -1187,7 +1322,7 @@ export async function generateProposal({
         ]
       : userPromptText
     const messages = [
-      { role: 'system', content: buildSystemPrompt(capabilities) },
+      { role: 'system', content: buildSystemPrompt(capabilities, { rules }) },
       { role: 'user', content: userContent },
     ]
     const response = await chatCompletion({
@@ -1241,6 +1376,21 @@ export async function generateProposal({
       // the timeline to slow down the clip as a preview, and for the
       // Commit extend flow to pass to ComfyUI.
       const extend = parseExtendDirective(row.note)
+      // Validate the LLM's referenceFrame pick: it must point to a
+      // scene that actually exists in the shot log, and framePosition
+      // must be one of the documented values. Anything malformed gets
+      // stripped here so the downstream generator either uses a sane
+      // default (start frame of the previous shot) or short-circuits
+      // with a clear "missing reference" error in the UI.
+      let referenceFrame = null
+      if (row.kind === 'placeholder' && row.referenceFrame && typeof row.referenceFrame === 'object') {
+        const refSceneId = String(row.referenceFrame.sourceSceneId || '').trim() || null
+        const refPos = String(row.referenceFrame.framePosition || '').trim().toLowerCase()
+        const validPos = ['start', 'middle', 'end'].includes(refPos) ? refPos : 'middle'
+        if (refSceneId && sceneById.has(refSceneId)) {
+          referenceFrame = { sourceSceneId: refSceneId, framePosition: validPos }
+        }
+      }
       return {
         index: i + 1,
         kind: row.kind === 'placeholder' ? 'placeholder' : 'original',
@@ -1251,6 +1401,7 @@ export async function generateProposal({
         reframe,
         colorAdjustments,
         extend,
+        referenceFrame,
       }
     })
     // VO plan: if the user has taken manual control (voPlanOverride with
@@ -1317,22 +1468,32 @@ export async function generateProposal({
   // in the UI.
   let attempt = await runOnce(null)
   if (Number.isFinite(targetDurationSec) && targetDurationSec > 0) {
-    const first = estimateEdlDuration(attempt.edl, scenes)
-    const tolerance = targetDurationSec * 0.15
-    if (Math.abs(first - targetDurationSec) > tolerance) {
-      const deficit = targetDurationSec - first
+    // Strict mode tightens the acceptable window (matches the prompt's
+    // ±3 %) and allows a second corrective retry — the typical failure
+    // mode is the LLM staying a few seconds short, which a stricter
+    // re-prompt with concrete "add N more seconds" math usually fixes.
+    // Non-strict keeps the original ±15 % / single-retry behaviour.
+    const tolerance = targetDurationSec * (strictDuration ? 0.03 : 0.15)
+    const maxRetries = strictDuration ? 2 : 1
+    let currentEst = estimateEdlDuration(attempt.edl, scenes)
+    let retries = 0
+    while (Math.abs(currentEst - targetDurationSec) > tolerance && retries < maxRetries) {
+      retries += 1
+      const deficit = targetDurationSec - currentEst
       const correction = deficit > 0
-        ? `Your previous EDL totaled ${first.toFixed(1)}s but the target is ${targetDurationSec.toFixed(1)}s — you are ${deficit.toFixed(1)}s SHORT. Add more rows (original scenes or placeholders) until the sum hits the target. Do NOT return an EDL under the budget.`
-        : `Your previous EDL totaled ${first.toFixed(1)}s but the target is ${targetDurationSec.toFixed(1)}s — you are ${Math.abs(deficit).toFixed(1)}s OVER. Remove ${Math.ceil(Math.abs(deficit) / Math.max(0.5, avgEligibleDuration(scenes)))} of the weakest rows.`
+        ? `Your previous EDL totaled ${currentEst.toFixed(1)}s but the target is ${targetDurationSec.toFixed(1)}s — you are ${deficit.toFixed(1)}s SHORT.${strictDuration ? ' Strict-duration mode is ON: the cut MUST land within ±' + (tolerance).toFixed(1) + 's of target.' : ''} Add more rows (original scenes or placeholders) until the sum hits the target. Do NOT return an EDL under the budget.`
+        : `Your previous EDL totaled ${currentEst.toFixed(1)}s but the target is ${targetDurationSec.toFixed(1)}s — you are ${Math.abs(deficit).toFixed(1)}s OVER.${strictDuration ? ' Strict-duration mode is ON: trim more aggressively until you land inside the window.' : ''} Remove ${Math.ceil(Math.abs(deficit) / Math.max(0.5, avgEligibleDuration(scenes)))} of the weakest rows.`
       try {
-        const second = await runOnce(correction)
-        const secondEst = estimateEdlDuration(second.edl, scenes)
+        const next = await runOnce(correction)
+        const nextEst = estimateEdlDuration(next.edl, scenes)
         // Keep whichever attempt is closer to target.
-        if (Math.abs(secondEst - targetDurationSec) < Math.abs(first - targetDurationSec)) {
-          attempt = second
+        if (Math.abs(nextEst - targetDurationSec) < Math.abs(currentEst - targetDurationSec)) {
+          attempt = next
+          currentEst = nextEst
         }
       } catch (err) {
-        console.warn('[reedit] retry failed, keeping first attempt:', err)
+        console.warn('[reedit] retry failed, keeping best attempt so far:', err)
+        break
       }
     }
   }

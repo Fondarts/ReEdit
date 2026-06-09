@@ -1,6 +1,14 @@
 import { useEffect, useState } from 'react'
 import { X, ImagePlus, Loader2, Trash2, Film, CheckCircle2, AlertCircle, Wand2, RefreshCw } from 'lucide-react'
-import { generateFrameForPlaceholder, generateFillForPlaceholder } from '../../services/reeditGenerate'
+import {
+  generateFrameForPlaceholder, generateFillForPlaceholder,
+  LOCAL_PLACEHOLDER_I2V_MODELS, DEFAULT_PLACEHOLDER_I2V_MODEL,
+} from '../../services/reeditGenerate'
+import { loadCapabilitySettings } from '../../services/reeditCapabilitySettings'
+import {
+  appendVideoVersion, setActiveVideoVersion, removeVideoVersion,
+  videoVersionList, activeVideoVersionId,
+} from '../../services/placeholderVersions'
 
 /**
  * Two-stage generation workspace for a single placeholder row.
@@ -42,6 +50,10 @@ function PlaceholderDetailsModal({
   const [frameState, setFrameState] = useState({ running: false })
   const [videoState, setVideoState] = useState({ running: false })
   const [error, setError] = useState(null)
+  // Local i2v model picker. Seeded per-row from genSpec.preferredModelId
+  // → Settings → Capabilities → default. Persisted onto genSpec on
+  // change so the choice survives a modal close/reopen.
+  const [modelId, setModelId] = useState(DEFAULT_PLACEHOLDER_I2V_MODEL)
 
   useEffect(() => {
     if (!isOpen) return
@@ -49,10 +61,15 @@ function PlaceholderDetailsModal({
     // falling back to the EDL row's note so the user sees something
     // meaningful on the very first open.
     setPrompt(row?.genSpec?.prompt || row?.note || '')
+    const stored = row?.genSpec?.preferredModelId
+    const fromSettings = loadCapabilitySettings()?.footageGeneration?.model
+    const seed = [stored, fromSettings, DEFAULT_PLACEHOLDER_I2V_MODEL]
+      .find((v) => LOCAL_PLACEHOLDER_I2V_MODELS.some((m) => m.id === v))
+    setModelId(seed || DEFAULT_PLACEHOLDER_I2V_MODEL)
     setFrameState({ running: false })
     setVideoState({ running: false })
     setError(null)
-  }, [isOpen, row?.genSpec?.prompt, row?.note])
+  }, [isOpen, row?.genSpec?.prompt, row?.note, row?.genSpec?.preferredModelId])
 
   if (!isOpen || !row) return null
 
@@ -61,9 +78,36 @@ function PlaceholderDetailsModal({
   const selectedFrameId = genSpec.selectedFrameId || null
   const selectedFrame = candidates.find((c) => c?.id === selectedFrameId) || null
   const hasVideo = Boolean(genSpec.generatedPath)
+  // Video versions (migrated lazily from a legacy single generatedPath).
+  const versions = videoVersionList(genSpec)
+  const activeVersionId = activeVideoVersionId(genSpec)
 
   const patchGenSpec = (patch) => {
     onChange?.({ ...genSpec, ...patch })
+  }
+
+  const selectVersion = (id) => {
+    const next = setActiveVideoVersion(genSpec, id)
+    if (next) onChange?.(next)
+  }
+
+  const deleteVersion = (id) => {
+    onChange?.(removeVideoVersion(genSpec, id))
+  }
+
+  const pickModel = (id) => {
+    if (!LOCAL_PLACEHOLDER_I2V_MODELS.some((m) => m.id === id)) return
+    setModelId(id)
+    patchGenSpec({ preferredModelId: id })
+  }
+
+  // Persist a prompt edit on close even if the user never generated, so
+  // the override isn't lost. Compare against the value we seeded the
+  // textarea with to avoid spurious writes.
+  const initialPrompt = genSpec.prompt ?? row.note ?? ''
+  const handleClose = () => {
+    if (prompt !== initialPrompt) patchGenSpec({ prompt })
+    onClose?.()
   }
 
   const generateFrame = async () => {
@@ -120,9 +164,18 @@ function PlaceholderDetailsModal({
         edl,
         scenes,
         sourceVideo,
+        modelId,
         onProgress: (info) => setVideoState({ running: true, ...info }),
       })
-      patchGenSpec({ ...result, prompt })
+      // Append as a new version (keep prior renders) and make it active.
+      // The selected first-frame id is snapshotted so the gallery can
+      // show which frame each version animated.
+      const { genSpec: nextGenSpec } = appendVideoVersion(genSpec, {
+        ...result,
+        prompt,
+        frameId: selectedFrameId || undefined,
+      })
+      onChange?.({ ...nextGenSpec, prompt })
       setVideoState({ running: false, done: true })
     } catch (err) {
       console.error('[reedit] video generation failed:', err)
@@ -156,7 +209,7 @@ function PlaceholderDetailsModal({
   return (
     <div
       className="fixed inset-0 z-50 flex items-center justify-center bg-black/70 p-6"
-      onMouseDown={(e) => { if (e.target === e.currentTarget) onClose?.() }}
+      onMouseDown={(e) => { if (e.target === e.currentTarget) handleClose() }}
     >
       <div className="w-full max-w-4xl max-h-[92vh] flex flex-col bg-sf-dark-900 border border-sf-dark-700 rounded-xl shadow-2xl overflow-hidden">
         <div className="flex-shrink-0 flex items-center justify-between px-5 py-3 border-b border-sf-dark-800">
@@ -172,7 +225,7 @@ function PlaceholderDetailsModal({
           </div>
           <button
             type="button"
-            onClick={onClose}
+            onClick={handleClose}
             className="p-1 rounded hover:bg-sf-dark-800 text-sf-text-muted hover:text-sf-text-primary transition-colors"
           >
             <X className="w-4 h-4" />
@@ -280,6 +333,18 @@ function PlaceholderDetailsModal({
           <div>
             <div className="flex items-center justify-between mb-2">
               <h3 className="text-[11px] uppercase tracking-wider text-sf-text-muted">2 — Video from selected frame</h3>
+              <div className="flex items-center gap-2">
+                <select
+                  value={modelId}
+                  onChange={(e) => pickModel(e.target.value)}
+                  disabled={videoState.running}
+                  title="Which local i2v model to use for this placeholder"
+                  className="bg-sf-dark-800 border border-sf-dark-700 text-sf-text-primary text-[11px] rounded px-2 py-1 focus:outline-none focus:border-sf-accent disabled:opacity-50"
+                >
+                  {LOCAL_PLACEHOLDER_I2V_MODELS.map((m) => (
+                    <option key={m.id} value={m.id}>{m.label}</option>
+                  ))}
+                </select>
               <button
                 type="button"
                 onClick={generateVideo}
@@ -304,6 +369,7 @@ function PlaceholderDetailsModal({
                     ? 'Re-generate video'
                     : 'Generate video'}
               </button>
+              </div>
             </div>
 
             {!selectedFrame && candidates.length === 0 && (
@@ -311,6 +377,55 @@ function PlaceholderDetailsModal({
             )}
             {!selectedFrame && candidates.length > 0 && (
               <p className="text-xs text-sf-text-muted">Pick a frame from the gallery above.</p>
+            )}
+
+            {/* Version gallery — every "Generate video" run stacks a new
+                version. Click one to make it active (the active version is
+                what Apply drops on the timeline). */}
+            {versions.length > 0 && (
+              <div className="mt-3">
+                <div className="text-[10px] uppercase tracking-wider text-sf-text-muted mb-1.5">
+                  Versions <span className="normal-case text-sf-text-muted/70">— click to activate · the active one lands on the timeline</span>
+                </div>
+                <div className="flex flex-wrap gap-2">
+                  {versions.map((v, idx) => {
+                    const isActive = v.id === activeVersionId
+                    const url = buildComfyUrl(v.generatedPath, v.generatedAt)
+                    return (
+                      <div
+                        key={v.id}
+                        className={`relative group rounded-lg border overflow-hidden cursor-pointer transition-colors
+                          ${isActive
+                            ? 'border-emerald-400 ring-2 ring-emerald-400/40'
+                            : 'border-sf-dark-700 hover:border-sf-dark-500'}`}
+                        style={{ width: thumbWidth, height: thumbHeight }}
+                        onClick={() => selectVersion(v.id)}
+                        title={`v${idx + 1} · ${v.model || 'i2v'}\n${v.prompt || ''}`}
+                      >
+                        {url ? (
+                          <video src={url} muted preload="metadata" className="w-full h-full object-cover" />
+                        ) : (
+                          <div className="w-full h-full flex items-center justify-center text-[10px] text-sf-text-muted">no video</div>
+                        )}
+                        <div className="absolute top-1 left-1 px-1.5 py-0.5 rounded bg-black/60 text-white text-[9px] font-semibold">v{idx + 1}</div>
+                        {isActive && (
+                          <div className="absolute bottom-1 left-1 inline-flex items-center gap-1 px-1.5 py-0.5 rounded bg-emerald-500 text-white text-[9px] font-semibold uppercase tracking-wider">
+                            <CheckCircle2 className="w-3 h-3" /> Active
+                          </div>
+                        )}
+                        <button
+                          type="button"
+                          onClick={(e) => { e.stopPropagation(); deleteVersion(v.id) }}
+                          className="absolute top-1 right-1 p-1 rounded bg-sf-dark-900/90 hover:bg-sf-error/80 text-sf-text-muted hover:text-white opacity-0 group-hover:opacity-100 transition-opacity"
+                          title="Delete this version"
+                        >
+                          <Trash2 className="w-3 h-3" />
+                        </button>
+                      </div>
+                    )
+                  })}
+                </div>
+              </div>
             )}
 
             {hasVideo && (
@@ -331,7 +446,7 @@ function PlaceholderDetailsModal({
         <div className="flex-shrink-0 flex items-center justify-end gap-2 px-5 py-3 border-t border-sf-dark-800 bg-sf-dark-900/60">
           <button
             type="button"
-            onClick={onClose}
+            onClick={handleClose}
             className="px-3 py-1.5 rounded-md text-xs bg-sf-accent hover:bg-sf-accent-hover text-white font-medium transition-colors"
           >
             Done

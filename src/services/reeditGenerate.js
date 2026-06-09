@@ -28,6 +28,39 @@
 import comfyui, { modifyZImageTurboWorkflow } from './comfyui'
 import useProjectStore from '../stores/projectStore'
 import { getLocalComfyHttpBaseSync, getActiveHttpBaseSync } from './localComfyConnection'
+import { loadCapabilitySettings } from './reeditCapabilitySettings'
+
+// Local i2v models supported by the placeholder-details modal. Subset of
+// I2V_MODEL_OPTIONS — only models that take a single REFERENCE FRAME
+// (image) as input. WAN 2.2 SVI Pro is excluded because it ingests a
+// video clip, which the placeholder flow doesn't have.
+export const LOCAL_PLACEHOLDER_I2V_MODELS = [
+  { id: 'ltx-2.3',     label: 'LTX 2.3' },
+  { id: 'wan-2.2-14b', label: 'WAN 2.2 14B' },
+  { id: 'seedance-2',  label: 'Seedance 2.0 (4 s fixed)' },
+]
+export const DEFAULT_PLACEHOLDER_I2V_MODEL = 'ltx-2.3'
+
+// Map source video dimensions to a Seedance aspect bucket. ByteDance
+// only accepts the canonical buckets; ambiguous shapes default to 16:9.
+function pickSeedanceAspect(sourceVideo) {
+  const w = Number(sourceVideo?.width)  || 1920
+  const h = Number(sourceVideo?.height) || 1080
+  if (h > w * 1.2) return '9:16'
+  if (Math.abs(w - h) < Math.max(w, h) * 0.05) return '1:1'
+  return '16:9'
+}
+
+// Resolve the modelId to use for a given placeholder run: explicit
+// override first, then Settings → Capabilities, then the default. Any
+// non-local value (e.g. 'kling-i2v' picked in Settings for the cloud
+// flow) falls through to the local default so Advanced still has
+// something runnable.
+function resolveLocalI2vModel(override) {
+  const requested = String(override || loadCapabilitySettings()?.footageGeneration?.model || '').trim()
+  if (LOCAL_PLACEHOLDER_I2V_MODELS.some((m) => m.id === requested)) return requested
+  return DEFAULT_PLACEHOLDER_I2V_MODEL
+}
 
 const FRAME_WORKFLOW_PATH = '/workflows/image_z_image_turbo.json'
 
@@ -52,6 +85,18 @@ export const LTX_LOAD_IMAGE_NODE_ID = '269'
 //   - umt5_xxl_fp8_e4m3fn_scaled.safetensors (CLIPLoader)
 export const WAN22_I2V_WORKFLOW_PATH = '/workflows/video_wan2_2_14B_i2v.json'
 export const WAN22_LOAD_IMAGE_NODE_ID = '97'
+
+// ByteDance Seedance 2.0 Reference-to-Video. Single reference frame
+// in, MP4 out via the ByteDance2ReferenceNode custom node. Duration is
+// fixed at 4 s per ByteDance's reference-to-video product (the user
+// asked for that explicitly — no variable-length runs).
+export const SEEDANCE_R2V_WORKFLOW_PATH = '/workflows/api_seedance2_0_r2v.json'
+const SEEDANCE_NODE_IDS = {
+  LOAD_IMAGE: '356',
+  BYTEDANCE: '359',         // ByteDance2ReferenceNode — model.prompt / .ratio / .duration / seed live here
+  SAVE_VIDEO: '344',        // SaveVideo (filename_prefix)
+}
+const SEEDANCE_FIXED_DURATION_SEC = 4
 
 const WAN22_NODE_IDS = {
   LOAD_IMAGE: '97',
@@ -182,6 +227,57 @@ export function modifyWan22I2VApiWorkflow(workflow, options = {}) {
 
 export function fetchWan22I2VWorkflow() {
   return fetchWorkflowJson(WAN22_I2V_WORKFLOW_PATH)
+}
+
+/**
+ * Patches the Seedance 2.0 Reference-to-Video workflow with per-run
+ * params. The ByteDance node uses dotted input keys (`model.prompt`,
+ * `model.ratio`, `model.duration`) — those are literal property names
+ * on the inputs object, not nested paths, so we set them via bracket
+ * notation. Duration is hard-coded at 4 s per ByteDance's product
+ * (R2V always renders a 4 s clip).
+ *
+ * @param {object} workflow  - parsed JSON of the Seedance R2V template
+ * @param {object} options
+ * @param {string} options.prompt          - directive prose for the action
+ * @param {string} options.inputImage      - ComfyUI filename of the reference image
+ * @param {string} [options.aspectRatio]   - '16:9' / '9:16' / '1:1'
+ * @param {string} [options.resolution]    - '720p' (default)
+ * @param {number} [options.seed]
+ * @param {string} [options.filenamePrefix]
+ */
+export function modifySeedance2R2vApiWorkflow(workflow, options = {}) {
+  const {
+    prompt = '',
+    inputImage = '',
+    aspectRatio = '16:9',
+    resolution = '720p',
+    seed,
+    filenamePrefix = 'video/Seedance2_r2v',
+  } = options
+
+  const modified = JSON.parse(JSON.stringify(workflow))
+  const node = (id) => modified[id]?.inputs
+  if (inputImage && node(SEEDANCE_NODE_IDS.LOAD_IMAGE)) {
+    node(SEEDANCE_NODE_IDS.LOAD_IMAGE).image = inputImage
+  }
+  const bd = node(SEEDANCE_NODE_IDS.BYTEDANCE)
+  if (bd) {
+    bd['model.prompt'] = prompt
+    bd['model.ratio'] = aspectRatio
+    bd['model.duration'] = SEEDANCE_FIXED_DURATION_SEC
+    bd['model.resolution'] = resolution
+    // ByteDance clamps the seed to INT32 (max 2147483647). The shared
+    // seed generator emits up to 1e12, so modulo it back into range.
+    if (Number.isFinite(seed)) bd.seed = Math.abs(Math.trunc(seed)) % 2147483648
+  }
+  const save = node(SEEDANCE_NODE_IDS.SAVE_VIDEO)
+  if (save) save.filename_prefix = filenamePrefix
+  return modified
+}
+
+export function fetchSeedance2R2vWorkflow() {
+  return fetchWorkflowJson(SEEDANCE_R2V_WORKFLOW_PATH)
 }
 
 // WAN 2.2 14B SVI Pro extend workflow. Distinct from the plain WAN
@@ -760,6 +856,7 @@ export async function prepareWorkflowForPlaceholder({
   sourceVideo,
   onProgress,
   extraPrompt = '',
+  modelId,
 }) {
   if (row?.kind !== 'placeholder') {
     throw new Error('Only placeholder rows can be generated.')
@@ -795,32 +892,98 @@ export async function prepareWorkflowForPlaceholder({
   const comfyImageName = upload?.name || uploadFilename
 
   onProgress?.({ stage: 'queue_workflow' })
-  const workflow = await fetchWorkflowJson(LTX_I2V_WORKFLOW_PATH)
 
-  // Fit generation params to the proposal row. The new template
-  // drives duration in WHOLE SECONDS (rounded up so a 1.5s EDL row
-  // still gets a 2s clip rather than collapsing to 1s), uses 25 fps
-  // per the template default, and takes source-video aspect so the
-  // fill matches the surrounding clips.
+  // Fit generation params to the proposal row. Round duration to the
+  // NEAREST whole second (min 1 s) so the proposer's gap is respected
+  // without systematic inflation — a 1.2 s gap stays 1 s instead of
+  // being padded to 2 s. Aspect from the source video.
   const rawDuration = Math.max(0.5, (Number(row.newTcOut) - Number(row.newTcIn)) || 1.5)
-  const durationSec = Math.max(1, Math.ceil(rawDuration))
-  const fps = DEFAULT_FPS
+  let durationSec = Math.max(1, Math.round(rawDuration))
   const width = sourceVideo?.width || 1080
   const height = sourceVideo?.height || 1920
   const prompt = [row.note || 'cinematic shot', extraPrompt].filter(Boolean).join(' — ')
   const seed = Math.floor(Math.random() * 1e12)
+  const filenamePrefix = `reedit/row-${String(rowIndex + 1).padStart(3, '0')}`
 
-  const modified = modifyLTX23I2VApiWorkflow(workflow, {
-    prompt,
-    negativePrompt: 'worst quality, low quality, blurry, distorted, artifacts, watermark',
-    inputImage: comfyImageName,
-    width,
-    height,
-    durationSec,
-    fps,
-    seed,
-    filenamePrefix: `reedit/row-${String(rowIndex + 1).padStart(3, '0')}`,
-  })
+  // Branch on the chosen i2v backend. LTX 2.3 runs at 25 fps (template
+  // default); WAN 2.2 14B trains at 16 fps and uses a different node id
+  // graph; Seedance 2.0 R2V is fixed at 4 s by the ByteDance product
+  // (the node has no duration knob beyond the 4 s preset).
+  const resolvedModelId = resolveLocalI2vModel(modelId)
+  let modified
+  let fps
+  let modelLabel
+  if (resolvedModelId === 'wan-2.2-14b') {
+    fps = 16
+    modelLabel = 'wan-2.2-14b'
+    const workflow = await fetchWan22I2VWorkflow()
+    modified = modifyWan22I2VApiWorkflow(workflow, {
+      prompt,
+      inputImage: comfyImageName,
+      width,
+      height,
+      durationSec,
+      fps,
+      seed,
+      filenamePrefix,
+    })
+  } else if (resolvedModelId === 'seedance-2') {
+    // Seedance is an API Node (ByteDance2ReferenceNode). Comfy Cloud
+    // gates these behind a separate "API Nodes" credit pool; being
+    // signed in to the web UI is NOT enough because our fetch doesn't
+    // carry the browser session cookie. The only thing that authorises
+    // API Nodes from a programmatic request is `api_key_comfy_org`,
+    // which queuePrompt picks up from `comfyui.getComfyOrgApiKey()`.
+    // Fail fast (and clearly) instead of letting Comfy reject the run
+    // with the cryptic "Unauthorized: Please login first to use this
+    // node." that's hard to act on.
+    const orgKey = await comfyui.getComfyOrgApiKey()
+    // Diagnostic: surface what we're about to send so the user can see
+    // whether the API key is being picked up at all. Key value is masked
+    // (length + last 4 chars) so it doesn't leak in screenshots.
+    try {
+      const httpBase = (typeof comfyui.getHttpBase === 'function') ? comfyui.getHttpBase() : '(unknown)'
+      const masked = orgKey ? `${'*'.repeat(Math.max(0, orgKey.length - 4))}${orgKey.slice(-4)} (len=${orgKey.length})` : '(EMPTY)'
+      console.log('[reedit][seedance] queue target:', httpBase, '| api_key_comfy_org:', masked)
+    } catch (_) { /* logging never fails the run */ }
+    if (!orgKey) {
+      throw new Error(
+        'Seedance 2.0 is a Comfy API Node and needs a Comfy Partner API key with API Nodes credits. '
+        + 'Open Settings → Comfy Cloud → "Add API key" and paste your key from comfy.org. '
+        + 'Being logged in to Comfy Cloud in your browser does NOT authorise this — the app sends '
+        + 'requests via API key, not via the browser session.'
+      )
+    }
+    // ByteDance R2V is hard-locked to 4 s — override the per-row duration
+    // so the version metadata + timeline clip reflect the actual output.
+    durationSec = SEEDANCE_FIXED_DURATION_SEC
+    fps = 24
+    modelLabel = 'seedance-2.0-r2v'
+    const workflow = await fetchSeedance2R2vWorkflow()
+    modified = modifySeedance2R2vApiWorkflow(workflow, {
+      prompt,
+      inputImage: comfyImageName,
+      aspectRatio: pickSeedanceAspect(sourceVideo),
+      resolution: '720p',
+      seed,
+      filenamePrefix,
+    })
+  } else {
+    fps = DEFAULT_FPS
+    modelLabel = 'ltx-2.3-22b-dev-fp8 + distilled lora'
+    const workflow = await fetchWorkflowJson(LTX_I2V_WORKFLOW_PATH)
+    modified = modifyLTX23I2VApiWorkflow(workflow, {
+      prompt,
+      negativePrompt: 'worst quality, low quality, blurry, distorted, artifacts, watermark',
+      inputImage: comfyImageName,
+      width,
+      height,
+      durationSec,
+      fps,
+      seed,
+      filenamePrefix,
+    })
+  }
 
   return {
     workflow: modified,
@@ -830,10 +993,13 @@ export async function prepareWorkflowForPlaceholder({
     width,
     height,
     durationSec,
+    fps,
     seed,
     refSceneId,
     refSource: selectedFrame ? 'frame-candidate' : 'scene-thumbnail',
     refFrameId: selectedFrame?.id || null,
+    modelId: resolvedModelId,
+    modelLabel,
   }
 }
 
@@ -1001,6 +1167,7 @@ export async function generateFillForPlaceholder({
   sourceVideo,
   onProgress,
   extraPrompt = '',
+  modelId,
 }) {
   if (row?.kind !== 'placeholder') {
     throw new Error('Only placeholder rows can be generated.')
@@ -1012,9 +1179,9 @@ export async function generateFillForPlaceholder({
   }
 
   const prepared = await prepareWorkflowForPlaceholder({
-    row, rowIndex, edl, scenes, sourceVideo, onProgress, extraPrompt,
+    row, rowIndex, edl, scenes, sourceVideo, onProgress, extraPrompt, modelId,
   })
-  const { workflow: modified, prompt, frames, width, height, durationSec, refSceneId } = prepared
+  const { workflow: modified, prompt, frames, width, height, durationSec, fps, refSceneId, modelLabel } = prepared
 
   const promptId = await comfyui.queuePrompt(modified)
   if (!promptId) throw new Error('ComfyUI did not return a prompt id.')
@@ -1057,12 +1224,12 @@ export async function generateFillForPlaceholder({
     refSceneId,
     durationSec,
     frames,
-    fps: DEFAULT_FPS,
+    fps,
     width,
     height,
     prompt,
     promptId,
-    model: 'ltx-2.3-22b-dev-fp8 + distilled lora',
+    model: modelLabel,
     generatedAt: new Date().toISOString(),
   }
 }

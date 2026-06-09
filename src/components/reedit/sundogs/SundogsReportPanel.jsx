@@ -18,6 +18,11 @@ export default function SundogsReportPanel({
   importing,
   error,
   onPickFile, // (file: File) => void
+  // Optional overrides — let callers reuse this panel for purposes
+  // other than the original "client sent us a Sundogs PDF" flow
+  // (e.g. importing a Sundogs PDF of the new cut in the Review tab).
+  title = 'Sundogs report',
+  emptyCopy = "Import the Sundogs Video Performance Analysis PDF the client sent. We'll feed its scores directly to the proposal LLM. Requires Gemini API key.",
 }) {
   const inputRef = useRef(null)
   const has = Boolean(report)
@@ -51,7 +56,7 @@ export default function SundogsReportPanel({
         <div className="flex-1 min-w-0">
           <div className="flex items-center gap-2 mb-1 flex-wrap">
             <FileText className="w-4 h-4 text-amber-400 shrink-0" />
-            <span className="text-sm font-medium text-sf-text-primary">Sundogs report</span>
+            <span className="text-sm font-medium text-sf-text-primary">{title}</span>
             {has && Number.isFinite(o.finalScorePct) && Number.isFinite(o.benchmarkPct) && (
               <>
                 <span className="text-[12px] text-sf-text-primary/90 tabular-nums">
@@ -81,7 +86,7 @@ export default function SundogsReportPanel({
             </>
           ) : (
             <div className="text-[12px] text-sf-text-muted">
-              Import the Sundogs Video Performance Analysis PDF the client sent. We'll feed its scores directly to the proposal LLM. Requires Gemini API key.
+              {emptyCopy}
             </div>
           )}
         </div>

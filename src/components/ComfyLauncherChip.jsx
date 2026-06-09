@@ -36,11 +36,13 @@ import {
 } from '../services/comfyLauncher'
 import {
   COMFY_MODE_CLOUD,
+  COMFY_MODE_LOCAL,
   COMFY_CONNECTION_CHANGED_EVENT,
   getActiveModeSync,
   getActiveHttpBaseSync,
+  saveComfyMode,
 } from '../services/localComfyConnection'
-import { Cloud as CloudIcon } from 'lucide-react'
+import { Cloud as CloudIcon, Server as ServerIcon, CheckCircle2 } from 'lucide-react'
 
 const STATE_STYLES = {
   unknown: { dot: 'bg-slate-400', label: 'ComfyUI', tone: 'idle' },
@@ -284,15 +286,21 @@ function ComfyLauncherChip() {
           <div className="px-3.5 py-3 border-b border-sf-dark-700 flex items-start gap-2">
             <div className="flex-1 min-w-0">
               <div className="flex items-center gap-2">
-                <span className={`w-2 h-2 rounded-full ${stateStyle.dot}`} />
-                <div className="text-sm font-semibold text-sf-text-primary">ComfyUI {stateStyle.label.toLowerCase()}</div>
+                <span className={`w-2 h-2 rounded-full ${comfyMode === COMFY_MODE_CLOUD ? 'bg-sky-400' : stateStyle.dot}`} />
+                <div className="text-sm font-semibold text-sf-text-primary">
+                  {comfyMode === COMFY_MODE_CLOUD ? 'ComfyUI · Cloud' : `ComfyUI · ${stateStyle.label}`}
+                </div>
               </div>
-              <div className="mt-1 text-[11px] text-sf-text-muted truncate">{summary}</div>
+              <div className="mt-1 text-[11px] text-sf-text-muted truncate">
+                {comfyMode === COMFY_MODE_CLOUD
+                  ? (cloudHttpBase || 'Cloud endpoint not configured yet.')
+                  : summary}
+              </div>
             </div>
             <button
               type="button"
               onClick={handleRefresh}
-              disabled={busy}
+              disabled={busy || comfyMode === COMFY_MODE_CLOUD}
               title="Re-probe ComfyUI"
               className="p-1 rounded hover:bg-sf-dark-700 text-sf-text-muted hover:text-sf-text-primary disabled:opacity-50"
             >
@@ -300,6 +308,63 @@ function ComfyLauncherChip() {
             </button>
           </div>
 
+          {/* Mode toggle — switch between local launcher and Comfy Cloud
+              without having to dig into Settings. The local section
+              below (Start/Stop/launcher script) collapses in cloud mode
+              because none of it applies to a remote endpoint. */}
+          <div className="px-3.5 py-2.5 border-b border-sf-dark-700">
+            <div className="text-[10px] uppercase tracking-wider text-sf-text-muted font-semibold mb-1.5">Backend</div>
+            <div className="flex items-center bg-sf-dark-800 border border-sf-dark-700 rounded-md overflow-hidden">
+              <button
+                type="button"
+                onClick={async () => {
+                  if (comfyMode === COMFY_MODE_LOCAL) return
+                  await saveComfyMode(COMFY_MODE_LOCAL)
+                }}
+                className={`flex-1 flex items-center justify-center gap-1.5 h-7 text-[11px] transition-colors ${
+                  comfyMode === COMFY_MODE_LOCAL
+                    ? 'bg-sf-accent text-white'
+                    : 'text-sf-text-muted hover:text-sf-text-primary hover:bg-sf-dark-700'
+                }`}
+              >
+                <ServerIcon className="w-3 h-3" /> Local
+              </button>
+              <div className="w-px h-4 bg-sf-dark-600" aria-hidden />
+              <button
+                type="button"
+                onClick={async () => {
+                  if (comfyMode === COMFY_MODE_CLOUD) return
+                  await saveComfyMode(COMFY_MODE_CLOUD)
+                }}
+                className={`flex-1 flex items-center justify-center gap-1.5 h-7 text-[11px] transition-colors ${
+                  comfyMode === COMFY_MODE_CLOUD
+                    ? 'bg-sf-accent text-white'
+                    : 'text-sf-text-muted hover:text-sf-text-primary hover:bg-sf-dark-700'
+                }`}
+              >
+                <CloudIcon className="w-3 h-3" /> Cloud
+              </button>
+            </div>
+            {comfyMode === COMFY_MODE_CLOUD && (
+              <div className="mt-2 text-[11px] text-sf-text-muted leading-snug">
+                {cloudHttpBase ? (
+                  <span className="inline-flex items-center gap-1 text-emerald-300">
+                    <CheckCircle2 className="w-3 h-3" /> Configured · jobs run remotely
+                  </span>
+                ) : (
+                  <span className="text-amber-300">
+                    Cloud URL + API key are not set yet. Open Settings → ComfyUI to configure.
+                  </span>
+                )}
+              </div>
+            )}
+          </div>
+
+          {/* Local-only controls. In cloud mode the start/stop/restart
+              trio, port-in-use diagnostics, and launcher script picker
+              are all irrelevant — the workflow ran on a remote box. */}
+          {comfyMode === COMFY_MODE_LOCAL && (
+          <>
           <div className="px-3.5 py-3 space-y-2.5 border-b border-sf-dark-700">
             <div className="flex gap-2">
               <button
@@ -336,7 +401,7 @@ function ComfyLauncherChip() {
                 <ExternalLink className="w-3.5 h-3.5 flex-shrink-0 mt-0.5" />
                 <div className="flex-1">
                   <div>
-                    ComfyUI is already running but ComfyStudio can't identify its process, so Stop and Restart are disabled. This usually means netstat/lsof isn't available. Try "Take control" to retry, or stop it from the window you started it from.
+                    ComfyUI is already running but Kissd ReEdit can't identify its process, so Stop and Restart are disabled. This usually means netstat/lsof isn't available. Try "Take control" to retry, or stop it from the window you started it from.
                   </div>
                   <div className="mt-1.5">
                     <button
@@ -367,8 +432,8 @@ function ComfyLauncherChip() {
                     </div>
                     <div className="mt-0.5 text-amber-100/90 leading-snug">
                       {portOwner?.pid
-                        ? <>Held by <span className="font-mono">{portOwner.name || 'pid'} (pid {portOwner.pid})</span>. {portOwner.name && /python|comfy/i.test(portOwner.name) ? 'That looks like ComfyUI already running.' : 'ComfyStudio will not be able to start ComfyUI until that process releases the port.'}</>
-                        : 'Another process is bound to this port. ComfyStudio will not be able to start ComfyUI until that process releases the port.'}
+                        ? <>Held by <span className="font-mono">{portOwner.name || 'pid'} (pid {portOwner.pid})</span>. {portOwner.name && /python|comfy/i.test(portOwner.name) ? 'That looks like ComfyUI already running.' : 'Kissd ReEdit will not be able to start ComfyUI until that process releases the port.'}</>
+                        : 'Another process is bound to this port. Kissd ReEdit will not be able to start ComfyUI until that process releases the port.'}
                     </div>
                     <div className="mt-2 flex flex-wrap gap-1.5">
                       <button
@@ -419,7 +484,7 @@ function ComfyLauncherChip() {
             </div>
             <div className="text-[11px] text-sf-text-primary truncate" title={config.launcherScript}>
               {config.launcherScript || (
-                <span className="italic text-sf-text-muted">No launcher configured. Pick your run_nvidia_gpu.bat to let ComfyStudio start ComfyUI for you.</span>
+                <span className="italic text-sf-text-muted">No launcher configured. Pick your run_nvidia_gpu.bat to let Kissd ReEdit start ComfyUI for you.</span>
               )}
             </div>
 
@@ -450,6 +515,8 @@ function ComfyLauncherChip() {
               </div>
             )}
           </div>
+          </>
+          )}
 
           <div className="px-3.5 py-2.5">
             <div className="flex items-center justify-between mb-1.5">
@@ -498,10 +565,10 @@ function ComfyLauncherChip() {
           </div>
 
           <div className="px-3.5 py-2 bg-sf-dark-950/50 border-t border-sf-dark-700 flex items-center justify-between text-[10px] text-sf-text-muted">
-            <span>{state.httpBase || '—'}</span>
+            <span>{(comfyMode === COMFY_MODE_CLOUD ? cloudHttpBase : state.httpBase) || '—'}</span>
             <span className="flex items-center gap-1">
               <SettingsIcon className="w-3 h-3" />
-              Manage in Settings → ComfyUI Launcher
+              Manage in Settings → ComfyUI
             </span>
           </div>
         </div>

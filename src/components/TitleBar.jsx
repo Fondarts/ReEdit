@@ -1,6 +1,8 @@
-import { Fragment, useEffect, useState } from 'react'
-import { Copy, Minus, Settings as SettingsIcon, Square, X, Sparkles, SlidersHorizontal } from 'lucide-react'
+import { useEffect, useState } from 'react'
+import { Copy, Minus, Settings as SettingsIcon, Square, X } from 'lucide-react'
 import ComfyLauncherChip from './ComfyLauncherChip'
+import UiModeToggle from './UiModeToggle'
+import { useUiMode } from '../hooks/useUiMode'
 import { REEDIT_MODE, REEDIT_TABS } from '../config/mode'
 
 const TOP_TABS = [
@@ -13,18 +15,10 @@ const TOP_TABS = [
   { id: 'export', label: 'Export' },
 ]
 
-// Tabs visibles en modo Simple (sub-conjunto de REEDIT_TABS). Esconde
-// pasos técnicos (Optimization) y la timeline pro (Editor). El user toggleable
-// queda persistido en localStorage para que sobreviva reloads.
-const UI_MODE_STORAGE_KEY = 'comfystudio-ui-mode'
-const SIMPLE_REEDIT_TAB_IDS = new Set(['projects', 'import', 'analysis', 'optimization', 'proposal', 'editor', 'export'])
-
-function readPersistedUiMode() {
-  try {
-    const v = localStorage.getItem(UI_MODE_STORAGE_KEY)
-    return v === 'simple' ? 'simple' : 'advanced'
-  } catch { return 'advanced' }
-}
+// Auto mode hides everything except Import + Proposal — the user uploads
+// material in Import, hits Go, and the orchestrator runs the remaining
+// steps in the background and lands on Proposal.
+const LUCKY_REEDIT_TAB_IDS = new Set(['import', 'proposal', 'editor', 'review', 'export'])
 
 function TitleBar({
   projectName,
@@ -39,23 +33,15 @@ function TitleBar({
   // pipeline order and hides the generic ComfyStudio ones. The ComfyUI
   // iframe tab stays opt-in via the same showComfyUiTab setting, appended
   // at the end so power users can still jump into raw ComfyUI.
-  const [uiMode, setUiModeState] = useState(readPersistedUiMode)
-
-  // Notify other components of UI-mode changes via the same event-bus
-  // pattern the rest of the app uses (no global store needed). Anybody
-  // that wants to react to it can subscribe to `comfystudio-ui-mode-changed`.
-  const setUiMode = (next) => {
-    if (next === uiMode) return
-    try { localStorage.setItem(UI_MODE_STORAGE_KEY, next) } catch { /* ignore */ }
-    setUiModeState(next)
-    try {
-      window.dispatchEvent(new CustomEvent('comfystudio-ui-mode-changed', { detail: next }))
-    } catch { /* ignore */ }
-  }
+  //
+  // The mode itself is owned by the shared hook so a toggle flip from
+  // anywhere (TitleBar, WelcomeScreen, dev tools) refreshes this list
+  // without a hand-rolled event listener.
+  const uiMode = useUiMode()
 
   const allReeditTabs = REEDIT_TABS
-  const visibleReeditTabs = uiMode === 'simple'
-    ? allReeditTabs.filter((t) => SIMPLE_REEDIT_TAB_IDS.has(t.id))
+  const visibleReeditTabs = uiMode === 'lucky'
+    ? allReeditTabs.filter((t) => LUCKY_REEDIT_TAB_IDS.has(t.id))
     : allReeditTabs
 
   const baseTabs = REEDIT_MODE ? visibleReeditTabs : TOP_TABS
@@ -63,7 +49,7 @@ function TitleBar({
     ? (REEDIT_MODE ? [...baseTabs, { id: 'comfyui', label: 'ComfyUI' }] : baseTabs)
     : baseTabs.filter(t => t.id !== 'comfyui')
 
-  // If the active tab gets hidden by switching to Simple mode, bounce the
+  // If the active tab gets hidden by switching to Auto mode, bounce the
   // user to the first visible tab. Otherwise they'd be looking at a
   // workspace that's still mounted but unreachable from the TitleBar.
   useEffect(() => {
@@ -128,80 +114,66 @@ function TitleBar({
   
   return (
     <div className="h-10 bg-black flex items-center justify-between px-4 drag-region relative">
-      {/* Left - Spacer for center alignment */}
-      <div className="w-[120px] flex-shrink-0" />
+      {/* Left - Kissd brand mark: graffiti wordmark + red "ReEdit" name.
+          Sits in the title bar's left slot so it doesn't crowd the
+          launcher / mode-toggle / window-control cluster on the right.
+          The SVG lives in /public so it can be hot-swapped with a
+          higher-fidelity asset (same filename) without a rebuild. */}
+      <div className="no-drag flex-shrink-0 flex items-center gap-2 select-none">
+        <img
+          src="/kissd-logo.svg"
+          alt="Kissd"
+          className="h-5 w-auto"
+          draggable={false}
+        />
+        <span
+          className="text-[14px] font-extrabold tracking-tight leading-none"
+          style={{ color: '#EC1C24' }}
+        >
+          ReEdit
+        </span>
+      </div>
       
-      {/* Center - App mode tabs; extend 1px into content so grey touches with no black line */}
-      <div
-        className="absolute top-0 flex items-center justify-center"
-        style={{
-          left: `${centerInsetLeft}px`,
-          right: `${centerInsetRight}px`,
-          bottom: -1,
-          height: 'calc(100% + 1px)'
-        }}
-      >
-        <div className="no-drag flex items-center gap-0 h-full bg-sf-dark-800 border-x border-sf-dark-700 border-t-0 rounded-none p-0.5">
-          {tabs.map((tab, index) => (
-            <Fragment key={tab.id}>
-              {index > 0 && (
-                <div className="w-px h-4 bg-sf-dark-600 flex-shrink-0" aria-hidden="true" />
-              )}
-              <div className="relative flex h-full items-center">
+      {/* Center - App mode tabs. Pill-shaped, centered on the full
+          window width (not between the side panels) so the bar reads
+          symmetrically regardless of left/right inset sizes. Each tab
+          is its own rounded pill inside the wrapper — the active one
+          stands out with the accent fill and a soft glow, the inactive
+          ones use a subtle hover state. No separators between tabs;
+          the rounded shapes already provide enough visual grouping. */}
+      <div className="absolute inset-y-0 left-1/2 -translate-x-1/2 flex items-center pointer-events-none">
+        <div className="no-drag flex items-center gap-0.5 h-9 bg-sf-dark-800/80 border border-sf-dark-700 rounded-full p-1 shadow-md shadow-black/30 pointer-events-auto">
+          {tabs.map((tab) => {
+            const isActive = activeTab === tab.id
+            return (
+              <div key={tab.id} className="relative flex h-full items-center">
                 <button
                   onClick={() => onTabChange?.(tab.id)}
-                  className={`px-3 py-1 text-[11px] rounded-none transition-colors ${
-                    activeTab === tab.id
-                      ? 'bg-sf-accent text-white'
-                      : 'text-sf-text-muted hover:text-sf-text-primary hover:bg-sf-dark-700'
+                  className={`px-4 h-full inline-flex items-center justify-center text-[12.5px] font-medium rounded-full transition-colors ${
+                    isActive
+                      ? 'bg-sf-accent text-white shadow-sm shadow-sf-accent/30'
+                      : 'text-sf-text-muted hover:text-sf-text-primary hover:bg-sf-dark-700/70'
                   }`}
                 >
                   {tab.label}
                 </button>
-                {tab.id === 'mog' && activeTab === 'mog' && (
+                {tab.id === 'mog' && isActive && (
                   <div className="pointer-events-none absolute left-1/2 top-full mt-1 -translate-x-1/2 rounded-full bg-pink-300/12 px-2 py-0.5 text-[9px] font-medium uppercase tracking-[0.18em] text-pink-200/65 shadow-[0_0_10px_rgba(244,114,182,0.12)]">
                     beta
                   </div>
                 )}
               </div>
-            </Fragment>
-          ))}
+            )
+          })}
         </div>
       </div>
       
       {/* Right - Launcher chip + Window Controls (Windows style) */}
       <div className="flex items-center">
-        {/* Simple / Advanced UI mode toggle. Simple hides Optimization and
-            the Resolve-style Editor; Advanced shows the full pipeline.
-            Persisted in localStorage so it survives reloads. */}
-        {REEDIT_MODE && (
-          <div className="no-drag flex items-center bg-sf-dark-800 border border-sf-dark-700 rounded-md mr-2 overflow-hidden">
-            <button
-              type="button"
-              onClick={() => setUiMode('simple')}
-              title="Simple — guided linear flow"
-              className={`h-7 px-2 flex items-center gap-1 text-[10px] transition-colors ${
-                uiMode === 'simple'
-                  ? 'bg-sf-accent text-white'
-                  : 'text-sf-text-muted hover:text-sf-text-primary hover:bg-sf-dark-700'
-              }`}
-            >
-              <Sparkles className="w-3 h-3" /> Simple
-            </button>
-            <button
-              type="button"
-              onClick={() => setUiMode('advanced')}
-              title="Advanced — full pipeline with Optimization + Editor"
-              className={`h-7 px-2 flex items-center gap-1 text-[10px] transition-colors ${
-                uiMode === 'advanced'
-                  ? 'bg-sf-accent text-white'
-                  : 'text-sf-text-muted hover:text-sf-text-primary hover:bg-sf-dark-700'
-              }`}
-            >
-              <SlidersHorizontal className="w-3 h-3" /> Advanced
-            </button>
-          </div>
-        )}
+        {/* Auto / Simple / Advanced toggle — shared with the
+            WelcomeScreen header so the persisted preference is the
+            same regardless of where it was set. */}
+        {REEDIT_MODE && <UiModeToggle className="mr-2" />}
         <ComfyLauncherChip />
         {/* Quick settings entry point next to the ComfyUI pill. Jumps
             straight to the Launcher section so the most common use

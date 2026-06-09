@@ -1,17 +1,17 @@
 import { useState, useEffect, useMemo } from 'react'
 import {
-  X, Server, FolderOpen, Palette, Monitor, Save,
-  HardDrive, Film, Keyboard, Wrench, Power,
-  KeyRound, CheckCircle2, ExternalLink, Sparkles,
+  X, Server, FolderOpen, Palette, Save,
+  HardDrive, Keyboard, Wrench,
+  KeyRound, CheckCircle2, ExternalLink, Sparkles, Brain,
 } from 'lucide-react'
-import useProjectStore, { RESOLUTION_PRESETS, FPS_PRESETS } from '../stores/projectStore'
+import useProjectStore from '../stores/projectStore'
 import { THEMES, getStoredThemeId, applyTheme } from '../config/themes'
-import { getPexelsApiKey, setPexelsApiKey } from '../services/pexelsSettings'
 import WorkflowSetupSection from './WorkflowSetupSection'
 import ComfyLauncherSettingsSection from './ComfyLauncherSettingsSection'
 import ComfyCloudSettingsSection from './ComfyCloudSettingsSection'
 import ComfyLauncherLogViewer from './ComfyLauncherLogViewer'
 import CapabilitiesSettingsSection from './CapabilitiesSettingsSection'
+import LlmSettingsSection from './reedit/LlmSettingsSection'
 import ApiKeyDialog from './ApiKeyDialog'
 import {
   COMFY_PARTNER_KEY_CHANGED_EVENT,
@@ -49,23 +49,16 @@ const SETTINGS_SECTIONS = [
     icon: HardDrive,
     description: 'Choose where projects live and control auto-save behavior.',
   },
-  {
-    id: 'stock',
-    title: 'Stock (Pexels)',
-    icon: Film,
-    description: 'Manage stock-media search credentials.',
-  },
-  {
-    id: 'connection',
-    title: 'ComfyUI Connection',
-    icon: Server,
-    description: 'Configure the local ComfyUI endpoint, partner API key, and advanced tab visibility.',
-  },
+  // ComfyUI Connection + Launcher used to live as two sibling rails;
+  // they're collapsed into one section here so the user doesn't have
+  // to hunt between two pages that both touch the same endpoint.
+  // Legacy callers that passed `initialSection: 'connection'` still
+  // land here thanks to the alias check in resolveInitialSection.
   {
     id: 'launcher',
-    title: 'ComfyUI Launcher',
-    icon: Power,
-    description: 'Let ComfyStudio start, stop, and restart your local ComfyUI process.',
+    title: 'ComfyUI',
+    icon: Server,
+    description: 'Local + Cloud endpoint, launcher controls, partner API key, and advanced tab visibility — all in one place.',
   },
   {
     id: 'paths',
@@ -86,6 +79,12 @@ const SETTINGS_SECTIONS = [
     description: 'Tune how each proposer capability behaves: model choice, duration limits, scale caps.',
   },
   {
+    id: 'llm-models',
+    title: 'LLM Models',
+    icon: Brain,
+    description: 'Pick which LLM backend + model powers each pipeline step (analysis, proposal, embeddings).',
+  },
+  {
     id: 'appearance',
     title: 'Appearance',
     icon: Palette,
@@ -97,20 +96,25 @@ const SETTINGS_SECTIONS = [
     icon: Keyboard,
     description: 'Customize editor shortcuts and apply familiar keymap presets.',
   },
-  {
-    id: 'project',
-    title: 'New Project Defaults',
-    icon: Monitor,
-    description: 'Set default resolution and frame rate for new projects.',
-  },
 ]
+
+// Map of legacy section ids → their new home. We removed `project`
+// (defaults are now inferred from the imported footage) and merged
+// `connection` into `launcher` (single combined ComfyUI page).
+const LEGACY_SECTION_ALIASES = {
+  connection: 'launcher',
+  project: 'launcher',
+}
 
 function isValidSection(sectionId) {
   return SETTINGS_SECTIONS.some((section) => section.id === sectionId)
 }
 
 function resolveInitialSection(sectionId) {
-  return isValidSection(sectionId) ? sectionId : SETTINGS_SECTIONS[0].id
+  if (isValidSection(sectionId)) return sectionId
+  const aliased = LEGACY_SECTION_ALIASES[sectionId]
+  if (aliased && isValidSection(aliased)) return aliased
+  return SETTINGS_SECTIONS[0].id
 }
 
 function SettingsRailItem({ section, isActive, onSelect }) {
@@ -151,7 +155,6 @@ function GeneralTab({ initialSection = null }) {
   const [outputPath, setOutputPath] = useState('C:\\Users\\...\\ComfyStudio\\outputs')
   const [workflowPath, setWorkflowPath] = useState('C:\\Users\\...\\ComfyUI\\workflow_API')
   const [activeThemeId, setActiveThemeId] = useState(() => getStoredThemeId())
-  const [pexelsApiKey, setPexelsApiKeyLocal] = useState('')
   const [comfyOrgApiKey, setComfyOrgApiKey] = useState('')
   const [apiKeyDialogOpen, setApiKeyDialogOpen] = useState(false)
   const [settingsSaved, setSettingsSaved] = useState(false)
@@ -196,13 +199,9 @@ function GeneralTab({ initialSection = null }) {
     setShowHeroBackground,
     currentProject,
     closeProject,
-    defaultResolution,
-    defaultFps,
-    setDefaultProjectSettings,
   } = useProjectStore()
 
   useEffect(() => {
-    getPexelsApiKey().then((key) => setPexelsApiKeyLocal(key || ''))
     ;(async () => {
       try {
         setEditorHotkeysState(await getEditorHotkeys())
@@ -313,10 +312,6 @@ function GeneralTab({ initialSection = null }) {
     } catch (_) {}
   }
 
-  const handleSavePexelsKey = () => {
-    setPexelsApiKey(pexelsApiKey.trim()).catch(console.error)
-  }
-
   const handleSaveComfyConnection = async () => {
     const result = await saveLocalComfyConnectionPort(comfyPortInput)
     if (!result.success) {
@@ -382,7 +377,6 @@ function GeneralTab({ initialSection = null }) {
   }
 
   const handleSaveAllSettings = async () => {
-    await setPexelsApiKey(pexelsApiKey.trim())
     await setEditorHotkeys(editorHotkeys)
     const connectionSaved = await handleSaveComfyConnection()
     if (connectionSaved) {
@@ -480,33 +474,55 @@ function GeneralTab({ initialSection = null }) {
         </div>
       )
       break
-    case 'stock':
+    case 'paths':
       activeSectionContent = (
-        <div className="space-y-4">
+        <div className="space-y-5">
           <div>
-            <label className="block text-xs text-sf-text-muted mb-1">API Key</label>
-            <input
-              type="password"
-              value={pexelsApiKey}
-              onChange={(e) => setPexelsApiKeyLocal(e.target.value)}
-              onBlur={handleSavePexelsKey}
-              placeholder="Your Pexels API key"
-              className="w-full bg-sf-dark-800 border border-sf-dark-600 rounded px-3 py-2 text-sm text-sf-text-primary placeholder-sf-text-muted focus:outline-none focus:border-sf-accent"
-            />
-            <p className="text-[10px] text-sf-text-muted mt-1">
-              Free at{' '}
-              <a href="https://www.pexels.com/api/" target="_blank" rel="noopener noreferrer" className="text-sf-accent hover:underline">
-                pexels.com/api
-              </a>
-              . Used by the Stock tab to search photos and videos.
-            </p>
+            <label className="block text-xs text-sf-text-muted mb-1">Output Directory</label>
+            <div className="flex gap-2">
+              <input
+                type="text"
+                value={outputPath}
+                onChange={(e) => setOutputPath(e.target.value)}
+                className="flex-1 min-w-0 bg-sf-dark-800 border border-sf-dark-600 rounded px-3 py-2 text-xs text-sf-text-primary focus:outline-none focus:border-sf-accent truncate"
+              />
+              <button className="px-3 py-2 bg-sf-dark-700 hover:bg-sf-dark-600 rounded text-xs text-sf-text-secondary transition-colors flex-shrink-0">
+                ...
+              </button>
+            </div>
+          </div>
+          <div>
+            <label className="block text-xs text-sf-text-muted mb-1">Workflows Directory</label>
+            <div className="flex gap-2">
+              <input
+                type="text"
+                value={workflowPath}
+                onChange={(e) => setWorkflowPath(e.target.value)}
+                className="flex-1 min-w-0 bg-sf-dark-800 border border-sf-dark-600 rounded px-3 py-2 text-xs text-sf-text-primary focus:outline-none focus:border-sf-accent truncate"
+              />
+              <button className="px-3 py-2 bg-sf-dark-700 hover:bg-sf-dark-600 rounded text-xs text-sf-text-secondary transition-colors flex-shrink-0">
+                ...
+              </button>
+            </div>
           </div>
         </div>
       )
       break
-    case 'connection':
+    case 'workflow-setup':
+      activeSectionContent = <WorkflowSetupSection />
+      break
+    case 'launcher':
+      // Combined ComfyUI page: connection (Local + Cloud), launcher
+      // controls, partner API key, and advanced tab toggles. Order goes
+      // from "what most users need first" (where ComfyUI lives) down to
+      // "power-user toggles" so a new user doesn't get lost in flags
+      // before they've even set the port.
       activeSectionContent = (
         <div className="space-y-4">
+          {/* Local port + test/reset. ComfyCloudSettingsSection below
+              has the Local/Cloud mode toggle; this input drives the
+              local endpoint regardless of the mode (it's still where
+              the launcher boots ComfyUI). */}
           <div>
             <label className="block text-xs text-sf-text-muted mb-1">Local ComfyUI Port</label>
             <input
@@ -520,42 +536,46 @@ function GeneralTab({ initialSection = null }) {
               placeholder={String(DEFAULT_COMFY_PORT)}
               className="w-full bg-sf-dark-800 border border-sf-dark-600 rounded px-3 py-2 text-sm text-sf-text-primary focus:outline-none focus:border-sf-accent"
             />
-            <p className="text-[10px] text-sf-text-muted mt-1">
-              Local-only mode. Remote/LAN ComfyUI is disabled in this build.
-            </p>
-          </div>
-
-          <div className="flex items-center justify-between gap-2 rounded-lg border border-sf-dark-700 bg-sf-dark-900/60 px-3 py-3">
-            <div className="flex min-w-0 items-center gap-2">
-              <div className={`w-2.5 h-2.5 rounded-full ${
-                comfyConnectionState.status === 'success'
-                  ? 'bg-sf-success'
-                  : comfyConnectionState.status === 'error'
-                    ? 'bg-red-500'
-                    : comfyConnectionState.status === 'testing'
-                      ? 'bg-yellow-400 animate-pulse'
-                      : 'bg-sf-dark-500'
-              }`} />
-              <span className="text-xs text-sf-text-muted truncate">{comfyConnectionState.message}</span>
-            </div>
-            <div className="flex items-center gap-1.5 flex-shrink-0">
-              <button
-                type="button"
-                onClick={() => { void handleResetComfyConnection() }}
-                className="px-3 py-1.5 bg-sf-dark-700 hover:bg-sf-dark-600 rounded text-xs text-sf-text-secondary transition-colors"
-              >
-                Reset
-              </button>
-              <button
-                type="button"
-                onClick={() => { void handleTestComfyConnection() }}
-                className="px-3 py-1.5 bg-sf-dark-700 hover:bg-sf-dark-600 rounded text-xs text-sf-text-secondary transition-colors"
-              >
-                Test
-              </button>
+            <div className="mt-2 flex items-center justify-between gap-2 rounded-lg border border-sf-dark-700 bg-sf-dark-900/60 px-3 py-2">
+              <div className="flex min-w-0 items-center gap-2">
+                <div className={`w-2.5 h-2.5 rounded-full ${
+                  comfyConnectionState.status === 'success'
+                    ? 'bg-sf-success'
+                    : comfyConnectionState.status === 'error'
+                      ? 'bg-red-500'
+                      : comfyConnectionState.status === 'testing'
+                        ? 'bg-yellow-400 animate-pulse'
+                        : 'bg-sf-dark-500'
+                }`} />
+                <span className="text-xs text-sf-text-muted truncate">{comfyConnectionState.message}</span>
+              </div>
+              <div className="flex items-center gap-1.5 flex-shrink-0">
+                <button
+                  type="button"
+                  onClick={() => { void handleResetComfyConnection() }}
+                  className="px-3 py-1 bg-sf-dark-700 hover:bg-sf-dark-600 rounded text-xs text-sf-text-secondary transition-colors"
+                >Reset</button>
+                <button
+                  type="button"
+                  onClick={() => { void handleTestComfyConnection() }}
+                  className="px-3 py-1 bg-sf-dark-700 hover:bg-sf-dark-600 rounded text-xs text-sf-text-secondary transition-colors"
+                >Test</button>
+              </div>
             </div>
           </div>
 
+          {/* Cloud mode toggle + URL + API key (this is the paid Comfy
+              Cloud, not the partner starter-workflows key below). */}
+          <ComfyCloudSettingsSection />
+
+          {/* Launcher: start/stop/restart of the LOCAL ComfyUI process,
+              browse for run_nvidia_gpu.bat, log viewer, autostart. */}
+          <ComfyLauncherSettingsSection onOpenLogViewer={() => setLogViewerOpen(true)} />
+
+          {/* Partner API key for the 5 starter cloud workflows shipped
+              by Comfy.org (Grok / Kling / Vidu / Nano Banana / Seedream).
+              Distinct from the Cloud mode above — this one is per-render
+              partner billing, the other is your own Comfy Cloud subscription. */}
           <div className="rounded-lg border border-sf-dark-700 bg-sf-dark-900/60 px-3 py-3">
             <div className="flex items-start justify-between gap-3">
               <div className="flex items-start gap-2.5">
@@ -563,9 +583,9 @@ function GeneralTab({ initialSection = null }) {
                   <KeyRound className="h-4 w-4 text-sf-accent" />
                 </div>
                 <div className="min-w-0">
-                  <div className="text-sm font-medium text-sf-text-primary">Cloud Workflows · Comfy.org API key</div>
+                  <div className="text-sm font-medium text-sf-text-primary">Partner workflows · Comfy.org API key</div>
                   <div className="mt-0.5 text-[11px] text-sf-text-muted">
-                    Unlocks {COMFY_PARTNER_WORKFLOWS.length} starter workflows that render in the cloud (Grok, Kling, Vidu, Nano Banana, Seedream). One key covers all of them.
+                    Unlocks {COMFY_PARTNER_WORKFLOWS.length} starter workflows that render via Comfy.org partners (Grok, Kling, Vidu, Nano Banana, Seedream). One key covers all of them.
                   </div>
                   <div className="mt-1.5 text-[11px]">
                     {comfyOrgApiKey ? (
@@ -599,6 +619,7 @@ function GeneralTab({ initialSection = null }) {
             </div>
           </div>
 
+          {/* Advanced toggles. */}
           <div className="flex items-center justify-between rounded-lg border border-sf-dark-700 bg-sf-dark-900/60 px-3 py-3">
             <div>
               <label className="text-sm text-sf-text-primary">Show ComfyUI tab</label>
@@ -643,53 +664,11 @@ function GeneralTab({ initialSection = null }) {
         </div>
       )
       break
-    case 'paths':
-      activeSectionContent = (
-        <div className="space-y-5">
-          <div>
-            <label className="block text-xs text-sf-text-muted mb-1">Output Directory</label>
-            <div className="flex gap-2">
-              <input
-                type="text"
-                value={outputPath}
-                onChange={(e) => setOutputPath(e.target.value)}
-                className="flex-1 min-w-0 bg-sf-dark-800 border border-sf-dark-600 rounded px-3 py-2 text-xs text-sf-text-primary focus:outline-none focus:border-sf-accent truncate"
-              />
-              <button className="px-3 py-2 bg-sf-dark-700 hover:bg-sf-dark-600 rounded text-xs text-sf-text-secondary transition-colors flex-shrink-0">
-                ...
-              </button>
-            </div>
-          </div>
-          <div>
-            <label className="block text-xs text-sf-text-muted mb-1">Workflows Directory</label>
-            <div className="flex gap-2">
-              <input
-                type="text"
-                value={workflowPath}
-                onChange={(e) => setWorkflowPath(e.target.value)}
-                className="flex-1 min-w-0 bg-sf-dark-800 border border-sf-dark-600 rounded px-3 py-2 text-xs text-sf-text-primary focus:outline-none focus:border-sf-accent truncate"
-              />
-              <button className="px-3 py-2 bg-sf-dark-700 hover:bg-sf-dark-600 rounded text-xs text-sf-text-secondary transition-colors flex-shrink-0">
-                ...
-              </button>
-            </div>
-          </div>
-        </div>
-      )
-      break
-    case 'workflow-setup':
-      activeSectionContent = <WorkflowSetupSection />
-      break
-    case 'launcher':
-      activeSectionContent = (
-        <div className="space-y-4">
-          <ComfyCloudSettingsSection />
-          <ComfyLauncherSettingsSection onOpenLogViewer={() => setLogViewerOpen(true)} />
-        </div>
-      )
-      break
     case 'capabilities':
       activeSectionContent = <CapabilitiesSettingsSection />
+      break
+    case 'llm-models':
+      activeSectionContent = <LlmSettingsSection />
       break
     case 'appearance':
       activeSectionContent = (
@@ -852,40 +831,6 @@ function GeneralTab({ initialSection = null }) {
             >
               Restore All Defaults
             </button>
-          </div>
-        </div>
-      )
-      break
-    case 'project':
-      activeSectionContent = (
-        <div className="space-y-5">
-          <div>
-            <label className="block text-xs text-sf-text-muted mb-1">Default Resolution</label>
-            <select
-              value={defaultResolution || 'HD 1080p'}
-              onChange={(e) => setDefaultProjectSettings(e.target.value, defaultFps)}
-              className="w-full bg-sf-dark-800 border border-sf-dark-600 rounded px-3 py-2 text-sm text-sf-text-primary focus:outline-none focus:border-sf-accent"
-            >
-              {RESOLUTION_PRESETS.map((preset) => (
-                <option key={preset.name} value={preset.name}>
-                  {preset.name} ({preset.width}x{preset.height})
-                </option>
-              ))}
-            </select>
-          </div>
-          <div>
-            <label className="block text-xs text-sf-text-muted mb-1">Default Frame Rate</label>
-            <select
-              value={defaultFps ?? 24}
-              onChange={(e) => setDefaultProjectSettings(defaultResolution, Number(e.target.value))}
-              className="w-full bg-sf-dark-800 border border-sf-dark-600 rounded px-3 py-2 text-sm text-sf-text-primary focus:outline-none focus:border-sf-accent"
-            >
-              {FPS_PRESETS.map((fps) => (
-                <option key={fps.value} value={fps.value}>
-                  {fps.label}
-                </option>
-              ))}
-            </select>
           </div>
         </div>
       )

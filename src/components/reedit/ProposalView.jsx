@@ -23,6 +23,8 @@ import PresetEditorModal from './PresetEditorModal'
 import LlmSettingsModal from './LlmSettingsModal'
 import SendToComfyModal from './SendToComfyModal'
 import PlaceholderDetailsModal from './PlaceholderDetailsModal'
+import ProposalInstructionsPanel from './ProposalInstructionsPanel'
+import { videoVersionList, activeVideoVersionId, setActiveVideoVersion } from '../../services/placeholderVersions'
 
 // Shared with AnalysisView: fixed row height, aspect-derived width.
 const THUMB_HEIGHT = 100
@@ -32,6 +34,41 @@ function toComfyUrl(filePath, version) {
   if (!filePath) return null
   const base = `comfystudio://${encodeURIComponent(filePath)}`
   return version ? `${base}?v=${encodeURIComponent(version)}` : base
+}
+
+// Resolve what a placeholder row's thumbnail should show, mirroring the
+// timeline populator's priority (reeditEdlToTimeline.js): the
+// most-recently-generated video (either backend) ▸ the selected/latest
+// first-frame candidate ▸ the "GENERATION NEEDED" SVG card. Returns
+// `{ url, isVideo }` so the caller can pick <video> vs <img>.
+function placeholderThumbMedia(row, sourceVideo, fills, rowArrayIndex) {
+  const gen = row.genSpec || {}
+  const pid = row.fillId || `placeholder-${rowArrayIndex}`
+  const fill = (fills && fills[pid]) || null
+  const fillTs = fill?.createdAt ? Date.parse(fill.createdAt) || 0 : 0
+  const genTs = gen.generatedAt ? Date.parse(gen.generatedAt) || 0 : 0
+  // Pick whichever backend rendered more recently (matches the populator).
+  const winnerPath = fill?.path && gen.generatedPath
+    ? (genTs >= fillTs ? gen.generatedPath : fill.path)
+    : (fill?.path || gen.generatedPath || null)
+  const winnerTs = winnerPath === gen.generatedPath ? gen.generatedAt : fill?.createdAt
+  if (winnerPath) {
+    return { url: toComfyUrl(winnerPath, winnerTs), isVideo: true }
+  }
+  const candidates = Array.isArray(gen.frameCandidates) ? gen.frameCandidates : []
+  if (candidates.length > 0) {
+    const sel = candidates.find((c) => c?.id === gen.selectedFrameId) || candidates[candidates.length - 1]
+    if (sel?.path) return { url: toComfyUrl(sel.path, sel.createdAt), isVideo: false }
+  }
+  return {
+    url: buildPlaceholderSvgDataUrl({
+      note: row.note,
+      index: row.index,
+      width: sourceVideo?.width,
+      height: sourceVideo?.height,
+    }),
+    isVideo: false,
+  }
 }
 
 function formatTc(seconds) {
@@ -449,6 +486,11 @@ function ProposalView({ onNavigate }) {
   const [draft, setDraft] = useState(savedProposal)
   const [brandBrief, setBrandBrief] = useState(savedProposal?.brandBrief || '')
   const [extraInstructions, setExtraInstructions] = useState(savedProposal?.extraInstructions || '')
+  // Rule overrides bundled with the active Instructions preset. Empty
+  // by default — every key is optional and falls back to the factory
+  // text in reeditProposer.js. Hydrated from the saved proposal when
+  // present so a re-open keeps the user's last edits visible.
+  const [proposalRules, setProposalRules] = useState(savedProposal?.rules || {})
   const [metric, setMetric] = useState(savedProposal?.metric || 'Comprehension')
   // Target duration for the re-edited video. Defaults to whatever was
   // saved with the last proposal, falling back to the source video's
@@ -456,6 +498,17 @@ function ProposalView({ onNavigate }) {
   const [targetDurationSec, setTargetDurationSec] = useState(
     savedProposal?.targetDurationSec || sourceVideo?.duration || 30
   )
+  // Strict-duration toggle shared with the Simple view via localStorage.
+  // Default ON so the EDL respects the user's number tightly (±3 %)
+  // instead of drifting up to ±15 %.
+  const [strictDuration, setStrictDurationState] = useState(() => {
+    try { return JSON.parse(localStorage.getItem('reedit.proposal.strictDuration.v1') ?? 'true') !== false }
+    catch { return true }
+  })
+  const setStrictDuration = (val) => {
+    setStrictDurationState(val)
+    try { localStorage.setItem('reedit.proposal.strictDuration.v1', JSON.stringify(val)) } catch (_) {}
+  }
   // Master toggle: when off, the timeline populator skips any
   // genSpec.generatedPath and falls back to the selected frame still
   // for placeholder rows. Lets the user A/B the i2v output against
@@ -717,6 +770,12 @@ function ProposalView({ onNavigate }) {
         additionalAssets: capabilities?.useAdditionalAssets
           ? (currentProject?.additionalAssets || null)
           : null,
+        strictDuration,
+        // Forward the rule overrides from the active Instructions
+        // preset so the proposer swaps in the user-edited copy of
+        // each editable block (system role / editing craft / output
+        // rules / placeholder quality).
+        rules: proposalRules,
       })
       setDraft(proposal)
     } catch (err) {
@@ -894,6 +953,10 @@ function ProposalView({ onNavigate }) {
         // reference an `add-` shot id). Always passed — the placer
         // gates internally on the capability flag.
         additionalAssets: currentProject?.additionalAssets || null,
+        // Generated placeholder fills from Kling i2v. The placer looks
+        // each row's placeholder id up here; rows without a fill stay
+        // as the legacy magenta "AI fill" placeholders on the timeline.
+        fills: currentProject?.fills || null,
         onProgress: ({ index, total }) => {
           setApplyProgress({ current: index, total })
         },
@@ -999,6 +1062,31 @@ function ProposalView({ onNavigate }) {
   )
   const isDirty = draft && draft !== savedProposal
   const edl = draft?.edl || []
+
+  // Persist a new genSpec onto one EDL row (used by the details modal and
+  // the per-row version switcher). Mirrors the modal's save path so an
+  // expensive generation isn't lost.
+  const writeRowGenSpec = (rowArrayIndex, nextGenSpec) => {
+    if (!draft) return
+    const nextDraft = {
+      ...draft,
+      edl: draft.edl.map((r, idx) => (idx === rowArrayIndex ? { ...r, genSpec: nextGenSpec } : r)),
+    }
+    setDraft(nextDraft)
+    saveProject({ proposal: { ...nextDraft, status: 'draft' } })
+  }
+
+  // Step the active video version on a row by a delta (wraps). Used by
+  // the compact ‹ v/n › switcher under each placeholder thumbnail.
+  const switchRowVersion = (rowArrayIndex, delta) => {
+    const r = draft?.edl?.[rowArrayIndex]
+    const list = videoVersionList(r?.genSpec)
+    if (list.length < 2) return
+    const cur = Math.max(0, list.findIndex((v) => v.id === activeVideoVersionId(r.genSpec)))
+    const n = list.length
+    const idx = ((cur + delta) % n + n) % n
+    writeRowGenSpec(rowArrayIndex, setActiveVideoVersion(r.genSpec, list[idx].id))
+  }
 
   // `placedVoSegments` is declared at the top of the component to
   // keep React's hook order consistent (see comment up there).
@@ -1148,7 +1236,7 @@ function ProposalView({ onNavigate }) {
               </div>
               <div>
                 <label className="block text-xs font-medium text-sf-text-muted uppercase tracking-wider mb-2">Target duration</label>
-                <div className="flex items-center gap-2">
+                <div className="flex items-center gap-2 flex-wrap">
                   <div className="inline-flex items-center rounded-lg border border-sf-dark-700 bg-sf-dark-900 overflow-hidden">
                     <input
                       type="number"
@@ -1164,6 +1252,18 @@ function ProposalView({ onNavigate }) {
                     />
                     <span className="pr-3 pl-1 text-xs text-sf-text-muted">seconds</span>
                   </div>
+                  <label
+                    className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-md border border-sf-dark-700 bg-sf-dark-900 text-[11px] text-sf-text-secondary cursor-pointer hover:border-sf-dark-500 hover:text-sf-text-primary"
+                    title="When ON, the proposer must land within ±3% of the target (instead of ±15%) and retries up to 2× if it doesn't."
+                  >
+                    <input
+                      type="checkbox"
+                      checked={strictDuration}
+                      onChange={(e) => setStrictDuration(e.target.checked)}
+                      className="accent-sf-accent"
+                    />
+                    Strict
+                  </label>
                   {sourceVideo?.duration && (
                     <button
                       type="button"
@@ -1182,19 +1282,26 @@ function ProposalView({ onNavigate }) {
 
             <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
               <AdConceptPanel analysis={analysis} onNavigate={onNavigate} />
-              <div>
-                <label className="block text-xs font-medium text-sf-text-muted uppercase tracking-wider mb-2">
-                  Extra instructions (optional)
-                  <span className="text-sf-text-muted/70 normal-case ml-2">injected into the LLM prompt</span>
-                </label>
-                <textarea
-                  value={extraInstructions}
-                  onChange={(e) => setExtraInstructions(e.target.value)}
-                  placeholder="E.g. never use scenes where the driver's face is visible, always end with the aerial shot, keep at least one shot of the interior, avoid placeholder shots for the first 5 seconds."
-                  rows={4}
-                  className="w-full text-sm rounded-lg border border-sf-dark-700 bg-sf-dark-900 px-3 py-2 text-sf-text-primary placeholder:text-sf-text-muted/60 focus:outline-none focus:border-sf-accent resize-none"
-                />
-              </div>
+              <ProposalInstructionsPanel
+                value={extraInstructions}
+                onChange={setExtraInstructions}
+                rules={proposalRules}
+                onRulesChange={setProposalRules}
+                previewArgs={{
+                  scenes,
+                  brandBrief,
+                  metric,
+                  totalDurationSec: sourceVideo?.duration || null,
+                  targetDurationSec,
+                  criteria: (presets.find((p) => p.id === metric) || presets[0])?.criteria || '',
+                  capabilities,
+                  adConcept: analysis?.overall || null,
+                  voSegments: analysis?.overall?.voiceover_segments || null,
+                  sundogsReport: metric === 'Sundogs' ? sundogsReport : null,
+                  strictDuration,
+                  additionalAssets: capabilities?.useAdditionalAssets ? (currentProject?.additionalAssets || null) : null,
+                }}
+              />
             </div>
 
             {/* Sundogs report — only visible when the user picks the
@@ -1405,16 +1512,19 @@ function ProposalView({ onNavigate }) {
                     // the row in Proposal matches what lands on the
                     // timeline. ?v= keys the SVG to the row position
                     // + note so edits live-update the preview.
+                    const placeholderMedia = row.kind === 'placeholder'
+                      ? placeholderThumbMedia(row, sourceVideo, currentProject?.fills, i)
+                      : null
                     const thumbUrl = row.kind === 'placeholder'
-                      ? buildPlaceholderSvgDataUrl({
-                          note: row.note,
-                          index: row.index,
-                          width: sourceVideo?.width,
-                          height: sourceVideo?.height,
-                        })
+                      ? placeholderMedia.url
                       : (sourceScene?.thumbnail
                         ? toComfyUrl(sourceScene.thumbnail, analysis?.createdAt)
                         : null)
+                    const thumbIsVideo = Boolean(placeholderMedia?.isVideo)
+                    const rowVersions = row.kind === 'placeholder' ? videoVersionList(row.genSpec) : []
+                    const rowActiveIdx = rowVersions.length
+                      ? Math.max(0, rowVersions.findIndex((v) => v.id === activeVideoVersionId(row.genSpec)))
+                      : -1
                     return (
                       <tr
                         key={`${row.index}-${i}`}
@@ -1429,16 +1539,35 @@ function ProposalView({ onNavigate }) {
                             onMouseEnter={(e) => {
                               if (!thumbUrl) return
                               const rect = e.currentTarget.getBoundingClientRect()
-                              setHover({ url: thumbUrl, rect, previewW, previewH })
+                              setHover({ url: thumbUrl, rect, previewW, previewH, isVideo: thumbIsVideo })
                             }}
                             onMouseLeave={() => setHover(null)}
                           >
                             {thumbUrl ? (
-                              <img src={thumbUrl} alt="" className="w-full h-full object-cover" loading="lazy" />
+                              thumbIsVideo ? (
+                                <video src={thumbUrl} muted preload="metadata" className="w-full h-full object-cover" />
+                              ) : (
+                                <img src={thumbUrl} alt="" className="w-full h-full object-cover" loading="lazy" />
+                              )
                             ) : (
                               <div className="w-full h-full flex items-center justify-center text-[10px] text-sf-text-muted">—</div>
                             )}
                           </div>
+                          {rowVersions.length > 1 && (
+                            <div className="mt-1 flex items-center justify-center gap-1 text-[10px] text-sf-text-secondary" title="Switch generated version (lands on timeline on Apply)">
+                              <button
+                                type="button"
+                                onClick={() => switchRowVersion(i, -1)}
+                                className="px-1 rounded hover:bg-sf-dark-700 text-sf-text-muted hover:text-sf-text-primary"
+                              >‹</button>
+                              <span className="tabular-nums">v{rowActiveIdx + 1}/{rowVersions.length}</span>
+                              <button
+                                type="button"
+                                onClick={() => switchRowVersion(i, 1)}
+                                className="px-1 rounded hover:bg-sf-dark-700 text-sf-text-muted hover:text-sf-text-primary"
+                              >›</button>
+                            </div>
+                          )}
                         </td>
                         <td className="px-3 py-2 text-sf-text-secondary">
                           {row.sourceSceneId || <span className="italic text-sf-text-muted">—</span>}
@@ -1640,15 +1769,8 @@ function ProposalView({ onNavigate }) {
           // Merge the new genSpec into the draft's row and persist
           // immediately so an expensive frame / video generation
           // isn't lost if the user closes the modal right after.
-          if (placeholderDetails == null || !draft) return
-          const nextDraft = {
-            ...draft,
-            edl: draft.edl.map((r, idx) => (
-              idx === placeholderDetails ? { ...r, genSpec: nextGenSpec } : r
-            )),
-          }
-          setDraft(nextDraft)
-          saveProject({ proposal: { ...nextDraft, status: 'draft' } })
+          if (placeholderDetails == null) return
+          writeRowGenSpec(placeholderDetails, nextGenSpec)
         }}
       />
 
@@ -1670,7 +1792,11 @@ function ProposalView({ onNavigate }) {
             className="fixed z-[1000] pointer-events-none rounded-lg overflow-hidden shadow-2xl shadow-black/70 border border-sf-dark-600 bg-sf-dark-900"
             style={{ top, left, width: hover.previewW, height: hover.previewH }}
           >
-            <img src={hover.url} alt="" className="w-full h-full object-cover" />
+            {hover.isVideo ? (
+              <video src={hover.url} muted autoPlay loop preload="metadata" className="w-full h-full object-cover" />
+            ) : (
+              <img src={hover.url} alt="" className="w-full h-full object-cover" />
+            )}
           </div>
         )
       })()}

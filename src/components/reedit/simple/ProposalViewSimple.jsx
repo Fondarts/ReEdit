@@ -1,12 +1,23 @@
 import { useEffect, useMemo, useState } from 'react'
 import {
   Sparkles, Loader2, AlertCircle, FileText, CheckCircle2,
-  ArrowRight, Wand2, Mic, Music, Layers, Upload, ChevronDown, ChevronUp,
+  ArrowRight, Wand2, Mic, Music, Layers, Upload, ChevronDown, ChevronUp, Pencil,
 } from 'lucide-react'
+import FillDetailsModal from './FillDetailsModal'
+import {
+  fillVersionList, activeFillVersionId, setActiveFillVersion, removeFillVersion,
+} from '../../../services/placeholderVersions'
 import useProjectStore from '../../../stores/projectStore'
 import { generateProposal } from '../../../services/reeditProposer'
 import { parseSundogsReport } from '../../../services/reeditSundogsReport'
 import { applyEdlToTimeline } from '../../../services/reeditEdlToTimeline'
+import {
+  generateFillsForProposal,
+  generateFillForRow,
+  placeholderIdFor,
+  FILL_MODELS,
+  DEFAULT_FILL_MODEL,
+} from '../../../services/reeditFills'
 import {
   loadCapabilities as loadProposalCapabilities,
   saveCapabilities as saveProposalCapabilities,
@@ -16,6 +27,61 @@ import {
 import { pickVisionModelId } from '../../../services/reeditCaptioner'
 import SundogsDimensionSection, { DeltaPill } from '../sundogs/SundogsDimensionSection'
 import { SUNDOGS_TECHNIQUES } from '../../../services/reeditSundogsReport'
+import ProposalInstructionsPanel from '../ProposalInstructionsPanel'
+
+// Pull every technical directive out of an EDL note so we can render
+// them as coloured chips at the start of the row. The proposer emits
+// notes like:
+//   "REFRAME zoom=1.8 anchor=0.50,0.45: Push in on the BMW roundel..."
+//   "COLOR: exposure=+15 contrast=+10: Boost brightness..."
+//   "EXTEND +1.5s: Hold the close-up..."
+//   "Address person_in_first_5: Open with the serene close-up."
+// We split on the first colon — everything before, that matches a
+// known keyword, becomes a chip; the rest is the prose body.
+//
+// Returns `{ directives: [{ kind, text }], body }`. `directives` is in
+// emission order so a "REFRAME ... + COLOR ..." note keeps both chips.
+const DIRECTIVE_KEYWORDS = /^(REFRAME|COLOR|EXTEND|REPLACE|TRIM|HOLD|ADDRESS|FILL|GRAPHICS)\b/i
+function parseNoteDirectives(note) {
+  const raw = String(note || '').trim()
+  if (!raw) return { directives: [], body: '' }
+  const colonIdx = raw.indexOf(':')
+  if (colonIdx < 0) return { directives: [], body: raw }
+  const head = raw.slice(0, colonIdx).trim()
+  const body = raw.slice(colonIdx + 1).trim()
+  if (!DIRECTIVE_KEYWORDS.test(head)) {
+    return { directives: [], body: raw }
+  }
+  // Split on `:` again inside `body` to chain multiple directives
+  // (e.g. "REFRAME zoom=1.8: COLOR exposure=+10: actual prose..."),
+  // but only when the next chunk starts with another keyword.
+  const directives = [{ kind: head.split(/\s+/)[0].toUpperCase(), text: head }]
+  let rest = body
+  while (true) {
+    const nextColon = rest.indexOf(':')
+    if (nextColon < 0) break
+    const candidate = rest.slice(0, nextColon).trim()
+    if (!DIRECTIVE_KEYWORDS.test(candidate)) break
+    directives.push({ kind: candidate.split(/\s+/)[0].toUpperCase(), text: candidate })
+    rest = rest.slice(nextColon + 1).trim()
+  }
+  return { directives, body: rest }
+}
+
+// Tailwind classes per directive kind. Stays narrow on purpose — if
+// the proposer invents a new keyword we just fall back to the neutral
+// sf-text-muted treatment instead of trying to autopick a colour.
+const DIRECTIVE_COLOR = {
+  REFRAME:  'bg-sky-500/15 text-sky-300 border-sky-500/30',
+  COLOR:    'bg-amber-500/15 text-amber-300 border-amber-500/30',
+  EXTEND:   'bg-violet-500/15 text-violet-300 border-violet-500/30',
+  REPLACE:  'bg-fuchsia-500/15 text-fuchsia-300 border-fuchsia-500/30',
+  TRIM:     'bg-emerald-500/15 text-emerald-300 border-emerald-500/30',
+  HOLD:     'bg-emerald-500/15 text-emerald-300 border-emerald-500/30',
+  ADDRESS:  'bg-rose-500/15 text-rose-300 border-rose-500/30',
+  FILL:     'bg-fuchsia-500/15 text-fuchsia-300 border-fuchsia-500/30',
+  GRAPHICS: 'bg-amber-500/15 text-amber-300 border-amber-500/30',
+}
 
 function formatTc(seconds) {
   if (!Number.isFinite(seconds)) return '—'
@@ -75,13 +141,32 @@ export default function ProposalViewSimple({ onNavigate }) {
   const sundogsReport = currentProject?.sundogsReport || null
   const additionalAssets = currentProject?.additionalAssets || {}
   const edl           = proposal?.edl || []
+  const fills         = currentProject?.fills || {}
 
   // Local form state. Pre-fill from existing proposal so a re-generation
   // keeps the user's last choices visible.
   const [targetDurationSec, setTargetDurationSec] = useState(
     proposal?.targetDurationSec ?? sourceVideo?.duration ?? 30
   )
+  // Strict-duration toggle. Default ON so when the user asks for 30 s
+  // they actually get ~30 s — the LLM's default ±15 % drift is what
+  // produced the 24 s output on a 30 s ad that prompted this feature.
+  // Persisted to localStorage so the choice survives navigations and
+  // applies to Auto / Advanced as a shared preference.
+  const [strictDuration, setStrictDurationState] = useState(() => {
+    try { return JSON.parse(localStorage.getItem('reedit.proposal.strictDuration.v1') ?? 'true') !== false }
+    catch { return true }
+  })
+  const setStrictDuration = (val) => {
+    setStrictDurationState(val)
+    try { localStorage.setItem('reedit.proposal.strictDuration.v1', JSON.stringify(val)) } catch (_) {}
+  }
   const [extraInstructions, setExtraInstructions] = useState(proposal?.extraInstructions || '')
+  // Rule overrides bundled with the active Instructions preset. The
+  // panel reads / writes this; the proposer accepts it via the `rules`
+  // arg and swaps overridden blocks (system role, editing craft,
+  // output rules, placeholder quality) into the prompt.
+  const [proposalRules, setProposalRules] = useState(proposal?.rules || {})
   const [capabilities, setCapabilities] = useState(() => {
     const persisted = loadProposalCapabilities()
     return { ...DEFAULT_CAPABILITIES, ...persisted }
@@ -113,6 +198,28 @@ export default function ProposalViewSimple({ onNavigate }) {
   const [generateError, setGenerateError] = useState(null)
   const [applying, setApplying] = useState(false)
   const [applyOk, setApplyOk] = useState(false)
+  // Placeholder-fill bulk pipeline state. Stays local — the persisted
+  // project.fills[] is the source of truth for "what's already rendered".
+  const [fillsRunning, setFillsRunning] = useState(false)
+  const [fillProgress, setFillProgress] = useState({ current: 0, total: 0, note: '' })
+  const [fillErrors, setFillErrors] = useState([])
+  // Which i2v model the bulk + per-row Generate buttons dispatch to.
+  // Persisted in localStorage so a single project keeps the user's
+  // last pick across reloads — billing surprises hurt more than
+  // discoverability here.
+  const [fillModelId, setFillModelId] = useState(() => {
+    try { return localStorage.getItem('reedit.fill.modelId') || DEFAULT_FILL_MODEL } catch { return DEFAULT_FILL_MODEL }
+  })
+  const handlePickFillModel = (next) => {
+    setFillModelId(next)
+    try { localStorage.setItem('reedit.fill.modelId', next) } catch { /* quota */ }
+  }
+  // Per-row "Generate" busy flags so two rows can't fire at the same
+  // time and the spinner only spins on the row the user clicked.
+  const [singleFillBusy, setSingleFillBusy] = useState({})    // { [placeholderId]: true }
+  const [singleFillError, setSingleFillError] = useState({})  // { [placeholderId]: string }
+  // Which placeholder row's prompt/versions modal is open (array index).
+  const [fillDetails, setFillDetails] = useState(null)
   const [importingSundogs, setImportingSundogs] = useState(false)
   const [sundogsError, setSundogsError] = useState(null)
   const [sundogsExpanded, setSundogsExpanded] = useState(false)
@@ -177,6 +284,8 @@ export default function ProposalViewSimple({ onNavigate }) {
         voSegments: overall?.voiceover_segments || [],
         additionalAssets,
         sundogsReport,
+        strictDuration,
+        rules: proposalRules,
       })
       const newProposal = {
         edl: result?.edl || [],
@@ -197,12 +306,131 @@ export default function ProposalViewSimple({ onNavigate }) {
     }
   }
 
+  // Bulk-generate every unfilled placeholder via Kling Cloud. The
+  // service handles per-row IPC + persistence; we just translate its
+  // progress events into UI state.
+  async function handleGenerateFills() {
+    if (fillsRunning) return
+    setFillsRunning(true)
+    setGenerateError(null)
+    setFillErrors([])
+    setFillProgress({ current: 0, total: 0, note: '' })
+    try {
+      const res = await generateFillsForProposal({
+        modelId: fillModelId,
+        onProgress: (stage, payload) => {
+          if (stage === 'start') {
+            setFillProgress({ current: 0, total: payload?.total || 0, note: '' })
+            if (payload?.upfrontFailed?.length) setFillErrors(payload.upfrontFailed)
+          } else if (stage === 'begin') {
+            setFillProgress({ current: payload?.current || 0, total: payload?.total || 0, note: payload?.note || '' })
+          } else if (stage === 'error') {
+            setFillErrors((prev) => [...prev, { placeholderId: payload?.placeholderId, error: payload?.error }])
+          }
+        },
+      })
+      if (res.failed?.length > 0) setFillErrors(res.failed)
+    } catch (err) {
+      setGenerateError(err?.message || 'Generate fills failed.')
+    } finally {
+      setFillsRunning(false)
+    }
+  }
+
+  // Single-row generator — invoked by the per-row "Generate" button.
+  async function handleGenerateRow(row, index) {
+    const pid = placeholderIdFor({ ...row, index })
+    if (singleFillBusy[pid]) return
+    setSingleFillBusy((b) => ({ ...b, [pid]: true }))
+    setSingleFillError((e) => ({ ...e, [pid]: null }))
+    try {
+      await generateFillForRow({ row, index, modelId: fillModelId })
+    } catch (err) {
+      setSingleFillError((e) => ({ ...e, [pid]: err?.message || String(err) }))
+    } finally {
+      setSingleFillBusy((b) => ({ ...b, [pid]: false }))
+    }
+  }
+
+  // Persist a partial patch onto one EDL row in the proposal (e.g. a
+  // per-row `fillPrompt` override set from the details modal).
+  const writeRowField = async (rowArrayIndex, patch) => {
+    const proposal = currentProject?.proposal
+    if (!proposal) return
+    const nextEdl = (proposal.edl || []).map((r, i) => (i === rowArrayIndex ? { ...r, ...patch } : r))
+    await saveProject({ proposal: { ...proposal, edl: nextEdl } })
+  }
+
+  // Make a specific fill version active (mirrors its path to the top
+  // level so the thumbnail + timeline pick it up).
+  const setFillVersion = async (rowArrayIndex, versionId) => {
+    const pid = placeholderIdFor({ ...edl[rowArrayIndex], index: rowArrayIndex })
+    const nextFill = setActiveFillVersion(fills[pid], versionId)
+    if (!nextFill) return
+    await saveProject({ fills: { ...fills, [pid]: nextFill } })
+  }
+
+  // Step the active fill version by a delta (wraps). Drives the compact
+  // ‹ v/n › switcher under each placeholder thumbnail.
+  const stepFillVersion = async (rowArrayIndex, delta) => {
+    const pid = placeholderIdFor({ ...edl[rowArrayIndex], index: rowArrayIndex })
+    const list = fillVersionList(fills[pid])
+    if (list.length < 2) return
+    const cur = Math.max(0, list.findIndex((v) => v.id === activeFillVersionId(fills[pid])))
+    const n = list.length
+    const idx = ((cur + delta) % n + n) % n
+    await setFillVersion(rowArrayIndex, list[idx].id)
+  }
+
+  const deleteFillVersion = async (rowArrayIndex, versionId) => {
+    const pid = placeholderIdFor({ ...edl[rowArrayIndex], index: rowArrayIndex })
+    const nextFill = removeFillVersion(fills[pid], versionId)
+    const nextFills = { ...fills }
+    if (nextFill) nextFills[pid] = nextFill
+    else delete nextFills[pid]
+    await saveProject({ fills: nextFills })
+  }
+
+  // Generate from the details modal: persist the prompt override first,
+  // then run the per-row generator with the merged row so the override
+  // actually reaches the model.
+  const handleGenerateFromModal = async (rowArrayIndex, promptText) => {
+    await writeRowField(rowArrayIndex, { fillPrompt: promptText })
+    await handleGenerateRow({ ...edl[rowArrayIndex], index: rowArrayIndex, fillPrompt: promptText }, rowArrayIndex)
+  }
+
+  // Are there any placeholder rows that still need a fill?
+  const placeholderRowsNeedingFill = edl.filter((row) => {
+    if (!row || row.kind !== 'placeholder') return false
+    const pid = placeholderIdFor({ ...row, index: edl.indexOf(row) })
+    return !fills[pid]?.path
+  })
+  const placeholderRowsTotal = edl.filter((row) => row?.kind === 'placeholder').length
+
   async function handleApply() {
     if (applying || edl.length === 0) return
     setApplying(true)
     setApplyOk(false)
     try {
-      await applyEdlToTimeline()
+      // applyEdlToTimeline destructures its args — call it with at
+      // least the edl, scenes and sourceVideo. The previous arg-less
+      // call always threw "EDL is empty." (the function saw edl as
+      // undefined). We mirror what the Advanced ProposalView passes,
+      // but skip the optional generated VO/Music drafts since Simple/
+      // Auto don't expose synthesis pickers.
+      await applyEdlToTimeline({
+        edl,
+        scenes,
+        sourceVideo,
+        useGeneratedVideos: false,
+        capabilities,
+        voiceoverSegments: overall?.voiceover_segments || null,
+        voiceoverPlan: null,
+        generatedVoiceover: null,
+        generatedMusic: null,
+        additionalAssets,
+        fills,
+      })
       const latest = useProjectStore.getState().currentProject?.proposal || {}
       await saveProject({
         proposal: {
@@ -222,13 +450,65 @@ export default function ProposalViewSimple({ onNavigate }) {
   }
 
   // EDL row rendering — keep it compact and read-only in Simple mode.
+  // We attach two derived pieces per row:
+  //   - `sceneRef`: the original Scene the EDL row references (for
+  //      the thumbnail + duration meta).
+  //   - `voLines`: the VO segments that overlap this row's source
+  //      window. The proposer keeps VO in its own track on the
+  //      timeline, but the EDL view is what the user reads first, so
+  //      attaching the spoken line back to each shot helps them sanity-
+  //      check the pairing without flipping to the Editor.
+  const voSegments = useMemo(() => {
+    return Array.isArray(overall?.voiceover_segments) ? overall.voiceover_segments : []
+  }, [overall])
+
   const edlRows = useMemo(() => {
-    return edl.map((row, i) => ({
-      ...row,
-      index: i,
-      sceneRef: scenes.find((s) => s.id === row.sourceSceneId) || null,
-    }))
-  }, [edl, scenes])
+    // Step 1: per-row, find VO segments that overlap the row's source
+    // window. Easy case — the EDL row's source scene is also where the
+    // VO line was spoken originally.
+    const initial = edl.map((row, i) => {
+      const sceneRef = scenes.find((s) => s.id === row.sourceSceneId) || null
+      let voLines = []
+      if (sceneRef && voSegments.length > 0) {
+        const sceneIn = Number(sceneRef.tcIn) || 0
+        const sceneOut = Number(sceneRef.tcOut) || 0
+        voLines = voSegments
+          .filter((seg) => {
+            const segIn  = Number(seg.startSec) || 0
+            const segOut = Number(seg.endSec) || 0
+            return segOut > sceneIn && segIn < sceneOut
+          })
+          .map((seg) => String(seg.text || '').trim())
+          .filter(Boolean)
+      }
+      return {
+        ...row,
+        index: i,
+        sceneRef,
+        voLines,
+      }
+    })
+    // Step 2: bridge mid-line gaps. The proposer often pulls an
+    // intercut shot from a different source moment into the middle of
+    // a VO line — so the row's own scene timestamps don't overlap the
+    // VO segment even though the line keeps playing on the new cut.
+    // If a row has no VO of its own but the rows immediately before
+    // and after share at least one identical VO line, fill this row
+    // with that shared line so the EDL reads as a continuous block.
+    for (let i = 1; i < initial.length - 1; i++) {
+      const row = initial[i]
+      if (row.voLines.length > 0) continue
+      const prev = initial[i - 1].voLines
+      const next = initial[i + 1].voLines
+      if (prev.length === 0 || next.length === 0) continue
+      const shared = prev.filter((line) => next.includes(line))
+      if (shared.length > 0) {
+        row.voLines = shared
+        row.voInherited = true   // optional flag if the renderer wants to style differently
+      }
+    }
+    return initial
+  }, [edl, scenes, voSegments])
 
   if (!sourceVideo) {
     return (
@@ -402,17 +682,27 @@ export default function ProposalViewSimple({ onNavigate }) {
               )
             })()}
 
-            {/* Extra instructions */}
-            <div className="bg-sf-dark-900/40 border border-sf-dark-700 rounded-lg p-3">
-              <label className="text-[10px] uppercase tracking-wider text-sf-text-muted block mb-1">Extra instructions</label>
-              <textarea
-                value={extraInstructions}
-                onChange={(e) => setExtraInstructions(e.target.value)}
-                rows={3}
-                placeholder="Required shots, tone, pacing, brand cues…"
-                className="w-full bg-sf-dark-800 border border-sf-dark-700 rounded px-2 py-1.5 text-sm resize-none"
-              />
-            </div>
+            {/* Instructions — preset library + editable text + optional
+                preview of the full prompt that lands at Gemini. */}
+            <ProposalInstructionsPanel
+              value={extraInstructions}
+              onChange={setExtraInstructions}
+              rules={proposalRules}
+              onRulesChange={setProposalRules}
+              previewArgs={{
+                scenes,
+                brandBrief: '',
+                metric: sundogsReport ? 'Sundogs' : 'Comprehension',
+                totalDurationSec: sourceVideo?.duration || null,
+                targetDurationSec,
+                capabilities,
+                adConcept: overall,
+                voSegments: overall?.voiceover_segments || [],
+                additionalAssets,
+                sundogsReport,
+                strictDuration,
+              }}
+            />
           </div>
 
           {/* RIGHT COLUMN: Target duration + Voiceover + Music */}
@@ -426,10 +716,25 @@ export default function ProposalViewSimple({ onNavigate }) {
                 min={3}
                 max={180}
                 step={1}
-                value={targetDurationSec}
-                onChange={(e) => setTargetDurationSec(Number(e.target.value) || 0)}
+                value={Math.round(Number(targetDurationSec) || 0)}
+                onChange={(e) => {
+                  const v = Math.round(Number(e.target.value) || 0)
+                  if (v > 0) setTargetDurationSec(v)
+                }}
                 className="bg-sf-dark-800 border border-sf-dark-700 rounded px-2 py-1 text-sm w-full"
               />
+              <label className="mt-2 flex items-start gap-2 cursor-pointer text-[11px] text-sf-text-secondary leading-snug">
+                <input
+                  type="checkbox"
+                  checked={strictDuration}
+                  onChange={(e) => setStrictDuration(e.target.checked)}
+                  className="mt-0.5 accent-sf-accent"
+                />
+                <span>
+                  <span className="font-medium text-sf-text-primary">Strict duration.</span>
+                  <span className="text-sf-text-muted">{' '}Force the EDL to land within ±3 % of the target (instead of ±15 %), and retry up to twice if it doesn't.</span>
+                </span>
+              </label>
             </div>
 
             {/* Voiceover */}
@@ -539,6 +844,27 @@ export default function ProposalViewSimple({ onNavigate }) {
           </div>
         )}
 
+        {fillsRunning && fillProgress.note && (
+          <div className="bg-fuchsia-500/10 border border-fuchsia-500/30 text-fuchsia-200 text-xs p-2 rounded flex items-start gap-2">
+            <Loader2 size={14} className="mt-0.5 shrink-0 animate-spin"/>
+            <div className="flex-1">
+              <div className="font-medium">Generating fill {fillProgress.current}/{fillProgress.total}…</div>
+              <div className="opacity-80 line-clamp-2">{fillProgress.note}</div>
+            </div>
+          </div>
+        )}
+
+        {fillErrors.length > 0 && (
+          <div className="bg-red-900/20 border border-red-500/40 text-red-300 text-xs p-2 rounded">
+            <div className="font-medium mb-1">{fillErrors.length} fill{fillErrors.length === 1 ? '' : 's'} failed:</div>
+            <ul className="space-y-0.5 list-disc list-inside max-h-32 overflow-y-auto">
+              {fillErrors.map((f, i) => (
+                <li key={i}><span className="text-sf-text-muted/80 font-mono">{f.placeholderId}:</span> {f.error}</li>
+              ))}
+            </ul>
+          </div>
+        )}
+
         {/* EDL */}
         {edl.length > 0 && (
           <section className="bg-sf-dark-900/40 border border-sf-dark-700 rounded-lg overflow-hidden">
@@ -546,6 +872,40 @@ export default function ProposalViewSimple({ onNavigate }) {
               <div className="text-xs font-medium">Edit decision list</div>
               <div className="ml-2 text-[10px] text-sf-text-muted">({edl.length} shots)</div>
               <div className="ml-auto flex items-center gap-2">
+                {placeholderRowsTotal > 0 && (
+                  <>
+                    <select
+                      value={fillModelId}
+                      onChange={(e) => handlePickFillModel(e.target.value)}
+                      disabled={fillsRunning}
+                      title={FILL_MODELS.find((m) => m.id === fillModelId)?.blurb || ''}
+                      className="bg-sf-dark-800 border border-sf-dark-700 text-sf-text-primary text-[11px] rounded px-2 py-1 focus:outline-none focus:border-sf-accent disabled:opacity-50"
+                    >
+                      {FILL_MODELS.map((m) => (
+                        <option key={m.id} value={m.id}>{m.label}</option>
+                      ))}
+                    </select>
+                    <button
+                      onClick={handleGenerateFills}
+                      disabled={fillsRunning || placeholderRowsNeedingFill.length === 0}
+                      className="px-2.5 py-1 rounded bg-fuchsia-600 hover:bg-fuchsia-500 text-white text-[11px] flex items-center gap-1.5 disabled:opacity-50"
+                      title={
+                        placeholderRowsNeedingFill.length === 0
+                          ? 'All placeholders already have a generated fill. Use the per-row Re-gen button to refresh one.'
+                          : `Generate ${placeholderRowsNeedingFill.length} fill${placeholderRowsNeedingFill.length === 1 ? '' : 's'} on Comfy Cloud.`
+                      }
+                    >
+                      {fillsRunning
+                        ? <Loader2 size={11} className="animate-spin"/>
+                        : <Wand2 size={11}/>}
+                      {fillsRunning
+                        ? `Generating ${fillProgress.current}/${fillProgress.total}…`
+                        : placeholderRowsNeedingFill.length === 0
+                          ? `Fills ready (${placeholderRowsTotal})`
+                          : `Generate fills (${placeholderRowsNeedingFill.length})`}
+                    </button>
+                  </>
+                )}
                 <button
                   onClick={handleApply}
                   disabled={applying}
@@ -568,6 +928,7 @@ export default function ProposalViewSimple({ onNavigate }) {
                   <th className="px-2 py-1.5 text-left w-32">Frame</th>
                   <th className="px-2 py-1.5 text-left w-32">In → Out</th>
                   <th className="px-2 py-1.5 text-left w-28">Source</th>
+                  <th className="px-2 py-1.5 text-left">Voiceover</th>
                   <th className="px-2 py-1.5 text-left">Note</th>
                 </tr>
               </thead>
@@ -582,12 +943,31 @@ export default function ProposalViewSimple({ onNavigate }) {
                         className={`border-t border-sf-dark-800 ${row.excluded ? 'opacity-40' : ''}`}>
                       <td className="px-2 py-1.5 align-top text-sf-text-muted">{row.index + 1}</td>
                       <td className="px-2 py-1.5 align-top">
-                        <div className="w-28 h-16 bg-black border border-sf-dark-800 rounded overflow-hidden flex items-center justify-center">
-                          {thumb
-                            ? <img src={thumb} alt="" className="w-full h-full object-cover"/>
-                            : row.kind === 'placeholder'
-                              ? <Wand2 size={18} className="text-fuchsia-400"/>
-                              : <span className="text-[10px] text-sf-text-muted">—</span>}
+                        <div className="w-28 h-16 bg-black border border-sf-dark-800 rounded overflow-hidden flex items-center justify-center relative">
+                          {(() => {
+                            // Placeholder thumbnail logic:
+                            //   1. If the fill has been generated, show the video itself (will poster on mp4).
+                            //   2. If the placeholder has a referenceFrame, use that as the thumbnail.
+                            //   3. Else fall back to the Wand2 icon (LLM picked nothing).
+                            if (row.kind === 'placeholder') {
+                              const pid = placeholderIdFor(row)
+                              const fill = fills[pid]
+                              if (fill?.path) {
+                                return <video src={toComfyUrl(fill.path, fill.createdAt)} muted preload="metadata" className="w-full h-full object-cover"/>
+                              }
+                              const refSceneId = row.referenceFrame?.sourceSceneId
+                              const refScene = refSceneId ? scenes.find((s) => s.id === refSceneId) : null
+                              const refThumb = refScene?.thumbnail
+                                ? toComfyUrl(refScene.thumbnail, analysis?.captionedAt || analysis?.createdAt)
+                                : null
+                              return refThumb
+                                ? <img src={refThumb} alt="" className="w-full h-full object-cover opacity-70"/>
+                                : <Wand2 size={18} className="text-fuchsia-400"/>
+                            }
+                            return thumb
+                              ? <img src={thumb} alt="" className="w-full h-full object-cover"/>
+                              : <span className="text-[10px] text-sf-text-muted">—</span>
+                          })()}
                         </div>
                       </td>
                       <td className="px-2 py-1.5 align-top font-mono text-[10px] text-sf-text-muted">
@@ -597,14 +977,108 @@ export default function ProposalViewSimple({ onNavigate }) {
                       </td>
                       <td className="px-2 py-1.5 align-top">
                         {row.kind === 'placeholder'
-                          ? <span className="inline-flex items-center gap-1 text-fuchsia-300 text-[11px]"><Wand2 size={10}/> Generated</span>
+                          ? (() => {
+                              const pid = placeholderIdFor(row)
+                              const fill = fills[pid]
+                              const busy = singleFillBusy[pid]
+                              const err = singleFillError[pid]
+                              const versions = fillVersionList(fill)
+                              const activeIdx = versions.length
+                                ? Math.max(0, versions.findIndex((v) => v.id === activeFillVersionId(fill)))
+                                : -1
+                              return (
+                                <div className="flex flex-col gap-1">
+                                  {fill?.path
+                                    ? (
+                                        <span className="inline-flex items-center gap-1 text-emerald-300 text-[11px]" title={`Generated via ${fill.modelId || 'i2v'}`}>
+                                          <CheckCircle2 size={10}/> Fill ready
+                                        </span>
+                                      )
+                                    : (
+                                        <span className="inline-flex items-center gap-1 text-fuchsia-300 text-[11px]">
+                                          <Wand2 size={10}/> AI fill
+                                        </span>
+                                      )
+                                  }
+                                  {row.referenceFrame?.sourceSceneId && (
+                                    <span className="text-sf-text-muted/70 text-[10px]">ref {row.referenceFrame.sourceSceneId}</span>
+                                  )}
+                                  {/* Per-row Generate / Re-gen — independent of
+                                      the bulk button. Same model is used for
+                                      both unless the user changes the dropdown. */}
+                                  <div className="flex items-center gap-1">
+                                    <button
+                                      type="button"
+                                      onClick={() => handleGenerateRow(row, row.index)}
+                                      disabled={busy || fillsRunning || !row.referenceFrame?.sourceSceneId}
+                                      className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded border border-fuchsia-500/40 bg-fuchsia-500/10 hover:bg-fuchsia-500/20 text-fuchsia-200 text-[10px] disabled:opacity-40 disabled:cursor-not-allowed w-fit"
+                                      title={fill?.path
+                                        ? `Regenerate this fill with ${FILL_MODELS.find((m) => m.id === fillModelId)?.label || fillModelId}.`
+                                        : `Generate this fill with ${FILL_MODELS.find((m) => m.id === fillModelId)?.label || fillModelId}.`
+                                      }
+                                    >
+                                      {busy
+                                        ? <Loader2 size={9} className="animate-spin"/>
+                                        : <Wand2 size={9}/>}
+                                      {busy ? '…' : (fill?.path ? 'Re-gen' : 'Generate')}
+                                    </button>
+                                    <button
+                                      type="button"
+                                      onClick={() => setFillDetails(row.index)}
+                                      className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded border border-sf-dark-600 bg-sf-dark-800 hover:bg-sf-dark-700 text-sf-text-secondary hover:text-sf-text-primary text-[10px] w-fit"
+                                      title="Edit prompt & manage versions"
+                                    >
+                                      <Pencil size={9}/> Prompt
+                                    </button>
+                                  </div>
+                                  {versions.length > 1 && (
+                                    <div className="flex items-center gap-1 text-[10px] text-sf-text-secondary" title="Switch generated version (lands on timeline on Apply)">
+                                      <button type="button" onClick={() => stepFillVersion(row.index, -1)} className="px-1 rounded hover:bg-sf-dark-700 text-sf-text-muted hover:text-sf-text-primary">‹</button>
+                                      <span className="tabular-nums">v{activeIdx + 1}/{versions.length}</span>
+                                      <button type="button" onClick={() => stepFillVersion(row.index, 1)} className="px-1 rounded hover:bg-sf-dark-700 text-sf-text-muted hover:text-sf-text-primary">›</button>
+                                    </div>
+                                  )}
+                                  {err && <span className="text-rose-300 text-[10px] line-clamp-2">{err}</span>}
+                                </div>
+                              )
+                            })()
                           : (row.sceneRef
                               ? <span className="text-sf-text-primary text-[11px]">Shot {row.sceneRef.id}</span>
                               : <span className="text-sf-text-muted text-[11px]">—</span>)
                         }
                       </td>
                       <td className="px-2 py-1.5 align-top text-[11px] text-sf-text-secondary leading-snug">
-                        {row.note || row.rationale || ''}
+                        {row.voLines && row.voLines.length > 0 ? (
+                          <div className="space-y-0.5">
+                            {row.voLines.map((line, i) => (
+                              <div key={i} className="italic text-emerald-200/90">"{line}"</div>
+                            ))}
+                          </div>
+                        ) : (
+                          <span className="text-sf-text-muted/50">—</span>
+                        )}
+                      </td>
+                      <td className="px-2 py-1.5 align-top text-[11px] text-sf-text-secondary leading-snug">
+                        {(() => {
+                          const { directives, body } = parseNoteDirectives(row.note || row.rationale || '')
+                          return (
+                            <div className="space-y-1">
+                              {directives.length > 0 && (
+                                <div className="flex flex-wrap gap-1">
+                                  {directives.map((d, i) => (
+                                    <span
+                                      key={i}
+                                      className={`inline-flex items-center px-1.5 py-0.5 rounded border text-[10px] font-mono ${DIRECTIVE_COLOR[d.kind] || 'bg-sf-dark-700/60 text-sf-text-muted border-sf-dark-600'}`}
+                                    >
+                                      {d.text}
+                                    </span>
+                                  ))}
+                                </div>
+                              )}
+                              {body && <div>{body}</div>}
+                            </div>
+                          )
+                        })()}
                       </td>
                     </tr>
                   )
@@ -620,6 +1094,32 @@ export default function ProposalViewSimple({ onNavigate }) {
         )}
 
       </div>
+
+      {fillDetails != null && (() => {
+        const rowArrayIndex = fillDetails
+        const raw = edl[rowArrayIndex]
+        if (!raw) return null
+        const detailRow = { ...raw, index: rowArrayIndex }
+        const pid = placeholderIdFor(detailRow)
+        return (
+          <FillDetailsModal
+            isOpen
+            row={detailRow}
+            fill={fills[pid]}
+            modelId={fillModelId}
+            busy={Boolean(singleFillBusy[pid])}
+            error={singleFillError[pid] || null}
+            canGenerate={Boolean(raw.referenceFrame?.sourceSceneId)}
+            sourceVideo={sourceVideo}
+            onPickModel={handlePickFillModel}
+            onSavePrompt={(text) => writeRowField(rowArrayIndex, { fillPrompt: text })}
+            onGenerate={(text) => handleGenerateFromModal(rowArrayIndex, text)}
+            onSwitchVersion={(vid) => setFillVersion(rowArrayIndex, vid)}
+            onDeleteVersion={(vid) => deleteFillVersion(rowArrayIndex, vid)}
+            onClose={() => setFillDetails(null)}
+          />
+        )
+      })()}
     </div>
   )
 }

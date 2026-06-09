@@ -19,7 +19,17 @@
 
 import { Loader2, AlertCircle, CheckCircle2, RotateCcw, Wand2 } from 'lucide-react'
 
+// Whether this shot is the ad's end-card / brand-signature frame.
+// End-cards are excluded from the optimize pipeline entirely: the
+// graphic IS the shot, and "removing the overlay" would either erase
+// the entire frame or replace it with a meaningless fragment of
+// background. End-cards stay verbatim in the cut.
+export function isEndCardShot(scene) {
+  return Boolean(scene?.videoAnalysis?.is_end_card)
+}
+
 export function shotHasGraphics(scene) {
+  if (isEndCardShot(scene)) return false
   const g = scene?.videoAnalysis?.graphics
   if (!g) return false
   if (g.has_text_on_screen || g.text_content) return true

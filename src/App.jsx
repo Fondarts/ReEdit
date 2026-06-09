@@ -16,7 +16,6 @@ import InspectorPanel from './components/InspectorPanel'
 import ResizeHandle from './components/ResizeHandle'
 import AudioGenerateModal from './components/AudioGenerateModal'
 import SettingsModal from './components/SettingsModal'
-import GettingStartedModal from './components/GettingStartedModal'
 import WelcomeScreen from './components/WelcomeScreen'
 import BottomBar from './components/BottomBar'
 import useProjectStore from './stores/projectStore'
@@ -27,10 +26,10 @@ import AnalysisView from './components/reedit/AnalysisView'
 import OptimizationView from './components/reedit/OptimizationView'
 import ProposalView from './components/reedit/ProposalView'
 import ProjectsView from './components/reedit/ProjectsView'
-import ImportVideoViewSimple from './components/reedit/simple/ImportVideoViewSimple'
-import AnalysisViewSimple from './components/reedit/simple/AnalysisViewSimple'
 import ProposalViewSimple from './components/reedit/simple/ProposalViewSimple'
 import EditorSimple from './components/reedit/simple/EditorSimple'
+import ImportLuckyView from './components/reedit/lucky/ImportLuckyView'
+import ReviewView from './components/reedit/ReviewView'
 import { useUiMode } from './hooks/useUiMode'
 import {
   COMFY_CONNECTION_CHANGED_EVENT,
@@ -49,7 +48,6 @@ function App() {
   const [audioModalType, setAudioModalType] = useState('music')
   const [settingsModalOpen, setSettingsModalOpen] = useState(false)
   const [settingsInitialSection, setSettingsInitialSection] = useState(null)
-  const [gettingStartedOpen, setGettingStartedOpen] = useState(false)
   const [selectedItem, setSelectedItem] = useState({ type: 'shot', id: '2.1' })
   const [mainTab, setMainTab] = useState('editor')
   const [bottomEditorView, setBottomEditorView] = useState('timeline')
@@ -228,15 +226,28 @@ function App() {
     initialize()
   }, [initialize])
 
-  // Under REEDIT_MODE the first surface after opening/creating a project is
-  // not the timeline — it's the re-edit pipeline. We land on the right stage
-  // based on what's already persisted in the project file: no video yet →
-  // Import, video but no approved proposal → Analysis, proposal approved →
-  // Editor. Keyed on project identity (name) so re-opening the same project
-  // mid-session doesn't yank the user out of wherever they are.
+  // Under REEDIT_MODE the first surface after opening/creating a project
+  // is not the timeline — it's the re-edit pipeline. We land on the
+  // right stage (Import / Analysis) only when the user is opening
+  // their FIRST project this session (i.e. coming out of WelcomeScreen
+  // where `currentProject` was null). Once a project is open, the
+  // unified Projects tab lets the user swap to another project from
+  // the left-hand picker — and that swap should NOT yank them out of
+  // wherever they are. We track that distinction with a ref instead of
+  // relying on the dep array alone (which can't tell "first load" apart
+  // from "switched to a different project").
+  const lastSeenProjectNameRef = useRef(null)
   useEffect(() => {
-    if (!REEDIT_MODE || !currentProject) return
-    setMainTab(pickInitialReeditTab(currentProject))
+    if (!REEDIT_MODE) return
+    if (!currentProject) {
+      lastSeenProjectNameRef.current = null
+      return
+    }
+    if (lastSeenProjectNameRef.current === null) {
+      // First time we see any project this session — pick the right tab.
+      setMainTab(pickInitialReeditTab(currentProject))
+    }
+    lastSeenProjectNameRef.current = currentProject.name
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [currentProject?.name])
 
@@ -306,10 +317,6 @@ function App() {
     setAudioModalOpen(true)
   }
 
-  const closeGettingStarted = useCallback(() => {
-    setGettingStartedOpen(false)
-  }, [])
-
   const openSettingsModal = useCallback((section = null) => {
     setSettingsInitialSection(section)
     setSettingsModalOpen(true)
@@ -319,20 +326,6 @@ function App() {
     setMainTab('editor')
     openSettingsModal()
   }, [openSettingsModal])
-
-  const handleOpenGettingStarted = useCallback(() => {
-    setGettingStartedOpen(true)
-  }, [])
-
-  const handleNavigateFromGettingStarted = useCallback((tabId) => {
-    setMainTab(tabId)
-    closeGettingStarted()
-  }, [closeGettingStarted])
-
-  const handleOpenSettingsFromGettingStarted = useCallback((section = null) => {
-    openSettingsModal(section)
-    closeGettingStarted()
-  }, [closeGettingStarted, openSettingsModal])
 
   // Show welcome screen if no project is open
   if (!currentProject) {
@@ -413,7 +406,6 @@ function App() {
         )}
         {/* Full-screen overlay views without long-running operations. Mount
             only when active — nothing important dies when they unmount. */}
-        {mainTab === 'projects' && <ProjectsView />}
         {mainTab === 'export' && <ExportPanel />}
         {mainTab === 'stock' && <StockPanel />}
         {mainTab === 'llm-assistant' && <LLMAssistantWorkspace />}
@@ -427,20 +419,41 @@ function App() {
                 reflects completion when the user comes back to the tab.
             Same pattern Generate already uses below. Render order matters:
             the Editor block sits last so its z-stacked resize handles win
-            over anything that tries to poke through. */}
+            over anything that tries to poke through.
+
+            The Projects tab and the Import tab used to be siblings; they're
+            unified here so the user can swap projects + drop new material
+            from a single surface (matches the WelcomeScreen layout). */}
         <div
-          className="flex-1 flex flex-col min-h-0 overflow-hidden bg-sf-dark-950"
+          className="flex-1 flex flex-row min-h-0 overflow-hidden bg-sf-dark-950"
           style={{ display: mainTab === 'import' ? 'flex' : 'none' }}
         >
-          {uiMode === 'simple'
-            ? <ImportVideoViewSimple onVideoImported={() => setMainTab('analysis')} />
-            : <ImportVideoView onVideoImported={() => setMainTab('analysis')} />}
+          {/* Left half: project picker. Mounted only when the tab is
+              active so its recent-project hydration doesn't run in the
+              background while the user is in Analysis / Proposal.
+              No auto-navigation on click — the user lives in this
+              unified tab and just wants the assets panel on the right
+              to reflect whichever project they pick. */}
+          {mainTab === 'import' && (
+            <div className="basis-1/2 min-w-0 overflow-y-auto border-r border-sf-dark-800">
+              <ProjectsView />
+            </div>
+          )}
+          {/* Right half: import slots. These are kept MOUNTED across
+              tab switches (no inner conditional) so a long stem-
+              separation job started here keeps streaming progress when
+              the user is on Analysis or Proposal. */}
+          <div className="basis-1/2 min-w-0 flex flex-col overflow-hidden">
+            {uiMode === 'lucky'
+              ? <ImportLuckyView onProposalReady={() => setMainTab('review')} />
+              : <ImportVideoView onVideoImported={() => setMainTab('analysis')} />}
+          </div>
         </div>
         <div
           className="flex-1 flex flex-col min-h-0 overflow-hidden bg-sf-dark-950"
           style={{ display: mainTab === 'analysis' ? 'flex' : 'none' }}
         >
-          {uiMode === 'simple' ? <AnalysisViewSimple /> : <AnalysisView />}
+          <AnalysisView />
         </div>
         <div
           className="flex-1 flex flex-col min-h-0 overflow-hidden bg-sf-dark-950"
@@ -452,24 +465,30 @@ function App() {
           className="flex-1 flex flex-col min-h-0 overflow-hidden bg-sf-dark-950"
           style={{ display: mainTab === 'proposal' ? 'flex' : 'none' }}
         >
-          {uiMode === 'simple'
+          {uiMode === 'lucky'
             ? <ProposalViewSimple onNavigate={setMainTab} />
             : <ProposalView onNavigate={setMainTab} />}
         </div>
+
+        {/* Review tab — A/B between the original cut + its Sundogs PDF
+            report on the left vs. the new cut + an AI-generated review
+            on the right. Mount only when active because the Gemini
+            call is on-demand and the player auto-pauses on unmount. */}
+        {mainTab === 'review' && <ReviewView />}
 
         {/* Editor (Timeline + Preview + Inspector). Mounted whenever
             we're NOT in one of the other workspaces that replace it
             entirely. Staying mounted keeps the InspectorPanel's
             "Commit reframe" progress listener alive while the user
             flips over to Analysis to queue another job. */}
-        {![ 'projects', 'import', 'analysis', 'optimization', 'proposal', 'export', 'stock', 'llm-assistant', 'comfyui', 'generate', 'mog' ].includes(mainTab) && uiMode === 'simple' && (
+        {![ 'projects', 'import', 'analysis', 'optimization', 'proposal', 'review', 'export', 'stock', 'llm-assistant', 'comfyui', 'generate', 'mog' ].includes(mainTab) && uiMode === 'lucky' && (
           <EditorSimple
             timelineHeight={timelineHeight}
             onTimelineResize={handleTimelineResize}
             onOpenAudioGenerate={openAudioModal}
           />
         )}
-        {![ 'projects', 'import', 'analysis', 'optimization', 'proposal', 'export', 'stock', 'llm-assistant', 'comfyui', 'generate', 'mog' ].includes(mainTab) && uiMode !== 'simple' && (
+        {![ 'projects', 'import', 'analysis', 'optimization', 'proposal', 'review', 'export', 'stock', 'llm-assistant', 'comfyui', 'generate', 'mog' ].includes(mainTab) && uiMode === 'advanced' && (
           <>
             {/* Left Panel - Full Height Mode (spans entire left side) */}
             {leftPanelFullHeight && (
@@ -629,7 +648,6 @@ function App() {
       <BottomBar
         projectName={currentProject?.name}
         onOpenSettings={handleOpenSettingsFromBottomBar}
-        onOpenGettingStarted={handleOpenGettingStarted}
       />
 
       {/* Audio Generate Modal */}
@@ -647,14 +665,6 @@ function App() {
           setSettingsInitialSection(null)
         }}
         initialSection={settingsInitialSection}
-      />
-      <GettingStartedModal
-        isOpen={gettingStartedOpen}
-        onClose={closeGettingStarted}
-        projectName={currentProject?.name}
-        defaultProjectsLocation={defaultProjectsLocation}
-        onOpenSettings={handleOpenSettingsFromGettingStarted}
-        onNavigate={handleNavigateFromGettingStarted}
       />
     </div>
   )

@@ -13,6 +13,7 @@ import {
 } from 'lucide-react'
 import useTimelineStore from '../stores/timelineStore'
 import useAssetsStore from '../stores/assetsStore'
+import { useSystemFonts } from '../hooks/useSystemFonts'
 import useProjectStore from '../stores/projectStore'
 import renderCacheService from '../services/renderCache'
 import { saveRenderCache, deleteRenderCache, writeGeneratedOverlayToProject, isElectron } from '../services/fileSystem'
@@ -321,11 +322,7 @@ function DraggableNumberInput({ value, onChange, onCommit, min, max, step = 1, s
   )
 }
 
-// Available fonts for text clips
-const FONT_OPTIONS = [
-  'Inter', 'Arial', 'Helvetica', 'Times New Roman', 'Georgia', 
-  'Courier New', 'Verdana', 'Impact', 'Comic Sans MS', 'Trebuchet MS'
-]
+// Font list comes from `useSystemFonts()` (window.queryLocalFonts).
 
 /**
  * Keyframe button component - shows diamond icon that can be clicked to toggle keyframes
@@ -414,6 +411,10 @@ function KeyframeButton({ clipId, property, clip, playheadPosition }) {
 }
 
 function InspectorPanel({ isExpanded, onToggleExpanded }) {
+  // OS-installed fonts for the text-clip Font dropdown. Loads async
+  // via window.queryLocalFonts(); shows a small fallback list until
+  // the call resolves.
+  const fontOptions = useSystemFonts()
   const [expandedSections, setExpandedSections] = useState(() => {
     try {
       const raw = localStorage.getItem(INSPECTOR_EXPANDED_SECTIONS_KEY)
@@ -3649,7 +3650,7 @@ function InspectorPanel({ isExpanded, onToggleExpanded }) {
                 onChange={(e) => handleTextPropertyCommit('fontFamily', e.target.value)}
                 className="w-full bg-sf-dark-700 border border-sf-dark-600 rounded px-2 py-1.5 text-xs text-sf-text-primary focus:outline-none focus:border-sf-accent"
               >
-                {FONT_OPTIONS.map(font => (
+                {fontOptions.map(font => (
                   <option key={font} value={font} style={{ fontFamily: font }}>{font}</option>
                 ))}
               </select>

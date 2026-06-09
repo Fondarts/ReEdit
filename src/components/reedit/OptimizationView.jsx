@@ -105,6 +105,22 @@ export default function OptimizationView({ onNavigate }) {
     return () => { try { unsub?.() } catch (_) { /* ignore */ } }
   }, [])
 
+  // Per-scene LTX IC-Edit state — same shape as `optimizeState` but
+  // streamed from the separate `optimizeFootageLTX` IPC so a VACE run
+  // and an LTX run on different shots can be live at the same time
+  // without trampling each other's progress.
+  const [ltxState, setLtxState] = useState({})
+  useEffect(() => {
+    const unsub = window.electronAPI?.onOptimizeFootageLTXProgress?.((payload) => {
+      if (!payload?.sceneId) return
+      setLtxState((prev) => ({
+        ...prev,
+        [payload.sceneId]: { ...(prev[payload.sceneId] || {}), ...payload },
+      }))
+    })
+    return () => { try { unsub?.() } catch (_) { /* ignore */ } }
+  }, [])
+
   // Mask-only preview state — { [sceneId]: { stage: 'running'|'done'|'error', maskPath?, error? } }
   const [previewState, setPreviewState] = useState({})
 
@@ -148,6 +164,50 @@ export default function OptimizationView({ onNavigate }) {
       })
     } catch (err) {
       setOptimizeState((prev) => ({ ...prev, [scene.id]: { stage: 'error', error: err?.message || String(err) } }))
+    }
+  }
+
+  // LTX IC-Edit handler. Mirrors runOptimizeFootage but invokes the
+  // alternate engine; outputs land in the same per-scene optimizations
+  // stack (with `L{NN}` version tags) so the version dropdown lets the
+  // user A/B between VACE and LTX results without extra plumbing.
+  const runOptimizeFootageLTX = async (scene) => {
+    if (!projectDir) return
+    const current = ltxState[scene.id]
+    if (current?.stage && !['done', 'error'].includes(current.stage)) return
+    setLtxState((prev) => ({ ...prev, [scene.id]: { stage: 'starting' } }))
+    try {
+      const res = await window.electronAPI.optimizeFootageLTX({
+        scene: { id: scene.id, videoAnalysis: scene.videoAnalysis, caption: scene.caption },
+        projectDir,
+        ...getActiveComfyIpcContext(),
+      })
+      if (!res?.success) {
+        setLtxState((prev) => ({ ...prev, [scene.id]: { stage: 'error', error: res?.error || 'Unknown error.' } }))
+        return
+      }
+      setLtxState((prev) => ({ ...prev, [scene.id]: { stage: 'done', outputPath: res.outputPath, inProjectDir: res.inProjectDir, version: res.version } }))
+      const entry = {
+        version: res.version,
+        path: res.outputPath,
+        model: res.modelId || 'ltx-2.3-ic-edit-watermark',
+        engine: 'ltx-ic-edit',
+        composited: true,
+        createdAt: new Date().toISOString(),
+      }
+      const nextScenes = (analysis?.scenes || []).map((s) => {
+        if (s.id !== scene.id) return s
+        const stack = Array.isArray(s.optimizations) ? s.optimizations.slice() : []
+        const idx = stack.findIndex((o) => o.version === entry.version)
+        if (idx >= 0) stack[idx] = entry
+        else stack.push(entry)
+        return { ...s, optimizations: stack, activeOptimizationVersion: entry.version }
+      })
+      await saveProject({
+        analysis: { ...(analysis || {}), scenes: nextScenes },
+      })
+    } catch (err) {
+      setLtxState((prev) => ({ ...prev, [scene.id]: { stage: 'error', error: err?.message || String(err) } }))
     }
   }
 
@@ -419,8 +479,10 @@ export default function OptimizationView({ onNavigate }) {
                     analysisVersion={analysis?.createdAt}
                     projectDir={projectDir}
                     state={optimizeState[scene.id]}
+                    ltxState={ltxState[scene.id]}
                     previewState={previewState[scene.id]}
                     onRun={() => runOptimizeFootage(scene)}
+                    onRunLTX={() => runOptimizeFootageLTX(scene)}
                     onPreview={() => runPreviewMask(scene)}
                     onSetActiveVersion={setSceneActiveVersion}
                   />
@@ -578,8 +640,10 @@ function OptimizeShotCard({
   analysisVersion,
   projectDir,
   state,
+  ltxState,
   previewState,
   onRun,
+  onRunLTX,
   onPreview,
   onSetActiveVersion,
 }) {
@@ -664,6 +728,36 @@ function OptimizeShotCard({
           onSetActiveVersion={onSetActiveVersion}
           disabled={!projectDir}
         />
+        {/* Alternative engine: LTX 2.3 IC-Edit watermark-removal LoRA.
+            Runs the joyfox/LTX2.3-ICEdit-Insight reference workflow
+            entirely inside ComfyUI — no external mask, no make_mask.py,
+            no VACE. Output lands in the same per-scene optimizations
+            stack with an L{NN} tag so the version dropdown above lets
+            the user A/B against the VACE versions. */}
+        {onRunLTX && (
+          <button
+            type="button"
+            onClick={onRunLTX}
+            disabled={!projectDir || (ltxState?.stage && !['done', 'error'].includes(ltxState.stage))}
+            className="text-[11px] px-2 py-1 rounded border border-violet-500/40 bg-violet-500/10 text-violet-200 hover:bg-violet-500/20 disabled:opacity-50 disabled:cursor-not-allowed flex items-center justify-center gap-1.5"
+            title="Run the LTX 2.3 IC-Edit watermark-removal LoRA. No external mask needed; the model infers the overlay from the source clip + prompt."
+          >
+            {(() => {
+              const stage = ltxState?.stage
+              if (!stage || stage === 'done' || stage === 'error') {
+                return <>Try LTX IC-Edit{ltxState?.version ? ` · ${ltxState.version}` : ''}</>
+              }
+              if (stage === 'error') return <>Failed — retry LTX</>
+              const elapsed = Number.isFinite(ltxState?.elapsedSec)
+                ? `${ltxState.elapsedSec}s`
+                : stage
+              return <>LTX… {elapsed}</>
+            })()}
+          </button>
+        )}
+        {ltxState?.stage === 'error' && ltxState?.error && (
+          <div className="text-[10px] text-rose-300 leading-tight">{ltxState.error}</div>
+        )}
       </div>
     </div>
   )

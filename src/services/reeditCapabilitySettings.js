@@ -24,22 +24,29 @@ export const I2V_MODEL_OPTIONS = [
 ]
 
 export const UPSCALE_MODEL_OPTIONS = [
-  { id: '4x_NMKD-Siax_200k.pth', label: '4x NMKD-Siax 200k (default — sharper, real footage)' },
-  { id: 'RealESRGAN_x4plus.pth', label: 'RealESRGAN x4+ (softer, safer)' },
+  { id: 'RealESRGAN_x4plus.pth', label: 'RealESRGAN x4+ (default — works on Cloud + Local)' },
+  { id: '4x_NMKD-Siax_200k.pth', label: '4x NMKD-Siax 200k (sharper, local only)' },
   { id: 'RealESRGAN_x4plus_anime_6B.pth', label: 'RealESRGAN x4+ Anime (for cartoons)' },
 ]
 
 export const DEFAULT_CAPABILITY_SETTINGS = Object.freeze({
   footageGeneration: {
-    model: 'ltx-2.3',
-    // Max seconds of generated footage per placeholder shot. LTX 2.3
-    // sweet-spot is 2-4 s; longer durations tend to drift.
-    maxDurationSec: 4,
-    // Content filters — let the proposer know what kinds of fills it
-    // may request. A "no faces" setting biases the prompt away from
-    // identifiable people (useful for brands that don't have model
-    // releases for AI-generated actors).
-    allowProducts: true,
+    // Default engine is now Kling (Comfy Cloud image-to-video with
+    // reference-image support). LTX 2.3 is still available as a fallback
+    // for users on local Comfy who don't want to pay per-fill.
+    model: 'kling-i2v',
+    // Max seconds of generated footage per placeholder shot. The LLM
+    // is told to pick what feels natural for each beat (typically
+    // 1.0–2.5 s for ad-style intercuts); this is the hard ceiling
+    // applied both in the proposer prompt and as a clamp inside the
+    // generator. Push beyond 3 s only when you really need a held
+    // beat — i2v models drift past that range.
+    maxDurationSec: 3,
+    // Content filters. Defaults match the brief: no product shots
+    // (avoid generating mis-rendered logos / packaging), keep faces +
+    // text off too since those are the standard image-gen failure
+    // modes. Users can flip any of these in Settings → Capabilities.
+    allowProducts: false,
     allowFaces: true,
     allowText: false,
   },
@@ -59,7 +66,7 @@ export const DEFAULT_CAPABILITY_SETTINGS = Object.freeze({
     // Upscale model used by Commit reframe (the ComfyUI pass that
     // bakes the zoom+crop into a full-resolution MP4). Stored here so
     // main.js can read it per-run instead of hard-coding.
-    upscaleModel: '4x_NMKD-Siax_200k.pth',
+    upscaleModel: 'RealESRGAN_x4plus.pth',
   },
   // Music + VO knobs are stubbed for now — UI shows "coming soon"
   // so the section layout stays stable as we flesh them out.
