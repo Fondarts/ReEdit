@@ -9,6 +9,8 @@ import useProjectStore from '../../stores/projectStore'
 import { generateProposal } from '../../services/reeditProposer'
 import { parseSundogsReport } from '../../services/reeditSundogsReport'
 import SundogsReportPanel from './sundogs/SundogsReportPanel'
+import AdReportPanel from './AdReportPanel'
+import { isGeminiReportMode } from '../../services/reeditReportSource'
 import { applyEdlToTimeline, buildPlaceholderSvgDataUrl } from '../../services/reeditEdlToTimeline'
 import { generateFillForPlaceholder, sendPlaceholderWorkflowToComfyUI } from '../../services/reeditGenerate'
 import { useReeditPresets } from '../../hooks/useReeditPresets'
@@ -729,7 +731,12 @@ function ProposalView({ onNavigate }) {
         // Otherwise the prompt would carry a # Sundogs Report block
         // even when the LLM is supposed to optimise against ABCD or a
         // single-dimension metric — confusing the role.
-        sundogsReport: selected?.id === 'Sundogs' ? sundogsReport : null,
+        sundogsReport: (selected?.id === 'Sundogs' && !isGeminiReportMode()) ? sundogsReport : null,
+        // Gemini ad report — when the report-source toggle is on, feed the
+        // Gemini-generated SWO report (produced in the Projects tab) into
+        // the proposal regardless of which metric is active. Its
+        // weaknesses/opportunities become the brief.
+        adReport: isGeminiReportMode() ? (currentProject?.adReport || null) : null,
         // Creative strategist's read of the original ad, produced by the
         // Analyze pass in AnalysisView. Drives the "preserve original
         // intent" block in the prompt so the proposer doesn't drift off
@@ -1297,7 +1304,8 @@ function ProposalView({ onNavigate }) {
                   capabilities,
                   adConcept: analysis?.overall || null,
                   voSegments: analysis?.overall?.voiceover_segments || null,
-                  sundogsReport: metric === 'Sundogs' ? sundogsReport : null,
+                  sundogsReport: (metric === 'Sundogs' && !isGeminiReportMode()) ? sundogsReport : null,
+                  adReport: isGeminiReportMode() ? (currentProject?.adReport || null) : null,
                   strictDuration,
                   additionalAssets: capabilities?.useAdditionalAssets ? (currentProject?.additionalAssets || null) : null,
                 }}
@@ -1310,7 +1318,7 @@ function ProposalView({ onNavigate }) {
                 injected into the proposal prompt as a `# Sundogs
                 Report` block so the EDL directly addresses the
                 negative deltas / "evaluate" techniques. */}
-            {metric === 'Sundogs' && (
+            {metric === 'Sundogs' && !isGeminiReportMode() && (
               <div className="mt-4">
                 <SundogsReportPanel
                   report={sundogsReport}
@@ -1318,6 +1326,24 @@ function ProposalView({ onNavigate }) {
                   error={reportError}
                   onPickFile={importSundogsReport}
                 />
+              </div>
+            )}
+
+            {/* Gemini mode: the ad report is generated in the Projects
+                tab. Surface it read-only here so the user sees exactly
+                what's driving the proposal (and a nudge if it's missing). */}
+            {isGeminiReportMode() && (
+              <div className="mt-4">
+                {currentProject?.adReport ? (
+                  <AdReportPanel
+                    report={currentProject.adReport}
+                    title="Ad report (Gemini) — feeding this proposal"
+                  />
+                ) : (
+                  <div className="rounded-lg border border-dashed border-sf-dark-700 bg-sf-dark-900/40 p-4 text-center text-[12px] text-sf-text-muted">
+                    No Gemini ad report yet. Generate it from the <span className="text-sf-text-primary">Projects</span> tab — it becomes the brief this proposal optimises against.
+                  </div>
+                )}
               </div>
             )}
 

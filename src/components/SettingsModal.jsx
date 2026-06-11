@@ -2,7 +2,7 @@ import { useState, useEffect, useMemo } from 'react'
 import {
   X, Server, FolderOpen, Palette, Save,
   HardDrive, Keyboard, Wrench,
-  KeyRound, CheckCircle2, ExternalLink, Sparkles, Brain,
+  KeyRound, CheckCircle2, ExternalLink, Sparkles, Brain, FileText,
 } from 'lucide-react'
 import useProjectStore from '../stores/projectStore'
 import { THEMES, getStoredThemeId, applyTheme } from '../config/themes'
@@ -12,6 +12,7 @@ import ComfyCloudSettingsSection from './ComfyCloudSettingsSection'
 import ComfyLauncherLogViewer from './ComfyLauncherLogViewer'
 import CapabilitiesSettingsSection from './CapabilitiesSettingsSection'
 import LlmSettingsSection from './reedit/LlmSettingsSection'
+import ReportSourceSettingsSection from './ReportSourceSettingsSection'
 import ApiKeyDialog from './ApiKeyDialog'
 import {
   COMFY_PARTNER_KEY_CHANGED_EVENT,
@@ -83,6 +84,12 @@ const SETTINGS_SECTIONS = [
     title: 'LLM Models',
     icon: Brain,
     description: 'Pick which LLM backend + model powers each pipeline step (analysis, proposal, embeddings).',
+  },
+  {
+    id: 'report',
+    title: 'Report Source',
+    icon: FileText,
+    description: 'Choose where the ad performance report comes from: an imported Sundogs PDF or a Gemini analysis of the video.',
   },
   {
     id: 'appearance',
@@ -669,6 +676,9 @@ function GeneralTab({ initialSection = null }) {
       break
     case 'llm-models':
       activeSectionContent = <LlmSettingsSection />
+      break
+    case 'report':
+      activeSectionContent = <ReportSourceSettingsSection />
       break
     case 'appearance':
       activeSectionContent = (

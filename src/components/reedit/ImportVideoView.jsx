@@ -4,6 +4,9 @@ import useProjectStore from '../../stores/projectStore'
 import useTimelineStore from '../../stores/timelineStore'
 import { resetReeditProjectState } from '../../services/reeditEdlToTimeline'
 import AdditionalMaterialSection from './AdditionalMaterialSection'
+import AdReportPanel from './AdReportPanel'
+import { isGeminiReportMode } from '../../services/reeditReportSource'
+import { generateAdReport } from '../../services/reeditAdReport'
 
 // Renderer-side metadata check via the HTML5 <video> element. This runs
 // through Chromium's demuxer, which covers the same formats the app will
@@ -115,6 +118,11 @@ function ImportVideoView({ onVideoImported }) {
         sourceVideo,
         analysis: null,
         proposal: null,
+        // The ad report describes the OLD source; a fresh import makes it
+        // stale. Clear both the original and the new-cut comparison so
+        // the Projects tab shows the "Generate report" button again.
+        adReport: null,
+        adReportNewCut: null,
         settings: projectSettings,
       })
 
@@ -270,6 +278,63 @@ function ImportVideoView({ onVideoImported }) {
           <AdditionalMaterialSection />
         </div>
       )}
+
+      {/* Ad report (Gemini mode only). Mirrors the role the Sundogs PDF
+          plays in Sundogs mode: it's the performance read of the
+          ORIGINAL cut that the proposal optimises against. Lives here
+          (vs. the Proposal tab where the Sundogs PDF panel sits) because
+          it analyses the imported source directly — no external doc —
+          so it belongs next to the source it reads. */}
+      {existing && (
+        <AdReportSection sourceVideo={existing} saveProject={saveProject} adReport={currentProject?.adReport || null} />
+      )}
+    </div>
+  )
+}
+
+// Gemini ad-report block. Gated on the global report-source toggle so
+// Sundogs users never see it. Generation reads the source video inline
+// (same ~19 MB ceiling as the overall analysis) and persists the result
+// on the project so the Proposal + Review tabs can read it back.
+function AdReportSection({ sourceVideo, saveProject, adReport }) {
+  const [generating, setGenerating] = useState(false)
+  const [error, setError] = useState(null)
+  const currentProject = useProjectStore((s) => s.currentProject)
+
+  if (!isGeminiReportMode()) return null
+
+  const handleGenerate = async () => {
+    if (generating) return
+    if (!sourceVideo?.path) {
+      setError('Import a source video first.')
+      return
+    }
+    setGenerating(true)
+    setError(null)
+    try {
+      const report = await generateAdReport({
+        videoPath: sourceVideo.path,
+        brandBrief: currentProject?.brandBrief || currentProject?.settings?.brandBrief || '',
+        taskHint: 'analysis',
+      })
+      await saveProject({ adReport: report })
+    } catch (err) {
+      console.error('[reedit] ad report generation failed:', err)
+      setError(err?.message || 'Could not generate the report.')
+    } finally {
+      setGenerating(false)
+    }
+  }
+
+  return (
+    <div className="max-w-4xl w-full mt-6">
+      <AdReportPanel
+        report={adReport}
+        generating={generating}
+        error={error}
+        onGenerate={handleGenerate}
+        title="Ad report (Gemini) — original cut"
+      />
     </div>
   )
 }

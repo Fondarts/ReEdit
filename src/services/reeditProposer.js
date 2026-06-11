@@ -28,6 +28,7 @@ import { pickVisionModelId, extractJson } from './reeditCaptioner'
 import { chatCompletion, LLM_TASKS, LLM_BACKENDS, loadLlmSettings } from './reeditLlmClient'
 import { INLINE_BYTE_LIMIT } from './geminiClient'
 import { loadCapabilitySettings } from './reeditCapabilitySettings'
+import { renderAdReportForPrompt } from './reeditAdReport'
 
 export const PROPOSAL_METRICS = [
   {
@@ -1039,7 +1040,7 @@ export const DEFAULT_RULES = {
   outputRules: DEFAULT_OUTPUT_RULES,
 }
 
-export function buildUserPrompt({ scenes, brandBrief, extraInstructions, metric, totalDurationSec, targetDurationSec, criteria, correctionNote, capabilities, adConcept, voSegments, generatedVoiceover, generatedMusic, additionalAssets, sundogsReport, strictDuration, rules }) {
+export function buildUserPrompt({ scenes, brandBrief, extraInstructions, metric, totalDurationSec, targetDurationSec, criteria, correctionNote, capabilities, adConcept, voSegments, generatedVoiceover, generatedMusic, additionalAssets, sundogsReport, adReport, strictDuration, rules }) {
   const shotLog = renderShotLog(scenes)
   // Alternative footage block — only rendered when the capability is
   // on. The block is appended after the main shot log so the LLM treats
@@ -1159,6 +1160,12 @@ export function buildUserPrompt({ scenes, brandBrief, extraInstructions, metric,
   // otherwise so the prompt doesn't carry stale or irrelevant scoring
   // when a different framework (ABCD / single-dimension) is active.
   const sundogsBlock = renderSundogsReport(sundogsReport)
+  // Gemini ad report — the alternative to the Sundogs PDF (report-source
+  // toggle). When present, its weaknesses/opportunities are the brief
+  // the proposer optimises against. Mutually exclusive with the Sundogs
+  // block in practice (the report source picks one), but rendered
+  // independently so a stale value never blocks the other.
+  const adReportBlock = adReport ? `\n\n${renderAdReportForPrompt(adReport)}` : ''
   // VO script block: when `generateVoiceover` is on AND a synthesised
   // draft was passed, the FIXED block wins (proposer doesn't pick or
   // reorder; the user already authored the new script). When
@@ -1198,7 +1205,7 @@ export function buildUserPrompt({ scenes, brandBrief, extraInstructions, metric,
     : DEFAULT_PLACEHOLDER_QUALITY
 
   return `# Goal
-Re-edit this commercial to improve its ${metric} score.${framework}${sundogsBlock}
+Re-edit this commercial to improve its ${metric} score.${framework}${sundogsBlock}${adReportBlock}
 
 # Brand brief
 ${brandBrief?.trim() || '(not provided — infer from the shot log)'}${extraBlock}${adConceptBlock}${voScriptBlock}${musicBedBlock}${capabilitiesBlock}${editingCraftBlock}
@@ -1245,6 +1252,7 @@ export async function generateProposal({
   generatedMusic,     // selected synthesised music draft — { tags, bpm, keyscale, durationSec, synthesis } | null
   additionalAssets,   // currentProject.additionalAssets — only consumed when capability `useAdditionalAssets` is on
   sundogsReport,      // SundogsReport produced by reeditSundogsReport.js — only consumed when metric === 'Sundogs'
+  adReport,           // Gemini ad report (reeditAdReport.js) — consumed when report-source toggle is 'gemini'
   strictDuration,     // boolean — when true, the proposer treats the target duration as an EXACT requirement (±3 %) and retries more aggressively on under/over shoot. Default false (±15 % tolerance, single retry).
   rules,              // RulePreset.rules — { systemRole, editingCraft, placeholderQuality, outputRules }. Each field is optional; falls back to DEFAULT_RULES.
 } = {}) {
@@ -1309,7 +1317,7 @@ export async function generateProposal({
   // so this path works for both LM Studio and the Anthropic backend
   // without the proposer knowing which is active.
   const runOnce = async (correctionNote) => {
-    const userPromptText = buildUserPrompt({ scenes, brandBrief, extraInstructions, metric: targetMetric, totalDurationSec, targetDurationSec, criteria: effectiveCriteria, correctionNote, capabilities, adConcept, voSegments, generatedVoiceover, generatedMusic, additionalAssets, sundogsReport, strictDuration, rules })
+    const userPromptText = buildUserPrompt({ scenes, brandBrief, extraInstructions, metric: targetMetric, totalDurationSec, targetDurationSec, criteria: effectiveCriteria, correctionNote, capabilities, adConcept, voSegments, generatedVoiceover, generatedMusic, additionalAssets, sundogsReport, adReport, strictDuration, rules })
     // When we have a video ready, compose the user message as a
     // content array: the prompt first (order matters — Gemini treats
     // the last text as the active instruction) then the video. The

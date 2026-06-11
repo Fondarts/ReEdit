@@ -21,6 +21,9 @@ import SundogsDimensionSection, { DeltaPill } from './sundogs/SundogsDimensionSe
 import { SUNDOGS_TECHNIQUES, parseSundogsReport } from '../../services/reeditSundogsReport'
 import { generateAiSundogsReview } from '../../services/reeditSundogsReview'
 import { exportTimeline } from '../../services/exporter'
+import AdReportPanel from './AdReportPanel'
+import { isGeminiReportMode } from '../../services/reeditReportSource'
+import { generateAdReport } from '../../services/reeditAdReport'
 
 // Same helper the other views use to point a <video> at a project asset.
 function toComfyUrl(filePath, version) {
@@ -262,6 +265,12 @@ export default function ReviewView() {
   const newCutReport  = currentProject?.sundogsReportNewCut || null
   const aiReview      = currentProject?.aiSundogsReview || null
   const reviewPreview = currentProject?.reviewPreview || null
+  // Gemini report-source mode: the original ad report (from the Projects
+  // tab) and the new-cut ad report (re-scored here on Evaluate). When the
+  // toggle is 'gemini' these replace the Sundogs PDF columns.
+  const geminiMode    = isGeminiReportMode()
+  const adReport       = currentProject?.adReport || null
+  const adReportNewCut = currentProject?.adReportNewCut || null
 
   // PDF picker state for the new-cut report. Mirrors the lucky / proposal
   // import flows (parse via Gemini → save under its own project field).
@@ -410,11 +419,22 @@ export default function ReviewView() {
         console.log('[ReviewView] reusing cached preview — timeline unchanged.')
       }
       setStage('analyzing')
-      const review = await generateAiSundogsReview({
-        videoPath: previewPath,
-        originalReport: sundogsReport,
-      })
-      await saveProject({ aiSundogsReview: review })
+      if (geminiMode) {
+        // Gemini report-source mode: re-score the new cut on the same
+        // axes as the original ad report so the two are comparable.
+        const newReport = await generateAdReport({
+          videoPath: previewPath,
+          originalReport: adReport,
+          taskHint: 'review',
+        })
+        await saveProject({ adReportNewCut: newReport })
+      } else {
+        const review = await generateAiSundogsReview({
+          videoPath: previewPath,
+          originalReport: sundogsReport,
+        })
+        await saveProject({ aiSundogsReview: review })
+      }
       setStage('idle')
     } catch (err) {
       console.error('[reedit] AI review pipeline failed:', err)
@@ -440,12 +460,13 @@ export default function ReviewView() {
     if (!currentProject) return
     if (stage !== 'idle') return
     if (clipsCount === 0) return
-    if (aiReview && reviewPreview?.path) return  // already done
+    const alreadyDone = geminiMode ? Boolean(adReportNewCut) : Boolean(aiReview)
+    if (alreadyDone && reviewPreview?.path) return  // already done
     autoRanRef.current = true
     // Fire-and-forget; handleEvaluate manages its own state.
     handleEvaluate()
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [currentProject?.name, clipsCount, Boolean(aiReview), Boolean(reviewPreview?.path)])
+  }, [currentProject?.name, clipsCount, geminiMode, Boolean(aiReview), Boolean(adReportNewCut), Boolean(reviewPreview?.path)])
 
   if (!currentProject) {
     return (
@@ -474,7 +495,16 @@ export default function ReviewView() {
               src={toComfyUrl(sourceVideo?.path)}
               emptyHint="No source video imported yet."
             />
-            {sundogsReport ? (
+            {geminiMode ? (
+              adReport ? (
+                <AdReportPanel report={adReport} title="Ad report (Gemini) — original" />
+              ) : (
+                <div className="rounded-lg border border-dashed border-sf-dark-700 bg-sf-dark-900/40 p-6 text-center text-[12px] text-sf-text-muted">
+                  <Sparkles className="w-5 h-5 mx-auto mb-2 text-violet-400/70" />
+                  <div>No Gemini ad report yet. Generate it from the Projects tab to populate this side.</div>
+                </div>
+              )
+            ) : sundogsReport ? (
               <SundogsReportPanel
                 report={sundogsReport}
                 importing={false}
@@ -508,21 +538,35 @@ export default function ReviewView() {
                 occupies on the left column) so the layouts mirror each
                 other; the AI review then sits below as a secondary
                 surface. */}
-            <SundogsReportPanel
-              report={newCutReport}
-              importing={importingNewCut}
-              error={newCutImportError}
-              onPickFile={handlePickNewCutPdf}
-              title="Sundogs report (new cut)"
-              emptyCopy="Already ran the new cut through Sundogs? Drop the resulting PDF here to compare the official scoring against the AI review below."
-            />
-            <AiReviewPanel
-              report={aiReview}
-              stage={stage}
-              progress={renderProgress}
-              error={error}
-              onEvaluate={handleEvaluate}
-            />
+            {geminiMode ? (
+              <AdReportPanel
+                report={adReportNewCut}
+                compareTo={adReport}
+                generating={stage === 'rendering' || stage === 'analyzing'}
+                error={error}
+                onGenerate={handleEvaluate}
+                title="Ad report (Gemini) — new cut"
+                emptyCopy="Click below to render a preview of the new cut and re-score it on the same axes as the original — the deltas show where the re-edit improved (or regressed)."
+              />
+            ) : (
+              <>
+                <SundogsReportPanel
+                  report={newCutReport}
+                  importing={importingNewCut}
+                  error={newCutImportError}
+                  onPickFile={handlePickNewCutPdf}
+                  title="Sundogs report (new cut)"
+                  emptyCopy="Already ran the new cut through Sundogs? Drop the resulting PDF here to compare the official scoring against the AI review below."
+                />
+                <AiReviewPanel
+                  report={aiReview}
+                  stage={stage}
+                  progress={renderProgress}
+                  error={error}
+                  onEvaluate={handleEvaluate}
+                />
+              </>
+            )}
           </div>
         </div>
       </div>
