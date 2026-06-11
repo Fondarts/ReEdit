@@ -135,7 +135,11 @@ export async function generateAdReport({
   modelOverride,
   taskHint = 'analysis',
   temperature = 0.3,
-  maxTokens = 4000,
+  // 4 score ints + 3×(3-6) bullet strings + a summary fits comfortably,
+  // but gemini 3.x flash spends output tokens on internal reasoning even
+  // with thinkingBudget=0, which was clipping the JSON to an empty object.
+  // 8k gives the model headroom to emit the full report.
+  maxTokens = 8000,
 } = {}) {
   if (!videoPath) throw new Error('generateAdReport: missing videoPath.')
 
@@ -209,14 +213,20 @@ export async function generateAdReport({
   }
 
   const parsed = extractJson(rawText) || {}
-  const scores = parsed.scores || {}
-  return {
+  // Gemini sometimes nests the payload (e.g. { report: {...} } or
+  // { data: {...} }) or returns scores flat at the top level. Reach
+  // through one level of common wrappers and fall back to the root so a
+  // valid-but-differently-shaped response still populates the report.
+  const root = parsed.report || parsed.adReport || parsed.data || parsed
+  const scores = root.scores || root || {}
+
+  const report = {
     schemaVersion: 1,
     kind: 'gemini-ad-report',
     meta: {
-      brand: parsed.meta?.brand || null,
-      product: parsed.meta?.product || null,
-      durationSec: Number.isFinite(Number(parsed.meta?.durationSec)) ? Number(parsed.meta.durationSec) : null,
+      brand: root.meta?.brand || root.brand || null,
+      product: root.meta?.product || root.product || null,
+      durationSec: Number.isFinite(Number(root.meta?.durationSec)) ? Number(root.meta.durationSec) : null,
     },
     scores: {
       attention: clampScore(scores.attention),
@@ -225,13 +235,30 @@ export async function generateAdReport({
       action: clampScore(scores.action),
       overall: clampScore(scores.overall),
     },
-    strengths: normalizeBullets(parsed.strengths),
-    weaknesses: normalizeBullets(parsed.weaknesses),
-    opportunities: normalizeBullets(parsed.opportunities),
-    summary: String(parsed.summary || '').trim() || null,
+    strengths: normalizeBullets(root.strengths),
+    weaknesses: normalizeBullets(root.weaknesses),
+    opportunities: normalizeBullets(root.opportunities),
+    summary: String(root.summary || '').trim() || null,
     generatedAt: new Date().toISOString(),
     model: response?.model || model,
   }
+
+  // Don't persist a hollow report — an all-null/empty result means the
+  // model didn't follow the schema (or the JSON didn't parse). Surface
+  // what came back so the user (and we) can see why, instead of staring
+  // at a panel full of em-dashes.
+  const allScoresNull = Object.values(report.scores).every((v) => v == null)
+  const noBullets = !report.strengths.length && !report.weaknesses.length && !report.opportunities.length
+  if (allScoresNull && noBullets && !report.summary) {
+    console.error('[reedit] ad report parse failed. finishReason:', response?.finishReason, '\nraw response:\n', rawText)
+    const snippet = String(rawText).slice(0, 400)
+    throw new Error(
+      `Gemini returned a report we couldn't parse (finishReason: ${response?.finishReason || 'unknown'}). ` +
+      `First 400 chars: ${snippet}`
+    )
+  }
+
+  return report
 }
 
 /**

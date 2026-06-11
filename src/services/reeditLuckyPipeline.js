@@ -23,6 +23,8 @@
 import useProjectStore from '../stores/projectStore'
 import { captionScenes, pickVisionModelId, analyzeOverallAd } from './reeditCaptioner'
 import { generateProposal } from './reeditProposer'
+import { isGeminiReportMode } from './reeditReportSource'
+import { generateAdReport } from './reeditAdReport'
 import { applyEdlToTimeline } from './reeditEdlToTimeline'
 import { getActiveComfyIpcContext } from './localComfyConnection'
 
@@ -146,7 +148,8 @@ export async function runLuckyPipeline({ onProgress, signal, extra = {}, caps } 
   if (!projectDir) {
     throw new Error('Project has no on-disk handle — save the project first.')
   }
-  if (!project.sundogsReport) {
+  const geminiMode = isGeminiReportMode()
+  if (!geminiMode && !project.sundogsReport) {
     throw new Error('Auto mode needs a Sundogs PDF report. Upload it in the Import tab before pressing Go.')
   }
 
@@ -250,6 +253,29 @@ export async function runLuckyPipeline({ onProgress, signal, extra = {}, caps } 
     })
   } else {
     emit('analyze', { message: 'Ad concept already in place.' })
+  }
+  checkAbort(signal)
+
+  // Gemini report-source mode: generate the ad report (SWO + per-dimension
+  // scores) from the source video so the proposal has a brief to optimise
+  // against. Replaces the Sundogs PDF in this mode. Reuses a persisted
+  // report when one already exists (re-run after a failure shouldn't pay
+  // for it twice).
+  if (geminiMode && !readProject()?.adReport) {
+    emit('analyze', { message: 'Generating ad report (Gemini)…' })
+    try {
+      const adReport = await generateAdReport({
+        videoPath: sourceVideo.path,
+        brandBrief: readProject()?.brandBrief || '',
+        taskHint: 'analysis',
+      })
+      await persist({ adReport })
+    } catch (err) {
+      // The report drives the proposal — without it the re-edit has no
+      // brief, so a failure here is fatal to the Auto run (unlike the
+      // best-effort stems step below).
+      throw new Error(`Ad report generation failed: ${err?.message || err}`)
+    }
   }
   checkAbort(signal)
 
@@ -374,7 +400,7 @@ export async function runLuckyPipeline({ onProgress, signal, extra = {}, caps } 
     scenes: finalScenes,
     brandBrief: liveProject?.brandBrief || '',
     extraInstructions: extra.extraInstructions || '',
-    metric: 'Sundogs',
+    metric: geminiMode ? 'Comprehension' : 'Sundogs',
     modelId: undefined,
     totalDurationSec: sourceVideo.duration || null,
     targetDurationSec: Number.isFinite(extra.targetDurationSec)
@@ -406,7 +432,8 @@ export async function runLuckyPipeline({ onProgress, signal, extra = {}, caps } 
     generatedVoiceover: null,
     generatedMusic: null,
     additionalAssets: liveProject?.additionalAssets || {},
-    sundogsReport: liveProject?.sundogsReport,
+    sundogsReport: geminiMode ? null : liveProject?.sundogsReport,
+    adReport: geminiMode ? (liveProject?.adReport || null) : null,
     // Forward the user's strict-duration preference. The caller
     // (ImportLuckyView) reads the same localStorage key the Simple /
     // Advanced views use, so the toggle is consistent across all 3

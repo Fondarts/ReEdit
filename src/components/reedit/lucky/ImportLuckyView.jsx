@@ -19,13 +19,14 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import {
   Upload, Film, Music, Mic, Image as ImageIcon, Video,
   Trash2, Loader2, AlertCircle, CheckCircle2, Dice5,
-  FileText, XCircle, Circle,
+  FileText, XCircle, Circle, Sparkles,
 } from 'lucide-react'
 import useProjectStore from '../../../stores/projectStore'
 import useTimelineStore from '../../../stores/timelineStore'
 import useLuckyRunStore from '../../../stores/luckyRunStore'
 import { resetReeditProjectState } from '../../../services/reeditEdlToTimeline'
 import { parseSundogsReport } from '../../../services/reeditSundogsReport'
+import { isGeminiReportMode } from '../../../services/reeditReportSource'
 import { runLuckyPipeline, LUCKY_STEPS } from '../../../services/reeditLuckyPipeline'
 
 // Asset categorisation — kept in lock-step with ImportVideoViewSimple so
@@ -97,6 +98,9 @@ export default function ImportLuckyView({ onProposalReady }) {
   const main       = currentProject?.sourceVideo || null
   const additional = currentProject?.additionalAssets || {}
   const sundogsReport = currentProject?.sundogsReport || null
+  // Gemini report-source mode: no PDF needed — the pipeline auto-generates
+  // the ad report from the video. The Go gate drops the PDF requirement.
+  const geminiMode = isGeminiReportMode()
 
   // ─── Pending asset list (before the user confirms the drop)
   const [pending, setPending]   = useState([])
@@ -404,7 +408,7 @@ export default function ImportLuckyView({ onProposalReady }) {
   const allPendingCategorised = pending.every((p) => p.category)
   const goDisabled =
     !projectDir
-    || !sundogsReport
+    || (!geminiMode && !sundogsReport)
     || running
     || !willHaveMain
     || !allPendingCategorised
@@ -629,7 +633,22 @@ export default function ImportLuckyView({ onProposalReady }) {
           </div>
         )}
 
-        {/* Sundogs PDF gate — required to enable the Go button. */}
+        {/* Gemini report-source mode: no PDF gate. The pipeline generates
+            the ad report from the video as its first analysis step, so
+            there's nothing to attach — just a heads-up. */}
+        {geminiMode ? (
+          <div className="bg-sf-dark-900/40 border border-sf-dark-700 rounded-lg px-4 py-3 flex items-start gap-3">
+            <Sparkles className="w-4 h-4 text-violet-300 mt-0.5 shrink-0" />
+            <div className="text-xs text-sf-text-muted">
+              <span className="text-sm font-medium text-sf-text-primary">Ad report — auto-generated</span>
+              <div className="mt-0.5">
+                Auto mode will analyze the video with Gemini and grade the proposal against the resulting strengths / weaknesses / opportunities report. No PDF needed.
+                <span className="text-sf-text-muted/70"> Requires Gemini API key.</span>
+              </div>
+            </div>
+          </div>
+        ) : (
+        /* Sundogs PDF gate — required to enable the Go button. */
         <div className="bg-sf-dark-900/40 border border-sf-dark-700 rounded-lg overflow-hidden">
           <input
             ref={pdfInputRef}
@@ -680,6 +699,7 @@ export default function ImportLuckyView({ onProposalReady }) {
             </button>
           </div>
         </div>
+        )}
 
         {/* Allow: which creative liberties the pipeline can take on
             this run. Off by default (apart from Optimize) so an
