@@ -25,7 +25,6 @@
  */
 
 import { loadLlmSettings, LLM_TASKS, resolveGeminiModelForTask } from './reeditLlmClient'
-import { extractJson } from './reeditCaptioner'
 import { geminiChatCompletion } from './geminiClient'
 
 // Same Gemini-key gate the other Gemini-only services use.
@@ -114,6 +113,89 @@ function clampScore(n) {
 function normalizeBullets(arr) {
   if (!Array.isArray(arr)) return []
   return arr.map((s) => String(s || '').trim()).filter(Boolean).slice(0, 8)
+}
+
+// Slice the first balanced {...} out of a string, ignoring anything before
+// the opening brace or after the matching close. Handles the common case
+// where the model wraps valid JSON in prose / a trailing note, which trips
+// up a plain JSON.parse (and which the shared extractJson doesn't strip
+// when the text already starts with '{'). Returns null if no balanced
+// object exists (e.g. the response was truncated mid-object).
+function sliceBalancedJson(text) {
+  const s = String(text)
+  const start = s.indexOf('{')
+  if (start < 0) return null
+  let depth = 0, inStr = false, esc = false
+  for (let i = start; i < s.length; i++) {
+    const ch = s[i]
+    if (inStr) {
+      if (esc) esc = false
+      else if (ch === '\\') esc = true
+      else if (ch === '"') inStr = false
+    } else if (ch === '"') {
+      inStr = true
+    } else if (ch === '{') {
+      depth++
+    } else if (ch === '}') {
+      depth--
+      if (depth === 0) return s.slice(start, i + 1)
+    }
+  }
+  return null
+}
+
+function regexNumber(text, key) {
+  const m = text.match(new RegExp(`"${key}"\\s*:\\s*(-?\\d+(?:\\.\\d+)?)`))
+  return m ? Number(m[1]) : null
+}
+
+function regexString(text, key) {
+  const m = text.match(new RegExp(`"${key}"\\s*:\\s*"((?:[^"\\\\]|\\\\.)*)"`))
+  if (!m) return null
+  try { return JSON.parse(`"${m[1]}"`) } catch { return m[1] }
+}
+
+function regexArray(text, key) {
+  const m = text.match(new RegExp(`"${key}"\\s*:\\s*\\[([\\s\\S]*?)\\]`))
+  if (!m) return []
+  return [...m[1].matchAll(/"((?:[^"\\]|\\.)*)"/g)].map((x) => {
+    try { return JSON.parse(`"${x[1]}"`) } catch { return x[1] }
+  })
+}
+
+// Resilient parse: try a balanced-brace slice + JSON.parse first; if the
+// response was truncated (no balanced object) fall back to pulling each
+// field out with regex so an interrupted response still yields the scores
+// (which the model emits early, before the long bullet arrays).
+function parseAdReportResponse(rawText) {
+  const balanced = sliceBalancedJson(rawText)
+  if (balanced) {
+    try {
+      const obj = JSON.parse(balanced)
+      const root = obj.report || obj.adReport || obj.data || obj
+      return { root, scores: root.scores || root || {} }
+    } catch (_) { /* fall through to field-level recovery */ }
+  }
+  // Field-level recovery from the raw text.
+  const root = {
+    meta: {
+      brand: regexString(rawText, 'brand'),
+      product: regexString(rawText, 'product'),
+      durationSec: regexNumber(rawText, 'durationSec'),
+    },
+    strengths: regexArray(rawText, 'strengths'),
+    weaknesses: regexArray(rawText, 'weaknesses'),
+    opportunities: regexArray(rawText, 'opportunities'),
+    summary: regexString(rawText, 'summary'),
+  }
+  const scores = {
+    attention: regexNumber(rawText, 'attention'),
+    branding: regexNumber(rawText, 'branding'),
+    persuasion: regexNumber(rawText, 'persuasion'),
+    action: regexNumber(rawText, 'action'),
+    overall: regexNumber(rawText, 'overall'),
+  }
+  return { root, scores }
 }
 
 /**
@@ -212,13 +294,7 @@ export async function generateAdReport({
     throw new Error(`Gemini returned no text for the ad report: ${reason}.`)
   }
 
-  const parsed = extractJson(rawText) || {}
-  // Gemini sometimes nests the payload (e.g. { report: {...} } or
-  // { data: {...} }) or returns scores flat at the top level. Reach
-  // through one level of common wrappers and fall back to the root so a
-  // valid-but-differently-shaped response still populates the report.
-  const root = parsed.report || parsed.adReport || parsed.data || parsed
-  const scores = root.scores || root || {}
+  const { root, scores } = parseAdReportResponse(rawText)
 
   const report = {
     schemaVersion: 1,
