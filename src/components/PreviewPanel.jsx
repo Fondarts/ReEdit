@@ -373,7 +373,7 @@ function PreviewPanel() {
   }
   
   // Build CSS transform string from clip transform properties
-  const buildVideoTransform = useCallback((clipTransform) => {
+  const buildVideoTransform = (clipTransform) => {
     if (!clipTransform) return {}
 
     const {
@@ -453,10 +453,7 @@ function PreviewPanel() {
     style['--comfystudio-preview-scale'] = String(previewScaleUniform)
 
     return style
-    // Stable identity (only changes with previewScale) so the memoized
-    // layer components that take this as a prop can skip re-rendering when
-    // only the playhead moved.
-  }, [previewScale])
+  }
 
   // Track if we just added to timeline
   const [justAdded, setJustAdded] = useState(false)
