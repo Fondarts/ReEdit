@@ -497,7 +497,7 @@ export default function ReviewView() {
             />
             {geminiMode ? (
               adReport ? (
-                <AdReportPanel report={adReport} title="Ad report (Gemini) — original" />
+                <AdReportPanel report={adReport} title="Ad report — original" />
               ) : (
                 <div className="rounded-lg border border-dashed border-sf-dark-700 bg-sf-dark-900/40 p-6 text-center text-[12px] text-sf-text-muted">
                   <Sparkles className="w-5 h-5 mx-auto mb-2 text-violet-400/70" />
@@ -545,7 +545,7 @@ export default function ReviewView() {
                 generating={stage === 'rendering' || stage === 'analyzing'}
                 error={error}
                 onGenerate={handleEvaluate}
-                title="Ad report (Gemini) — new cut"
+                title="Ad report — new cut"
                 emptyCopy="Click below to render a preview of the new cut and re-score it on the same axes as the original — the deltas show where the re-edit improved (or regressed)."
               />
             ) : (

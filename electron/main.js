@@ -1065,6 +1065,23 @@ ipcMain.handle('window:toggleFullScreen', () => {
 })
 
 // Register custom protocol for serving local files
+// Minimal extension → MIME map. We set Content-Type ourselves (rather
+// than letting net.fetch guess) because the range-streaming path below
+// builds the Response from a raw fs stream that has no type metadata.
+const PROTOCOL_MIME_TYPES = {
+  '.mp4': 'video/mp4', '.m4v': 'video/mp4', '.webm': 'video/webm',
+  '.mov': 'video/quicktime', '.mkv': 'video/x-matroska', '.avi': 'video/x-msvideo',
+  '.jpg': 'image/jpeg', '.jpeg': 'image/jpeg', '.png': 'image/png',
+  '.gif': 'image/gif', '.webp': 'image/webp', '.svg': 'image/svg+xml',
+  '.wav': 'audio/wav', '.mp3': 'audio/mpeg', '.m4a': 'audio/mp4',
+  '.flac': 'audio/flac', '.ogg': 'audio/ogg',
+  '.json': 'application/json', '.txt': 'text/plain',
+}
+
+function guessProtocolMime(filePath) {
+  return PROTOCOL_MIME_TYPES[path.extname(filePath).toLowerCase()] || 'application/octet-stream'
+}
+
 function registerFileProtocol() {
   protocol.handle('comfystudio', async (request) => {
     // Strip any query string / fragment before turning the URL into a
@@ -1078,19 +1095,67 @@ function registerFileProtocol() {
     if (queryIdx >= 0) url = url.slice(0, queryIdx)
     const filePath = decodeURIComponent(url)
 
+    // Tell Chromium not to heuristically cache these responses. The files
+    // these URLs point at (scene thumbnails, generated clips) routinely
+    // get overwritten in place between analysis / generation runs, so
+    // caching served stale frames.
+    const baseHeaders = {
+      'Cache-Control': 'no-cache, no-store, must-revalidate',
+      'Pragma': 'no-cache',
+      'Expires': '0',
+      'Content-Type': guessProtocolMime(filePath),
+      // Advertise range support so the media element knows it can seek.
+      'Accept-Ranges': 'bytes',
+    }
+
     try {
       const normalizedPath = path.normalize(filePath)
-      const res = await net.fetch(`file://${normalizedPath}`)
-      // Tell Chromium not to heuristically cache this response. The
-      // files these URLs point at (scene thumbnails, generated clips)
-      // routinely get overwritten in place between analysis /
-      // generation runs, so caching served stale frames and made it
-      // look like new analyses were producing the wrong thumbnails.
-      const headers = new Headers(res.headers)
-      headers.set('Cache-Control', 'no-cache, no-store, must-revalidate')
-      headers.set('Pragma', 'no-cache')
-      headers.set('Expires', '0')
-      return new Response(res.body, { status: res.status, statusText: res.statusText, headers })
+      const stat = fsSync.statSync(normalizedPath)
+      const total = stat.size
+
+      // Range request: the <video>/<audio> element streams media with
+      // `Range: bytes=start-end` and REQUIRES a 206 Partial Content reply
+      // to start playback / seek. The previous implementation returned the
+      // whole file as 200, which left native players able to read metadata
+      // but unable to actually play (the symptom: press play, nothing
+      // happens). Honour the range here and reply 206 with the slice.
+      const rangeHeader = request.headers.get('Range') || request.headers.get('range')
+      const match = rangeHeader && /bytes=(\d*)-(\d*)/.exec(rangeHeader)
+      if (match) {
+        let start = match[1] === '' ? null : parseInt(match[1], 10)
+        let end = match[2] === '' ? null : parseInt(match[2], 10)
+        if (start === null && end !== null) {
+          // Suffix range: last N bytes.
+          start = Math.max(0, total - end)
+          end = total - 1
+        } else {
+          if (start === null) start = 0
+          if (end === null || end >= total) end = total - 1
+        }
+        if (start > end || start >= total) {
+          return new Response('Requested range not satisfiable', {
+            status: 416,
+            headers: { ...baseHeaders, 'Content-Range': `bytes */${total}` },
+          })
+        }
+        const stream = fsSync.createReadStream(normalizedPath, { start, end })
+        return new Response(Readable.toWeb(stream), {
+          status: 206,
+          headers: {
+            ...baseHeaders,
+            'Content-Range': `bytes ${start}-${end}/${total}`,
+            'Content-Length': String(end - start + 1),
+          },
+        })
+      }
+
+      // No range: stream the whole file (still advertise Accept-Ranges so
+      // the player will issue range requests on the next read).
+      const stream = fsSync.createReadStream(normalizedPath)
+      return new Response(Readable.toWeb(stream), {
+        status: 200,
+        headers: { ...baseHeaders, 'Content-Length': String(total) },
+      })
     } catch (err) {
       console.error('Protocol error:', err)
       return new Response('File not found', { status: 404 })
