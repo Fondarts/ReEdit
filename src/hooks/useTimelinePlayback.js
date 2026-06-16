@@ -88,7 +88,12 @@ export function useTimelinePlayback() {
     // Convert to seconds and apply playback rate (supports reverse with negative rate)
     const state = useTimelineStore.getState()
     const { loopMode, inPoint, outPoint } = state
-    const selectionLoopRange = getSelectedLoopRange(state.clips, state.selectedClipIds)
+    // Only the loop-selection mode needs the selected-clip range; computing
+    // it (filter + Set allocation over every clip) on every frame in the
+    // common non-loop case is wasted work in the 60fps hot path.
+    const selectionLoopRange = loopMode === 'loop-selection'
+      ? getSelectedLoopRange(state.clips, state.selectedClipIds)
+      : null
     const effectiveLoopMode = loopMode === 'loop-selection' && !selectionLoopRange
       ? 'normal'
       : loopMode

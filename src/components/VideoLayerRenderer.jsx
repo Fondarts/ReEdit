@@ -2280,8 +2280,12 @@ function VideoLayerRenderer({
         preloadTimerRef.current = null
       }
       // Pause all cached videos when timeline stops
-      // But first ensure current active clips are properly positioned to avoid black frames
-      const allActiveClips = getActiveClipsAtTime(playheadPosition)
+      // But first ensure current active clips are properly positioned to avoid black frames.
+      // Read the playhead fresh from the store (not the render closure) so this
+      // effect doesn't have to depend on `playheadPosition` — otherwise it would
+      // tear down and recreate the preload interval on every frame during playback.
+      const livePlayhead = useTimelineStore.getState().playheadPosition
+      const allActiveClips = getActiveClipsAtTime(livePlayhead)
       const videoClips = allActiveClips.filter(({ track }) => track.type === 'video')
       
       // Pre-seek all active videos before pausing to prevent black frames
@@ -2304,8 +2308,8 @@ function VideoLayerRenderer({
           const minTime = Math.min(trimStart, trimEnd)
           const maxTime = Math.max(trimStart, trimEnd)
           const sourceTime = reverse
-            ? trimEnd - (playheadPosition - clip.startTime) * timeScale
-            : trimStart + (playheadPosition - clip.startTime) * timeScale
+            ? trimEnd - (livePlayhead - clip.startTime) * timeScale
+            : trimStart + (livePlayhead - clip.startTime) * timeScale
           const clampedTime = Math.max(minTime, Math.min(sourceTime, maxTime - 0.01))
           cachedVideo.currentTime = clampedTime
         }
@@ -2327,7 +2331,12 @@ function VideoLayerRenderer({
         pauseTimerRef.current = null
       }
     }
-  }, [isPlaying, preloadUpcoming, getActiveClipsAtTime, playheadPosition, getAssetById])
+    // Intentionally NOT depending on `playheadPosition`: this effect only
+    // starts/stops the preload interval (and does a one-shot pre-seek when
+    // playback pauses). Including the playhead would re-run it 60x/sec
+    // during playback, churning the interval. We read the live playhead
+    // from the store inside the pause branch instead.
+  }, [isPlaying, preloadUpcoming, getActiveClipsAtTime, getAssetById])
 
   // Clean up preloaded set periodically to allow re-preloading
   useEffect(() => {
