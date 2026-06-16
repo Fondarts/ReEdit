@@ -502,9 +502,9 @@ export default function ImportLuckyView({ onProposalReady }) {
             <Dice5 className="w-5 h-5 text-sf-accent" /> Auto
           </h1>
           <p className="text-sm text-sf-text-muted">
-            Drop the main video, attach the Sundogs report, and we'll do the rest:
-            detection, captioning, overlay cleanup, and a Sundogs-graded proposal —
-            all in one go.
+            {geminiMode
+              ? 'Drop the main video and we\'ll do the rest: detection, captioning, overlay cleanup, a Gemini ad report, and a graded proposal — all in one go.'
+              : 'Drop the main video, attach the Sundogs report, and we\'ll do the rest: detection, captioning, overlay cleanup, and a Sundogs-graded proposal — all in one go.'}
           </p>
         </div>
 

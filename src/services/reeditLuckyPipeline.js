@@ -41,7 +41,7 @@ export const LUCKY_STEPS = [
   { id: 'analyze', label: 'Analyzing' },
   { id: 'audio',   label: 'Optimizing audio' },
   { id: 'video',   label: 'Optimizing video' },
-  { id: 'propose', label: 'Generate Sundogs proposal' },
+  { id: 'propose', label: 'Generate proposal' },
 ]
 
 // Tiny helper: throw if the abort flag has been flipped between stages.
