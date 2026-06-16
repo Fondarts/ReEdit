@@ -38,6 +38,11 @@ export const DEFAULT_CAPABILITIES = Object.freeze({
   generateVoiceover: false,
   generateMusic: false,
   useAdditionalAssets: false,
+  // Defaults ON, unlike the rest: optimized footage is already opt-in
+  // per-scene (the user has to run the VACE graphics-removal pass), so
+  // when a clean version exists we use it unless the user explicitly
+  // turns this off to fall back to the original footage.
+  useOptimizedFootage: true,
 })
 
 export const CAPABILITY_DEFINITIONS = [
@@ -80,6 +85,11 @@ export const CAPABILITY_DEFINITIONS = [
     id: 'useAdditionalAssets',
     label: 'Use additional assets',
     blurb: 'Lets the proposer pull from extra footage you imported (loose shots or other ads we cut up). Each shot you analyse in the Additional Assets tab becomes a candidate the LLM can swap into the EDL.',
+  },
+  {
+    id: 'useOptimizedFootage',
+    label: 'Use optimized footage',
+    blurb: 'When a shot has an optimized version (on-screen graphics removed via the VACE pass in the Optimization tab), use it on the timeline. Turn off to fall back to the original footage for every shot without clearing the optimized versions.',
   },
   {
     id: 'generateMusic',

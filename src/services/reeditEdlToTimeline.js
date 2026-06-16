@@ -178,10 +178,14 @@ export function buildPlaceholderSvgDataUrl({ note, index, width, height }) {
 // frame for every clip of the shared source. Extracting each scene to
 // its own file makes the asset URL unique per scene, so the filmstrip
 // works out of the box and playback needs no trim math.
-async function registerSceneAsset(sourceVideo, scene, projectDir, edlRow = null, reframeTransform = null) {
+async function registerSceneAsset(sourceVideo, scene, projectDir, edlRow = null, reframeTransform = null, useOptimized = true) {
   const assetsStore = useAssetsStore.getState()
   const originalPath = sceneOriginalClipPath(projectDir, scene)
-  const activePath = resolveActiveClipPath(scene, projectDir)
+  // `useOptimized` is the global capability toggle. When off, ignore any
+  // active optimized version and force the original footage — without
+  // touching scene.activeOptimizationVersion so flipping it back on
+  // restores the previous selection.
+  const activePath = useOptimized ? resolveActiveClipPath(scene, projectDir) : originalPath
   const isActiveOriginal = activePath === originalPath
 
   // For the active-is-original case we still re-extract so the sub-clip
@@ -224,7 +228,7 @@ async function registerSceneAsset(sourceVideo, scene, projectDir, edlRow = null,
 
   const duration = Math.max(0.1, Number(scene.tcOut) - Number(scene.tcIn))
   const hasAudio = sourceVideo.hasAudio !== false
-  const activeVersion = scene.activeOptimizationVersion || null
+  const activeVersion = (useOptimized && scene.activeOptimizationVersion) || null
   // Only stash the reframe transform when we're on the original
   // sub-clip. R-tagged optimized versions are already physically
   // cropped on disk — adding a zoom on top would double-crop.
@@ -1013,7 +1017,7 @@ export async function applyEdlToTimeline({
     // timeline store reads it from asset.settings.defaultTransform when
     // building the clip's transform. registerSceneAsset drops it again
     // on its own if the scene's active version is already R-tagged.
-    const asset = await registerSceneAsset(sourceVideo, scene, projectDir, row, reframeTransform)
+    const asset = await registerSceneAsset(sourceVideo, scene, projectDir, row, reframeTransform, capabilities?.useOptimizedFootage !== false)
 
     // Extend preview: if the proposer requested `EXTEND +Xs:` and the
     // scene isn't already on a committed E-tagged version, slow the
