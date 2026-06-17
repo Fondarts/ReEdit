@@ -1,6 +1,7 @@
 import { useState, useEffect, useRef } from 'react'
-import { FolderOpen, Plus, Film, AlertCircle, Loader2, Trash2, LayoutGrid, List, Minus, Square, Copy, X, Settings as SettingsIcon, Upload, FileText, Video as VideoIcon } from 'lucide-react'
+import { FolderOpen, Plus, Film, AlertCircle, Loader2, Trash2, LayoutGrid, List, Minus, Square, Copy, X, Settings as SettingsIcon, Upload, FileText, Video as VideoIcon, Sparkles } from 'lucide-react'
 import useProjectStore from '../stores/projectStore'
+import { isGeminiReportMode } from '../services/reeditReportSource'
 import NewReeditProjectDialog from './reedit/NewReeditProjectDialog'
 import ComfyLauncherChip from './ComfyLauncherChip'
 import CreditsChip from './CreditsChip'
@@ -179,6 +180,9 @@ function WelcomeScreen() {
   } = useProjectStore()
   
   const isBrowserSupported = checkBrowserSupport()
+  // Report-source mode drives whether the Auto flow needs a Sundogs PDF
+  // (false) or auto-generates the ad report from the video (true).
+  const geminiReportMode = isGeminiReportMode()
   const canOpenLatestAutosave = Boolean(
     lastFailedProjectHandle && error?.includes('Project file is empty or invalid')
   )
@@ -730,8 +734,9 @@ function WelcomeScreen() {
             <div>
               <h2 className="text-base font-semibold text-sf-text-primary mb-1">Import</h2>
               <p className="text-xs text-sf-text-muted leading-snug">
-                Drop the source video and (for Auto mode) the Sundogs PDF.
-                You'll be asked to name the project before the import runs.
+                {geminiReportMode
+                  ? 'Drop the source video. You\'ll be asked to name the project before the import runs.'
+                  : 'Drop the source video and (for Auto mode) the Sundogs PDF. You\'ll be asked to name the project before the import runs.'}
               </p>
             </div>
 
@@ -753,24 +758,38 @@ function WelcomeScreen() {
               </div>
             </button>
 
-            {/* Sundogs PDF slot — same idea: visual hint that this
-                exists, click routes to the new-project flow where the
-                Auto Import view does the real upload. */}
-            <button
-              type="button"
-              onClick={() => setShowNewProjectDialog(true)}
-              className="w-full flex items-center gap-3 px-3 py-3 rounded-lg border border-sf-dark-700 bg-sf-dark-900/40 hover:bg-sf-dark-800 transition-colors text-left"
-            >
-              <FileText className="w-4 h-4 text-amber-400 flex-shrink-0" />
-              <div className="flex-1 min-w-0">
-                <div className="text-sm font-medium text-sf-text-primary">Sundogs PDF</div>
-                <div className="text-[11px] text-sf-text-muted leading-snug">
-                  Required only for Auto mode (grades the proposal against
-                  benchmark scores).
+            {/* Report slot. In Gemini report mode the ad report is
+                auto-generated from the video (no upload), so this is just
+                an informational hint. In Sundogs mode it's the PDF the
+                Auto flow grades against — clicking routes to the
+                new-project flow where the real upload happens. */}
+            {geminiReportMode ? (
+              <div className="w-full flex items-center gap-3 px-3 py-3 rounded-lg border border-sf-dark-700 bg-sf-dark-900/40 text-left">
+                <Sparkles className="w-4 h-4 text-violet-300 flex-shrink-0" />
+                <div className="flex-1 min-w-0">
+                  <div className="text-sm font-medium text-sf-text-primary">Auto-generated report</div>
+                  <div className="text-[11px] text-sf-text-muted leading-snug">
+                    The ad report is generated from the video — no upload needed.
+                  </div>
                 </div>
               </div>
-              <Upload className="w-3.5 h-3.5 text-sf-text-muted" />
-            </button>
+            ) : (
+              <button
+                type="button"
+                onClick={() => setShowNewProjectDialog(true)}
+                className="w-full flex items-center gap-3 px-3 py-3 rounded-lg border border-sf-dark-700 bg-sf-dark-900/40 hover:bg-sf-dark-800 transition-colors text-left"
+              >
+                <FileText className="w-4 h-4 text-amber-400 flex-shrink-0" />
+                <div className="flex-1 min-w-0">
+                  <div className="text-sm font-medium text-sf-text-primary">Sundogs PDF</div>
+                  <div className="text-[11px] text-sf-text-muted leading-snug">
+                    Required only for Auto mode (grades the proposal against
+                    benchmark scores).
+                  </div>
+                </div>
+                <Upload className="w-3.5 h-3.5 text-sf-text-muted" />
+              </button>
+            )}
 
             {/* Open existing — secondary path for users who saved a
                 project on disk somewhere outside the default folder. */}
@@ -782,7 +801,7 @@ function WelcomeScreen() {
               <div>
                 <div className="text-sm font-medium text-sf-text-primary">Open project…</div>
                 <div className="text-[11px] text-sf-text-muted leading-snug">
-                  Pick a <span className="text-sf-text-secondary">.comfystudio</span> file from disk.
+                  Pick a folder with a <span className="text-sf-text-secondary">.kred</span> project from disk.
                 </div>
               </div>
             </button>

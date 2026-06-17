@@ -103,10 +103,21 @@ export const createProjectFolder = async (baseDir, projectName) => {
   return projectDir
 }
 
-const PROJECT_FILENAME = 'project.comfystudio'
-const PROJECT_FILENAME_LEGACY = 'project.storyflow'
+// Active project filename — what we WRITE. The app rebranded to Kissd
+// ReEdit, so projects use the `.kred` extension. Older projects on disk
+// still carry the previous names; we keep reading those (newest-first)
+// and silently migrate them to `.kred` on the next save.
+const PROJECT_FILENAME = 'project.kred'
+const PROJECT_FILENAME_LEGACIES = ['project.comfystudio', 'project.storyflow']
+// All filenames we accept when reading, in priority order.
+const PROJECT_FILENAME_CANDIDATES = [PROJECT_FILENAME, ...PROJECT_FILENAME_LEGACIES]
 const PROJECT_AUTOSAVE_DIRNAME = 'autosave'
 const MAX_PROJECT_AUTOSAVE_SNAPSHOTS = 10
+
+// Autosave snapshots are matched by extension. Accept the new `.kred`
+// and the legacy `.comfystudio` so existing autosave folders still load.
+const isProjectSnapshotName = (name) =>
+  typeof name === 'string' && (name.endsWith('.kred') || name.endsWith('.comfystudio'))
 
 const padNumber = (value, length = 2) => String(value).padStart(length, '0')
 
@@ -123,7 +134,7 @@ const createProjectSnapshotFilename = (timestamp = new Date()) => {
     padNumber(date.getSeconds()),
     '-',
     padNumber(date.getMilliseconds(), 3),
-    '.comfystudio',
+    '.kred',
   ].join('')
 }
 
@@ -153,7 +164,7 @@ const writeProjectSnapshotElectron = async (projectDir, projectJson, timestamp) 
   }
 
   const snapshots = sortSnapshotsNewestFirst(
-    listing.items.filter((item) => item.isFile && item.name.endsWith('.comfystudio'))
+    listing.items.filter((item) => item.isFile && isProjectSnapshotName(item.name))
   )
 
   await Promise.all(
@@ -173,7 +184,7 @@ const writeProjectSnapshotWeb = async (projectDir, projectJson, timestamp) => {
 
   const snapshots = []
   for await (const [name, handle] of autosaveDir.entries()) {
-    if (handle.kind !== 'file' || !name.endsWith('.comfystudio')) continue
+    if (handle.kind !== 'file' || !isProjectSnapshotName(name)) continue
     const file = await handle.getFile()
     snapshots.push({
       name,
@@ -260,15 +271,24 @@ const parseProjectJson = (rawText, sourceLabel) => {
  * @returns {Promise<object|null>} - The project data or null if not found
  */
 export const loadProject = async (projectDir) => {
+  const candidatesLabel = PROJECT_FILENAME_CANDIDATES.join(', ')
+
   if (isElectron()) {
     const basePath = projectDir
-    const primaryPath = await window.electronAPI.pathJoin(basePath, PROJECT_FILENAME)
-    const legacyPath = await window.electronAPI.pathJoin(basePath, PROJECT_FILENAME_LEGACY)
-    const primaryExists = await window.electronAPI.exists(primaryPath)
-    const legacyExists = await window.electronAPI.exists(legacyPath)
-    const filePath = primaryExists ? primaryPath : legacyExists ? legacyPath : null
+    // Pick the first candidate filename that exists on disk (new `.kred`
+    // first, then the legacy names).
+    let filePath = null
+    let sourceLabel = PROJECT_FILENAME
+    for (const candidate of PROJECT_FILENAME_CANDIDATES) {
+      const candidatePath = await window.electronAPI.pathJoin(basePath, candidate)
+      if (await window.electronAPI.exists(candidatePath)) {
+        filePath = candidatePath
+        sourceLabel = candidate
+        break
+      }
+    }
     if (!filePath) {
-      throw new Error(`Project file not found. This folder does not contain ${PROJECT_FILENAME} or ${PROJECT_FILENAME_LEGACY} — the project may have been moved or the path is wrong. Try opening the project folder with "Open project".`)
+      throw new Error(`Project file not found. This folder does not contain any of: ${candidatesLabel} — the project may have been moved or the path is wrong. Try opening the project folder with "Open project".`)
     }
     const result = await window.electronAPI.readFile(filePath, { encoding: 'utf8' })
     if (!result.success) {
@@ -276,35 +296,31 @@ export const loadProject = async (projectDir) => {
     }
     const projectData = parseProjectJson(result.data, filePath)
     if (!projectData) {
-      throw new Error(`Project file is empty or invalid (corrupted JSON). The ${filePath.endsWith(PROJECT_FILENAME_LEGACY) ? PROJECT_FILENAME_LEGACY : PROJECT_FILENAME} file may be damaged.`)
+      throw new Error(`Project file is empty or invalid (corrupted JSON). The ${sourceLabel} file may be damaged.`)
     }
     return projectData
   }
-  
-  // Web fallback: try comfystudio first, then legacy storyflow
+
+  // Web fallback: try each candidate filename in priority order.
   const tryLoad = async (filename) => {
     const fileHandle = await projectDir.getFileHandle(filename)
     const file = await fileHandle.getFile()
     return await file.text()
   }
-  let text
+  let text = null
   let sourceLabel = PROJECT_FILENAME
-  try {
-    text = await tryLoad(PROJECT_FILENAME)
-  } catch (e1) {
-    if (e1.name === 'NotFoundError') {
-      try {
-        text = await tryLoad(PROJECT_FILENAME_LEGACY)
-        sourceLabel = PROJECT_FILENAME_LEGACY
-      } catch (e2) {
-        if (e2.name === 'NotFoundError') {
-          throw new Error(`Project file not found. This folder does not contain ${PROJECT_FILENAME} or ${PROJECT_FILENAME_LEGACY}.`)
-        }
-        throw e2
-      }
-    } else {
-      throw e1
+  for (const candidate of PROJECT_FILENAME_CANDIDATES) {
+    try {
+      text = await tryLoad(candidate)
+      sourceLabel = candidate
+      break
+    } catch (err) {
+      if (err.name !== 'NotFoundError') throw err
+      // Not found — try the next candidate.
     }
+  }
+  if (text === null) {
+    throw new Error(`Project file not found. This folder does not contain any of: ${candidatesLabel}.`)
   }
   const projectData = parseProjectJson(text, sourceLabel)
   if (!projectData) {
@@ -332,7 +348,7 @@ export const loadLatestProjectAutosave = async (projectDir) => {
     }
 
     const latestSnapshot = sortSnapshotsNewestFirst(
-      listing.items.filter((item) => item.isFile && item.name.endsWith('.comfystudio'))
+      listing.items.filter((item) => item.isFile && isProjectSnapshotName(item.name))
     )[0]
 
     if (!latestSnapshot) {
@@ -357,7 +373,7 @@ export const loadLatestProjectAutosave = async (projectDir) => {
     const snapshots = []
 
     for await (const [name, handle] of autosaveDir.entries()) {
-      if (handle.kind !== 'file' || !name.endsWith('.comfystudio')) continue
+      if (handle.kind !== 'file' || !isProjectSnapshotName(name)) continue
       const file = await handle.getFile()
       snapshots.push({
         name,
@@ -392,23 +408,23 @@ export const loadLatestProjectAutosave = async (projectDir) => {
  */
 export const isValidProject = async (dir) => {
   if (isElectron()) {
-    const primaryPath = await window.electronAPI.pathJoin(dir, PROJECT_FILENAME)
-    const legacyPath = await window.electronAPI.pathJoin(dir, PROJECT_FILENAME_LEGACY)
-    return (await window.electronAPI.exists(primaryPath)) || (await window.electronAPI.exists(legacyPath))
+    for (const candidate of PROJECT_FILENAME_CANDIDATES) {
+      const candidatePath = await window.electronAPI.pathJoin(dir, candidate)
+      if (await window.electronAPI.exists(candidatePath)) return true
+    }
+    return false
   }
-  
+
   // Web fallback
-  try {
-    await dir.getFileHandle(PROJECT_FILENAME)
-    return true
-  } catch {
+  for (const candidate of PROJECT_FILENAME_CANDIDATES) {
     try {
-      await dir.getFileHandle(PROJECT_FILENAME_LEGACY)
+      await dir.getFileHandle(candidate)
       return true
     } catch {
-      return false
+      // try next candidate
     }
   }
+  return false
 }
 
 /**
