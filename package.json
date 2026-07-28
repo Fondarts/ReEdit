@@ -1,7 +1,7 @@
 {
   "name": "comfystudio",
   "version": "0.1.10",
-  "description": "AI-Powered Animatic Studio for Pre-Production",
+  "description": "ReEdit \u2014 AI-assisted re-editing of finished commercials (Kissd). Fork of ComfyStudio.",
   "main": "electron/main.js",
   "scripts": {
     "dev": "vite",
@@ -23,22 +23,21 @@
     "starter-pack:package": "npm run starter-pack:build && node ./scripts/package-workflow-starter-pack.mjs"
   },
   "keywords": [
-    "animatic",
-    "storyboard",
-    "pre-production",
+    "re-edit",
+    "advertising",
     "ai",
     "comfyui",
     "video-editing",
     "electron"
   ],
-  "author": "ComfyStudio contributors",
+  "author": "Kissd",
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/JaimeIsMe/comfystudio.git"
+    "url": "git+https://github.com/Fondarts/ReEdit.git"
   },
-  "homepage": "https://github.com/JaimeIsMe/comfystudio",
+  "homepage": "https://github.com/Fondarts/ReEdit",
   "bugs": {
-    "url": "https://github.com/JaimeIsMe/comfystudio/issues"
+    "url": "https://github.com/Fondarts/ReEdit/issues"
   },
   "license": "MIT",
   "dependencies": {
@@ -77,7 +76,7 @@
   "build": {
     "appId": "com.comfystudio.app",
     "productName": "ComfyStudio",
-    "copyright": "Copyright © 2024-2026",
+    "copyright": "Copyright \u00a9 2024-2026",
     "asarUnpack": [
       "**/node_modules/ffmpeg-static/**",
       "**/node_modules/ffprobe-static/**"
