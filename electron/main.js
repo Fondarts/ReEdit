@@ -52,6 +52,7 @@ const COMFYUI_CHECK_MS = 2500        // Max wait for ComfyUI
 const STEP_DELAY_MS = 400            // Delay between status messages
 const COMFY_CONNECTION_SETTING_KEY = 'comfyConnection'
 const DEFAULT_LOCAL_COMFY_PORT = 8188
+const DEFAULT_LOCAL_COMFY_URL = `http://127.0.0.1:${DEFAULT_LOCAL_COMFY_PORT}`
 
 let mainWindow = null
 let splashWindow = null
@@ -3041,7 +3042,7 @@ ipcMain.handle('analysis:optimizeFootage', async (event, options) => {
   if (!scene?.id) return { success: false, error: 'scene.id required.' }
   if (!projectDir) return { success: false, error: 'projectDir required.' }
   const sceneId = scene.id
-  const comfyUrl = comfyUrlOpt || 'http://localhost:8000'
+  const comfyUrl = comfyUrlOpt || DEFAULT_LOCAL_COMFY_URL
   const apiKey = apiKeyOpt || ''
 
   const emit = (stage, extra = {}) => {
@@ -3342,7 +3343,7 @@ ipcMain.handle('analysis:optimizeFootageLTX', async (event, options) => {
   if (!scene?.id) return { success: false, error: 'scene.id required.' }
   if (!projectDir) return { success: false, error: 'projectDir required.' }
   const sceneId = scene.id
-  const comfyUrl = comfyUrlOpt || 'http://localhost:8000'
+  const comfyUrl = comfyUrlOpt || DEFAULT_LOCAL_COMFY_URL
   const apiKey = apiKeyOpt || ''
 
   const emit = (stage, extra = {}) => {
@@ -3543,7 +3544,7 @@ ipcMain.handle('analysis:commitReframe', async (event, options) => {
   } = options || {}
   if (!sceneId) return { success: false, error: 'sceneId required.' }
   if (!projectDir) return { success: false, error: 'projectDir required.' }
-  const comfyUrl = comfyUrlOpt || 'http://localhost:8000'
+  const comfyUrl = comfyUrlOpt || DEFAULT_LOCAL_COMFY_URL
   const apiKey = apiKeyOpt || ''
   // Fall back to the shipped default when the renderer didn't pass one;
   // older callers (before capability settings existed) omit the field.
@@ -3836,7 +3837,7 @@ ipcMain.handle('analysis:commitExtend', async (event, options) => {
   if (!isVideoInputMode && !loadImageNodeId) {
     return { success: false, error: 'Either loadImageNodeId (LTX/WAN base) or loadVideoNodeId (SVI) is required.' }
   }
-  const comfyUrl = comfyUrlOpt || 'http://localhost:8000'
+  const comfyUrl = comfyUrlOpt || DEFAULT_LOCAL_COMFY_URL
   const apiKey = apiKeyOpt || ''
   const wantExtendSec = Math.max(0.2, Math.min(2, Number(extendSec) || 1))
 
@@ -4312,7 +4313,7 @@ ipcMain.handle('analysis:synthesizeVoiceover', async (event, options) => {
       return { success: false, error: 'voiceRef.transcript required (exact spoken text of the reference window).' }
     }
   }
-  const comfyUrl = comfyUrlOpt || 'http://localhost:8000'
+  const comfyUrl = comfyUrlOpt || DEFAULT_LOCAL_COMFY_URL
   const apiKey = apiKeyOpt || ''
 
   const emit = (stage, extra = {}) => {
@@ -4770,7 +4771,7 @@ ipcMain.handle('analysis:synthesizeMusic', async (event, options) => {
   if (!draftId) return { success: false, error: 'draftId required.' }
   if (!projectDir) return { success: false, error: 'projectDir required.' }
   if (!tags || !String(tags).trim()) return { success: false, error: 'tags (genre/style prompt) required.' }
-  const comfyUrl = comfyUrlOpt || 'http://localhost:8000'
+  const comfyUrl = comfyUrlOpt || DEFAULT_LOCAL_COMFY_URL
   const apiKey = apiKeyOpt || ''
 
   const emit = (stage, extra = {}) => {
@@ -5541,7 +5542,7 @@ ipcMain.handle('analysis:generateFill', async (event, options) => {
   if (!projectDir)    return { success: false, error: 'projectDir required.' }
   if (!sourceVideoPath) return { success: false, error: 'sourceVideoPath required.' }
   if (!Number.isFinite(referenceTcSec)) return { success: false, error: 'referenceTcSec must be a finite number.' }
-  const comfyUrl = comfyUrlOpt || 'http://localhost:8000'
+  const comfyUrl = comfyUrlOpt || DEFAULT_LOCAL_COMFY_URL
   const apiKey = apiKeyOpt || ''
   // Kling is a Cloud-only model — there's no local backend. Fail fast
   // with a useful message instead of letting the upload silently 404.
