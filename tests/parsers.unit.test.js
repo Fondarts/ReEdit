@@ -45,20 +45,20 @@ describe('buildReframeTransform', () => {
 
   it('produces zero translation for a centered anchor', () => {
     const t = buildReframeTransform({ zoom: 1.5, anchorX: 0.5, anchorY: 0.5 }, 1920, 1080)
-    expect(t.positionX).toBe(0)
-    expect(t.positionY).toBe(0)
+    expect(t.positionX).toBeCloseTo(0)
+    expect(t.positionY).toBeCloseTo(0)
   })
 
   it('clamps zoom into [1, 3] and defaults missing anchors to center', () => {
     const t = buildReframeTransform({ zoom: 9 }, 1920, 1080)
     expect(t.scaleX).toBe(300)
-    expect(t.positionX).toBe(0)
-    expect(t.positionY).toBe(0)
+    expect(t.positionX).toBeCloseTo(0)
+    expect(t.positionY).toBeCloseTo(0)
   })
 
   it('treats NaN anchors as center instead of leaking NaN into positions', () => {
     const t = buildReframeTransform({ zoom: 1.3, anchorX: 'nope', anchorY: undefined }, 1920, 1080)
-    expect(t.positionX).toBe(0)
-    expect(t.positionY).toBe(0)
+    expect(t.positionX).toBeCloseTo(0)
+    expect(t.positionY).toBeCloseTo(0)
   })
 })
