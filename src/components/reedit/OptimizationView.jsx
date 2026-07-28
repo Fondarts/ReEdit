@@ -121,6 +121,19 @@ export default function OptimizationView({ onNavigate }) {
     return () => { try { unsub?.() } catch (_) { /* ignore */ } }
   }, [])
 
+  // Per-scene Kling Omni Edit (cloud) state — third engine, K{NN} tags.
+  const [klingState, setKlingState] = useState({})
+  useEffect(() => {
+    const unsub = window.electronAPI?.onOptimizeFootageKlingProgress?.((payload) => {
+      if (!payload?.sceneId) return
+      setKlingState((prev) => ({
+        ...prev,
+        [payload.sceneId]: { ...(prev[payload.sceneId] || {}), ...payload },
+      }))
+    })
+    return () => { try { unsub?.() } catch (_) { /* ignore */ } }
+  }, [])
+
   // Mask-only preview state — { [sceneId]: { stage: 'running'|'done'|'error', maskPath?, error? } }
   const [previewState, setPreviewState] = useState({})
 
@@ -208,6 +221,48 @@ export default function OptimizationView({ onNavigate }) {
       })
     } catch (err) {
       setLtxState((prev) => ({ ...prev, [scene.id]: { stage: 'error', error: err?.message || String(err) } }))
+    }
+  }
+
+  // Kling Omni Edit handler (cloud, maskless). Same persistence contract
+  // as the VACE/LTX engines; versions tag K{NN}.
+  const runOptimizeFootageKling = async (scene) => {
+    if (!projectDir) return
+    const current = klingState[scene.id]
+    if (current?.stage && !['done', 'error'].includes(current.stage)) return
+    setKlingState((prev) => ({ ...prev, [scene.id]: { stage: 'starting' } }))
+    try {
+      const res = await window.electronAPI.optimizeFootageKling({
+        scene: { id: scene.id, videoAnalysis: scene.videoAnalysis, caption: scene.caption },
+        projectDir,
+        ...getActiveComfyIpcContext(),
+      })
+      if (!res?.success) {
+        setKlingState((prev) => ({ ...prev, [scene.id]: { stage: 'error', error: res?.error || 'Unknown error.' } }))
+        return
+      }
+      setKlingState((prev) => ({ ...prev, [scene.id]: { stage: 'done', outputPath: res.outputPath, inProjectDir: res.inProjectDir, version: res.version } }))
+      const entry = {
+        version: res.version,
+        path: res.outputPath,
+        model: res.modelId || 'kling-omni-edit',
+        engine: 'kling-omni-edit',
+        composited: false,
+        createdAt: new Date().toISOString(),
+      }
+      const nextScenes = (analysis?.scenes || []).map((s) => {
+        if (s.id !== scene.id) return s
+        const stack = Array.isArray(s.optimizations) ? s.optimizations.slice() : []
+        const idx = stack.findIndex((o) => o.version === entry.version)
+        if (idx >= 0) stack[idx] = entry
+        else stack.push(entry)
+        return { ...s, optimizations: stack, activeOptimizationVersion: entry.version }
+      })
+      await saveProject({
+        analysis: { ...(analysis || {}), scenes: nextScenes },
+      })
+    } catch (err) {
+      setKlingState((prev) => ({ ...prev, [scene.id]: { stage: 'error', error: err?.message || String(err) } }))
     }
   }
 
@@ -480,9 +535,11 @@ export default function OptimizationView({ onNavigate }) {
                     projectDir={projectDir}
                     state={optimizeState[scene.id]}
                     ltxState={ltxState[scene.id]}
+                    klingState={klingState[scene.id]}
                     previewState={previewState[scene.id]}
                     onRun={() => runOptimizeFootage(scene)}
                     onRunLTX={() => runOptimizeFootageLTX(scene)}
+                    onRunKling={() => runOptimizeFootageKling(scene)}
                     onPreview={() => runPreviewMask(scene)}
                     onSetActiveVersion={setSceneActiveVersion}
                   />
@@ -641,9 +698,11 @@ function OptimizeShotCard({
   projectDir,
   state,
   ltxState,
+  klingState,
   previewState,
   onRun,
   onRunLTX,
+  onRunKling,
   onPreview,
   onSetActiveVersion,
 }) {
@@ -757,6 +816,31 @@ function OptimizeShotCard({
         )}
         {ltxState?.stage === 'error' && ltxState?.error && (
           <div className="text-[10px] text-rose-300 leading-tight">{ltxState.error}</div>
+        )}
+        {/* Cloud engine: Kling 3 Omni Edit — maskless, prompt-based
+            removal on Comfy Cloud. K{NN} versions in the same stack. */}
+        {onRunKling && (
+          <button
+            type="button"
+            onClick={onRunKling}
+            disabled={!projectDir || (klingState?.stage && !['done', 'error'].includes(klingState.stage))}
+            className="text-[11px] px-2 py-1 rounded border border-sky-500/40 bg-sky-500/10 text-sky-200 hover:bg-sky-500/20 disabled:opacity-50 disabled:cursor-not-allowed flex items-center justify-center gap-1.5"
+            title="Run Kling 3 Omni Edit on Comfy Cloud: prompt-based graphics removal, no mask, original duration preserved."
+          >
+            {(() => {
+              const stage = klingState?.stage
+              if (!stage || stage === 'done' || stage === 'error') {
+                return <>Try Kling Edit (cloud){klingState?.version ? ` · ${klingState.version}` : ''}</>
+              }
+              const elapsed = Number.isFinite(klingState?.elapsedSec)
+                ? `${klingState.elapsedSec}s`
+                : stage
+              return <>Kling… {elapsed}</>
+            })()}
+          </button>
+        )}
+        {klingState?.stage === 'error' && klingState?.error && (
+          <div className="text-[10px] text-rose-300 leading-tight">{klingState.error}</div>
         )}
       </div>
     </div>

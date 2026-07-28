@@ -328,6 +328,12 @@ contextBridge.exposeInMainWorld('electronAPI', {
     ipcRenderer.on('analysis:optimizeFootageLTX:progress', handler)
     return () => ipcRenderer.removeListener('analysis:optimizeFootageLTX:progress', handler)
   },
+  optimizeFootageKling: (options) => ipcRenderer.invoke('analysis:optimizeFootageKling', options),
+  onOptimizeFootageKlingProgress: (cb) => {
+    const handler = (_, payload) => cb(payload)
+    ipcRenderer.on('analysis:optimizeFootageKling:progress', handler)
+    return () => ipcRenderer.removeListener('analysis:optimizeFootageKling:progress', handler)
+  },
 
   /**
    * Generate a single placeholder fill via Kling i2v on Comfy Cloud.

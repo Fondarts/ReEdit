@@ -3276,6 +3276,162 @@ ipcMain.handle('analysis:optimizeFootageLTX', async (event, options) => {
 //      and slots into the same `scene.optimizations[]` stack as the
 //      VACE `V{NN}` outputs, so the version dropdown + resolver work
 //      without any new plumbing.
+// Third optimize engine: Kling 3 Omni Edit on Comfy Cloud. Maskless,
+// prompt-based removal — no make_mask.py, no local checkpoints. Output
+// keeps the input duration; we still remux the ORIGINAL audio over the
+// result. Versions tag as K{NN} in the same optimization stack so the
+// dropdown lets the user A/B against VACE (V) and LTX (L) runs.
+ipcMain.handle('analysis:optimizeFootageKling', async (event, options) => {
+  const { scene, projectDir, comfyUrl: comfyUrlOpt, apiKey: apiKeyOpt, promptOverride } = options || {}
+  if (!scene?.id) return { success: false, error: 'scene.id required.' }
+  if (!projectDir) return { success: false, error: 'projectDir required.' }
+  const sceneId = scene.id
+  const comfyUrl = comfyUrlOpt || DEFAULT_LOCAL_COMFY_URL
+  const apiKey = apiKeyOpt || ''
+  const adapter = getAdapter('kling-omni-edit')
+  if (!isCloudComfyUrl(comfyUrl)) {
+    return { success: false, error: `${adapter.label} needs Comfy Cloud. Switch the ComfyUI mode to Cloud in the launcher chip or Settings → ComfyUI.` }
+  }
+
+  const emit = (stage, extra = {}) => {
+    try { event.sender.send('analysis:optimizeFootageKling:progress', { sceneId, stage, ...extra }) } catch (_) { /* renderer may be closed */ }
+  }
+  emit('starting')
+
+  const projectDirFwd = projectDir.replace(/\\/g, '/')
+  const sourceClipPath = path.join(projectDirFwd, '.reedit', 'clips', `${sceneId}.mp4`)
+  try {
+    const st = await fs.stat(sourceClipPath)
+    if (!st || st.size < 1024) throw new Error('empty')
+  } catch {
+    return { success: false, error: `Shot clip not found at ${sourceClipPath}. Re-run Caption all so the cached sub-clip exists.` }
+  }
+  const meta = await probeVideoMeta(sourceClipPath)
+  if (!meta?.width || !meta?.height) {
+    return { success: false, error: 'ffprobe failed to read clip metadata.' }
+  }
+
+  emit('uploading')
+  const projectOptimizedDir = path.join(projectDirFwd, '.reedit', 'optimized')
+  try { await fs.mkdir(projectOptimizedDir, { recursive: true }) } catch (_) { /* ignore */ }
+  const existing = await fs.readdir(projectOptimizedDir).catch(() => [])
+  const versionRe = new RegExp(`^${sceneId.replace(/[.*+?^${}()|[\\]\\\\]/g, '\\$&')}_K(\\d{2,})(?:[_.]|$)`)
+  let nextVersion = 1
+  for (const name of existing) {
+    const m = name.match(versionRe)
+    if (m) {
+      const n = parseInt(m[1], 10)
+      if (Number.isFinite(n) && n >= nextVersion) nextVersion = n + 1
+    }
+  }
+  const versionTag = `K${String(nextVersion).padStart(2, '0')}`
+  emit('note', { message: `Writing version ${versionTag}.` })
+  const prefix = `reedit_${sanitizeForFilename(path.basename(projectDir))}_${sanitizeForFilename(sceneId)}_${versionTag}`
+
+  let comfyInputName = `${prefix}_source.mp4`
+  try {
+    const up = await uploadFileToComfy({ comfyUrl, apiKey, localFilePath: sourceClipPath, filename: comfyInputName })
+    comfyInputName = up?.name || comfyInputName
+  } catch (err) {
+    return { success: false, error: `Failed to upload source clip: ${err.message}` }
+  }
+
+  // Prompt: the analyzer's removal hint when present, else the
+  // adapter's generic "remove all graphics" default.
+  const hint = promptOverride
+    || scene?.videoAnalysis?.graphics?.removal_hint
+    || scene?.videoAnalysis?.removal_hint
+    || ''
+  const workflow = adapter.buildWorkflow({
+    sourceVideoFilename: comfyInputName,
+    prompt: hint,
+    resolution: meta.height >= 1000 ? '1080p' : '720p',
+    outputPrefix: `reedit_optimized/${prefix}`,
+    seed: Math.floor(Math.random() * 2147483647),
+  })
+
+  emit('queued_submit')
+  let promptId
+  try {
+    promptId = await queuePromptToComfy({ comfyUrl, apiKey, workflow, includeComfyOrgKey: true })
+  } catch (err) {
+    return { success: false, error: err.message }
+  }
+  emit('queued', { promptId })
+
+  let result
+  const startedAt = Date.now()
+  try {
+    result = await waitForComfyJob({
+      comfyUrl, apiKey, promptId,
+      timeoutMs: 20 * 60 * 1000, pollMs: 4000,
+      onTick: () => emit('running', { elapsedSec: Math.round((Date.now() - startedAt) / 1000) }),
+    })
+  } catch (err) {
+    return { success: false, error: err?.message || `Comfy job ${promptId} failed.` }
+  }
+
+  const VIDEO_RE = /\.(mp4|mov|webm|mkv|avi|m4v)$/i
+  let outFile = null
+  for (const out of Object.values(result.outputs || {})) {
+    for (const c of [...(out?.videos || []), ...(out?.gifs || []), ...(out?.images || [])]) {
+      if (c?.filename && VIDEO_RE.test(c.filename)) { outFile = c; break }
+    }
+    if (outFile) break
+  }
+  if (!outFile) return { success: false, error: 'Kling Edit finished but reported no video output.' }
+
+  emit('finalizing')
+  const stagePath = path.join(projectOptimizedDir, `${sceneId}_${versionTag}_raw.mp4`)
+  const finalPath = path.join(projectOptimizedDir, `${sceneId}_${versionTag}.mp4`)
+  try {
+    await downloadFromComfy({
+      comfyUrl, apiKey,
+      filename: outFile.filename, subfolder: outFile.subfolder || '', type: outFile.type || 'output',
+      destPath: stagePath,
+    })
+  } catch (err) {
+    return { success: false, error: `Could not download Kling Edit output: ${err.message}` }
+  }
+  // Normalise dims/fps back to the source and remux the original audio.
+  await new Promise((resolve, reject) => {
+    const args = [
+      '-hide_banner', '-nostats',
+      '-i', stagePath,
+      '-i', sourceClipPath,
+      '-map', '0:v:0', '-map', '1:a:0?',
+      '-vf', `scale=${meta.width}:${meta.height}:flags=lanczos,setsar=1`,
+      '-c:v', 'libx264', '-preset', 'veryfast', '-crf', '18',
+      '-pix_fmt', 'yuv420p',
+      '-c:a', 'aac', '-b:a', '192k',
+      '-movflags', '+faststart',
+      '-y', finalPath,
+    ]
+    const proc = spawn(ffmpegPath, args, { windowsHide: true })
+    let stderr = ''
+    proc.stderr.on('data', (d) => { stderr += d.toString() })
+    proc.on('close', (code) => code === 0 ? resolve() : reject(new Error(`ffmpeg finalize failed (${code}): ${stderr.slice(-300)}`)))
+    proc.on('error', reject)
+  }).catch((err) => ({ success: false, error: err.message }))
+  try { await fs.unlink(stagePath) } catch (_) { /* ignore */ }
+
+  const workflowJsonPath = await saveWorkflowAlongsideOutput(finalPath, workflow, {
+    kind: 'optimize-kling', version: versionTag, sceneId, modelId: adapter.id, promptId,
+  })
+
+  emit('done', { promptId, outputPath: finalPath, version: versionTag, inProjectDir: true, workflowJsonPath })
+  return {
+    success: true,
+    promptId,
+    outputPath: finalPath,
+    workflowJsonPath,
+    version: versionTag,
+    inProjectDir: true,
+    kind: 'optimize-kling',
+    modelId: adapter.id,
+  }
+})
+
 ipcMain.handle('analysis:commitReframe', async (event, options) => {
   const {
     sceneId, sourceVideoPath, projectDir,
