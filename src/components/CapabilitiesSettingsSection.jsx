@@ -4,6 +4,7 @@ import {
   DEFAULT_CAPABILITY_SETTINGS,
   I2V_MODEL_OPTIONS,
   EXTEND_MODEL_OPTIONS,
+  OUTPAINT_MODEL_OPTIONS,
   UPSCALE_MODEL_OPTIONS,
   loadCapabilitySettings,
   saveCapabilitySettings,
@@ -216,6 +217,20 @@ function CapabilitiesSettingsSection() {
             value={rfr.upscaleModel}
             options={UPSCALE_MODEL_OPTIONS}
             onChange={(v) => patch('footageReframe', { upscaleModel: v })}
+          />
+        </Field>
+        <Field label="Outpaint engine" hint="Used by the 'Outpaint (widen)' button in the Inspector — fills NEW canvas to change aspect instead of cropping.">
+          <SelectField
+            value={rfr.outpaintModel || 'luma-ray-3.2-reframe'}
+            options={OUTPAINT_MODEL_OPTIONS}
+            onChange={(v) => patch('footageReframe', { outpaintModel: v })}
+          />
+        </Field>
+        <Field label="Outpaint target aspect" hint="Aspect ratio the outpaint grows the canvas to.">
+          <SelectField
+            value={rfr.outpaintTargetAspect || '16:9'}
+            options={['16:9', '9:16', '1:1', '4:3', '3:4', '21:9'].map((a) => ({ id: a, label: a }))}
+            onChange={(v) => patch('footageReframe', { outpaintTargetAspect: v })}
           />
         </Field>
         <div className="flex justify-end">

@@ -383,6 +383,12 @@ contextBridge.exposeInMainWorld('electronAPI', {
    * @returns {Promise<{success: boolean, version?: string, outputPath?: string, kind?: string, error?: string}>}
    */
   commitReframe: (options) => ipcRenderer.invoke('analysis:commitReframe', options),
+  commitReframeOutpaint: (options) => ipcRenderer.invoke('analysis:commitReframeOutpaint', options),
+  onCommitReframeOutpaintProgress: (callback) => {
+    const handler = (_event, payload) => callback(payload)
+    ipcRenderer.on('analysis:commitReframeOutpaint:progress', handler)
+    return () => ipcRenderer.removeListener('analysis:commitReframeOutpaint:progress', handler)
+  },
   onCommitReframeProgress: (cb) => {
     const handler = (_, payload) => cb(payload)
     ipcRenderer.on('analysis:commitReframe:progress', handler)

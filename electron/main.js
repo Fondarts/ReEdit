@@ -3547,6 +3547,293 @@ ipcMain.handle('analysis:commitReframe', async (event, options) => {
 //      single MP4 saved under .reedit/optimized/<sceneId>_E{NN}.mp4.
 //   6. Reply with the version tag so the renderer can register the
 //      E-tagged entry into the scene's optimization stack.
+// ============================================
+// Reframe by OUTPAINT — widen the canvas instead of cropping it
+// ============================================
+//
+// The crop-reframe above can only remove pixels; this handler fills NEW
+// canvas so 9:16 footage becomes true 16:9 (and vice versa). Two engines:
+//   - 'luma-ray-3.2-reframe' (default): Comfy Cloud partner node, one
+//     shot, ≤30 s source, output capped at 1080p.
+//   - 'ltx-ic-local': the validated oumoumad IC-LoRA outpaint workflow
+//     bundled at workflows/outpaint_ltx23_ic_api.json (see its _meta for
+//     slots, pad presets and the 8k+1 frame quirk).
+// Output is tagged O{NN} in .reedit/optimized/ and always carries the
+// original clip's audio (outpaint engines return silent or re-encoded
+// audio — we remux the source track over the result).
+const OUTPAINT_LTX_WORKFLOW_PATH = path.resolve(__dirname, '..', 'workflows', 'outpaint_ltx23_ic_api.json')
+const OUTPAINT_LTX_SLOTS = {
+  LOAD_VIDEO: '5060',      // .inputs.video — input clip filename
+  FIRST_FRAME: '2004',     // .inputs.image — first-frame stub PNG
+  PROMPT: '2483',          // .inputs.text — scene description for the fill
+  SEED: '4832',            // .inputs.noise_seed
+  PAD: '5086',             // ImagePadKJ — left/right/top/bottom
+}
+
+function parseAspect(aspect) {
+  const m = /^(\d+(?:\.\d+)?)\s*:\s*(\d+(?:\.\d+)?)$/.exec(String(aspect || '').trim())
+  if (!m) return null
+  const w = Number(m[1]); const h = Number(m[2])
+  if (!(w > 0) || !(h > 0)) return null
+  return w / h
+}
+
+ipcMain.handle('analysis:commitReframeOutpaint', async (event, options) => {
+  const {
+    sceneId, projectDir, targetAspect, prompt,
+    modelId: modelIdOpt,
+    comfyUrl: comfyUrlOpt, apiKey: apiKeyOpt,
+  } = options || {}
+  if (!sceneId) return { success: false, error: 'sceneId required.' }
+  if (!projectDir) return { success: false, error: 'projectDir required.' }
+  const targetRatio = parseAspect(targetAspect)
+  if (!targetRatio) return { success: false, error: `targetAspect must look like "16:9" (got "${targetAspect}").` }
+  const modelId = String(modelIdOpt || 'luma-ray-3.2-reframe')
+  const comfyUrl = comfyUrlOpt || DEFAULT_LOCAL_COMFY_URL
+  const apiKey = apiKeyOpt || ''
+
+  const emit = (stage, extra = {}) => {
+    try { event.sender.send('analysis:commitReframeOutpaint:progress', { sceneId, stage, ...extra }) } catch (_) { /* renderer closed */ }
+  }
+  emit('starting', { modelId, targetAspect })
+
+  const projectDirFwd = projectDir.replace(/\\/g, '/')
+  const sourceClipPath = path.join(projectDirFwd, '.reedit', 'clips', `${sceneId}.mp4`)
+  try {
+    const st = await fs.stat(sourceClipPath)
+    if (!st || st.size < 1024) throw new Error('empty')
+  } catch {
+    return { success: false, error: `Source clip not found at ${sourceClipPath}. Run captioning/optimization once so the cached sub-clip exists.` }
+  }
+  const meta = await probeVideoMeta(sourceClipPath)
+  if (!meta?.width || !meta?.height || !meta?.fps) {
+    return { success: false, error: 'ffprobe failed to read clip metadata.' }
+  }
+  const sourceRatio = meta.width / meta.height
+  if (Math.abs(sourceRatio - targetRatio) < 0.01) {
+    return { success: false, error: `Clip is already ${targetAspect} — nothing to outpaint.` }
+  }
+
+  const projectOptimizedDir = path.join(projectDirFwd, '.reedit', 'optimized')
+  try { await fs.mkdir(projectOptimizedDir, { recursive: true }) } catch (_) { /* ignore */ }
+  const existing = await fs.readdir(projectOptimizedDir).catch(() => [])
+  const versionRe = new RegExp(`^${sceneId.replace(/[.*+?^${}()|[\\]\\\\]/g, '\\$&')}_O(\\d{2,})(?:[_.]|$)`)
+  let nextVersion = 1
+  for (const name of existing) {
+    const m = name.match(versionRe)
+    if (m) {
+      const n = parseInt(m[1], 10)
+      if (Number.isFinite(n) && n >= nextVersion) nextVersion = n + 1
+    }
+  }
+  const versionTag = `O${String(nextVersion).padStart(2, '0')}`
+  const prefix = `reedit_${sanitizeForFilename(path.basename(projectDir))}_${sanitizeForFilename(sceneId)}_${versionTag}`
+  const finalPath = path.join(projectOptimizedDir, `${sceneId}_${versionTag}.mp4`)
+  const stagePath = path.join(projectOptimizedDir, `${sceneId}_${versionTag}_raw.mp4`)
+  emit('note', { message: `Writing version ${versionTag}.` })
+
+  let workflow
+  let partner = false
+  let trimToSec = null
+
+  if (modelId === 'ltx-ic-local') {
+    // ---- Local LTX IC-LoRA outpaint ----
+    let template
+    try {
+      template = JSON.parse(await fs.readFile(OUTPAINT_LTX_WORKFLOW_PATH, 'utf8'))
+    } catch (err) {
+      return { success: false, error: `Outpaint workflow JSON missing/unreadable at ${OUTPAINT_LTX_WORKFLOW_PATH}: ${err.message}` }
+    }
+    delete template._meta
+
+    // LTX only generates 8k+1 frame counts and truncates DOWN otherwise
+    // (see the workflow's _meta.frame_count_quirk). Pre-pad the clip by
+    // cloning the last frame up to the next valid count, then trim the
+    // result back to the source duration after download.
+    const frames = Number(meta.nbFrames) || Math.round(meta.duration * meta.fps)
+    const validFrames = frames % 8 === 1 ? frames : (Math.floor(frames / 8) + 1) * 8 + 1
+    const padFrames = validFrames - frames
+    let uploadClipPath = sourceClipPath
+    if (padFrames > 0) {
+      emit('note', { message: `Pre-padding ${padFrames} cloned frames (LTX 8k+1 quirk).` })
+      uploadClipPath = path.join(projectOptimizedDir, `${sceneId}_${versionTag}_padded.mp4`)
+      await new Promise((resolve, reject) => {
+        const args = [
+          '-hide_banner', '-nostats',
+          '-i', sourceClipPath,
+          '-vf', `tpad=stop_mode=clone:stop=${padFrames}`,
+          '-an',
+          '-c:v', 'libx264', '-preset', 'veryfast', '-crf', '16',
+          '-pix_fmt', 'yuv420p',
+          '-y', uploadClipPath,
+        ]
+        const proc = spawn(ffmpegPath, args, { windowsHide: true })
+        let stderr = ''
+        proc.stderr.on('data', (d) => { stderr += d.toString() })
+        proc.on('close', (code) => code === 0 ? resolve() : reject(new Error(`ffmpeg tpad failed (${code}): ${stderr.slice(-300)}`)))
+        proc.on('error', reject)
+      }).catch((err) => ({ success: false, error: err.message }))
+      trimToSec = meta.duration
+    }
+
+    // First-frame stub for the (bypassed) i2v branch.
+    emit('extracting_reference')
+    const stubPath = path.join(projectOptimizedDir, `${sceneId}_${versionTag}_first.png`)
+    await new Promise((resolve, reject) => {
+      const proc = spawn(ffmpegPath, ['-hide_banner', '-nostats', '-i', sourceClipPath, '-frames:v', '1', '-q:v', '2', '-y', stubPath], { windowsHide: true })
+      proc.on('close', (code) => code === 0 ? resolve() : reject(new Error(`ffmpeg first-frame failed (${code})`)))
+      proc.on('error', reject)
+    })
+
+    emit('uploading')
+    let clipName = `${prefix}_source.mp4`
+    let stubName = `${prefix}_first.png`
+    try {
+      const upClip = await uploadFileToComfy({ comfyUrl, apiKey, localFilePath: uploadClipPath, filename: clipName })
+      clipName = upClip?.name || clipName
+      const upStub = await uploadFileToComfy({ comfyUrl, apiKey, localFilePath: stubPath, filename: stubName })
+      stubName = upStub?.name || stubName
+    } catch (err) {
+      return { success: false, error: `Upload failed: ${err.message}` }
+    }
+
+    // Pad math: grow the canvas on the axis the target needs. The
+    // workflow halves (source + pads) and snaps to /32 internally, so we
+    // just need pads that produce the target ratio at full size.
+    let padL = 0; let padR = 0; let padT = 0; let padB = 0
+    if (targetRatio > sourceRatio) {
+      const fullW = Math.round(meta.height * targetRatio)
+      const total = Math.max(0, fullW - meta.width)
+      padL = Math.floor(total / 2); padR = total - padL
+    } else {
+      const fullH = Math.round(meta.width / targetRatio)
+      const total = Math.max(0, fullH - meta.height)
+      padT = Math.floor(total / 2); padB = total - padT
+    }
+
+    workflow = template
+    workflow[OUTPAINT_LTX_SLOTS.LOAD_VIDEO].inputs.video = clipName
+    workflow[OUTPAINT_LTX_SLOTS.FIRST_FRAME].inputs.image = stubName
+    workflow[OUTPAINT_LTX_SLOTS.PROMPT].inputs.text = String(prompt || 'the same scene, seamlessly extended — no text, no logos')
+    workflow[OUTPAINT_LTX_SLOTS.SEED].inputs.noise_seed = Math.floor(Math.random() * 2147483647)
+    Object.assign(workflow[OUTPAINT_LTX_SLOTS.PAD].inputs, { left: padL, right: padR, top: padT, bottom: padB })
+  } else {
+    // ---- Cloud adapter (Luma Ray 3.2 by default) ----
+    const outpaintAdapter = getAdapter(modelId)
+    if (!outpaintAdapter || outpaintAdapter.kind !== 'reframe-outpaint') {
+      const available = listAdapters({ kind: 'reframe-outpaint' }).map((a) => a.id).concat('ltx-ic-local').join(', ')
+      return { success: false, error: `Unknown outpaint model "${modelId}". Available: ${available}.` }
+    }
+    if (!isCloudComfyUrl(comfyUrl)) {
+      return { success: false, error: `${outpaintAdapter.label} needs Comfy Cloud. Switch the ComfyUI mode to Cloud, or pick the local LTX engine.` }
+    }
+    const maxSrc = Number(outpaintAdapter.caps?.maxSourceSec) || 30
+    if (meta.duration > maxSrc + 0.05) {
+      return { success: false, error: `Clip is ${meta.duration.toFixed(1)}s — ${outpaintAdapter.label} accepts up to ${maxSrc}s.` }
+    }
+    emit('uploading')
+    let clipName = `${prefix}_source.mp4`
+    try {
+      const up = await uploadFileToComfy({ comfyUrl, apiKey, localFilePath: sourceClipPath, filename: clipName })
+      clipName = up?.name || clipName
+    } catch (err) {
+      return { success: false, error: `Upload failed: ${err.message}` }
+    }
+    workflow = outpaintAdapter.buildWorkflow({
+      sourceVideoFilename: clipName,
+      prompt,
+      aspectRatio: targetAspect,
+      resolution: '1080p',
+      outputPrefix: `reedit_outpaint/${prefix}`,
+      seed: Math.floor(Math.random() * 2147483647),
+    })
+    partner = Boolean(outpaintAdapter.partner)
+  }
+
+  emit('queued_submit')
+  let promptId
+  try {
+    promptId = await queuePromptToComfy({ comfyUrl, apiKey, workflow, includeComfyOrgKey: partner })
+  } catch (err) {
+    return { success: false, error: err.message }
+  }
+  emit('queued', { promptId })
+
+  let result
+  const startedAt = Date.now()
+  try {
+    result = await waitForComfyJob({
+      comfyUrl, apiKey, promptId,
+      timeoutMs: 30 * 60 * 1000, pollMs: 3000,
+      onTick: () => emit('running', { elapsedSec: Math.round((Date.now() - startedAt) / 1000) }),
+    })
+  } catch (err) {
+    return { success: false, error: err?.message || `Comfy job ${promptId} failed.` }
+  }
+
+  // Locate the output video (same key-shape zoo as commitExtend).
+  const VIDEO_RE = /\.(mp4|mov|webm|mkv|avi|m4v)$/i
+  let outFile = null
+  for (const out of Object.values(result.outputs || {})) {
+    for (const c of [...(out?.videos || []), ...(out?.gifs || []), ...(out?.images || [])]) {
+      if (c?.filename && VIDEO_RE.test(c.filename)) { outFile = c; break }
+    }
+    if (outFile) break
+  }
+  if (!outFile) return { success: false, error: 'Workflow completed but reported no video output.' }
+
+  emit('finalizing')
+  try {
+    await downloadFromComfy({
+      comfyUrl, apiKey,
+      filename: outFile.filename, subfolder: outFile.subfolder || '', type: outFile.type || 'output',
+      destPath: stagePath,
+    })
+  } catch (err) {
+    return { success: false, error: `Could not download outpaint output: ${err.message}` }
+  }
+
+  // Remux the ORIGINAL audio over the generated video (outpaint engines
+  // return silent or re-encoded sound) and trim back to the source
+  // duration when we pre-padded for the LTX frame quirk.
+  await new Promise((resolve, reject) => {
+    const args = [
+      '-hide_banner', '-nostats',
+      '-i', stagePath,
+      '-i', sourceClipPath,
+      '-map', '0:v:0', '-map', '1:a:0?',
+      ...(trimToSec ? ['-t', String(trimToSec)] : []),
+      '-c:v', 'copy',
+      '-c:a', 'aac', '-b:a', '192k',
+      '-movflags', '+faststart',
+      '-y', finalPath,
+    ]
+    const proc = spawn(ffmpegPath, args, { windowsHide: true })
+    let stderr = ''
+    proc.stderr.on('data', (d) => { stderr += d.toString() })
+    proc.on('close', (code) => code === 0 ? resolve() : reject(new Error(`ffmpeg remux failed (${code}): ${stderr.slice(-300)}`)))
+    proc.on('error', reject)
+  }).catch((err) => ({ success: false, error: err.message }))
+  try { await fs.unlink(stagePath) } catch (_) { /* ignore */ }
+
+  const workflowJsonPath = await saveWorkflowAlongsideOutput(finalPath, workflow, {
+    kind: 'reframe-outpaint', version: versionTag, sceneId, modelId, promptId, targetAspect,
+  })
+
+  emit('done', { promptId, outputPath: finalPath, version: versionTag, targetAspect, inProjectDir: true, workflowJsonPath, modelId })
+  return {
+    success: true,
+    promptId,
+    outputPath: finalPath,
+    workflowJsonPath,
+    version: versionTag,
+    inProjectDir: true,
+    kind: 'reframe-outpaint',
+    targetAspect,
+    modelId,
+  }
+})
+
 ipcMain.handle('analysis:commitExtend', async (event, options) => {
   const {
     sceneId, projectDir, extendSec,
