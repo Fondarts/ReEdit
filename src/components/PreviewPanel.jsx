@@ -1,9 +1,8 @@
-import { Maximize2, Minimize2, Plus, X, Check, Home, ZoomIn, ZoomOut, Move, Play, Pause, SkipBack, SkipForward, Volume2, Film, Image as ImageIcon, ChevronDown, Grid3X3, Crosshair, Square, Frame, Eye, EyeOff, Layers, Wand2, Camera, Loader2 } from 'lucide-react'
+import { Maximize2, Minimize2, Plus, X, Check, Home, ZoomIn, ZoomOut, Move, Play, Pause, SkipBack, SkipForward, Volume2, Film, Image as ImageIcon, ChevronDown, Grid3X3, Crosshair, Square, Frame, Eye, EyeOff, Layers, Camera, Loader2 } from 'lucide-react'
 import { useState, useRef, useEffect, useCallback, useMemo } from 'react'
 import useAssetsStore from '../stores/assetsStore'
 import useTimelineStore from '../stores/timelineStore'
 import useProjectStore from '../stores/projectStore'
-import { useFrameForAIStore } from '../stores/frameForAIStore'
 import { useTimelinePlayback } from '../hooks/useTimelinePlayback'
 import useViewportClampedPosition from '../hooks/useViewportClampedPosition'
 import { captureTimelineFrameAt, getTopmostVideoOrImageClipAtTime } from '../utils/captureTimelineFrame'
@@ -248,10 +247,7 @@ function PreviewPanel() {
     contextMenuAnchor,
     contextMenuRef,
   )
-  const [capturingFrameForAI, setCapturingFrameForAI] = useState(false)
   const [capturingStillFrame, setCapturingStillFrame] = useState(false)
-  
-  const setFrameForAI = useFrameForAIStore((s) => s.setFrame)
 
   // Commit jobs in flight — reframe + extend tracked separately so the
   // banner can pick the right label per-kind. Keyed by sceneId so
@@ -1439,36 +1435,6 @@ function PreviewPanel() {
       case 'reset-view':
         resetView()
         break
-      case 'extend-with-ai': {
-        setContextMenu(null)
-        if (previewMode !== 'timeline') break
-        const top = getTopmostVideoOrImageClipAtTime(playheadPosition)
-        if (!top) break
-        setCapturingFrameForAI(true)
-        captureTimelineFrameAt(playheadPosition).then((result) => {
-          setCapturingFrameForAI(false)
-          if (result) {
-            setFrameForAI({ ...result, mode: 'extend' })
-            window.dispatchEvent(new CustomEvent('comfystudio-open-generate-with-frame'))
-          }
-        })
-        break
-      }
-      case 'keyframe-for-ai': {
-        setContextMenu(null)
-        if (previewMode !== 'timeline') break
-        const top = getTopmostVideoOrImageClipAtTime(playheadPosition)
-        if (!top) break
-        setCapturingFrameForAI(true)
-        captureTimelineFrameAt(playheadPosition).then((result) => {
-          setCapturingFrameForAI(false)
-          if (result) {
-            setFrameForAI({ ...result, mode: 'keyframe' })
-            window.dispatchEvent(new CustomEvent('comfystudio-open-generate-with-frame'))
-          }
-        })
-        break
-      }
       case 'capture-still':
         handleCaptureStill()
         break
@@ -2651,22 +2617,6 @@ function PreviewPanel() {
               >
                 <Camera className="w-3.5 h-3.5 text-sf-accent" />
                 <span>{capturingStillFrame ? 'Saving Still...' : 'Capture Still'}</span>
-              </button>
-              <button
-                onClick={() => handleContextAction('extend-with-ai')}
-                disabled={capturingFrameForAI || capturingStillFrame}
-                className="w-full px-3 py-1.5 text-left text-xs text-sf-text-primary hover:bg-sf-dark-700 flex items-center gap-2 transition-colors disabled:opacity-50"
-              >
-                <Wand2 className="w-3.5 h-3.5 text-sf-accent" />
-                <span>{capturingFrameForAI ? 'Capturing...' : 'Extend with AI'}</span>
-              </button>
-              <button
-                onClick={() => handleContextAction('keyframe-for-ai')}
-                disabled={capturingFrameForAI || capturingStillFrame}
-                className="w-full px-3 py-1.5 text-left text-xs text-sf-text-primary hover:bg-sf-dark-700 flex items-center gap-2 transition-colors disabled:opacity-50"
-              >
-                <Wand2 className="w-3.5 h-3.5 text-sf-accent" />
-                <span>{capturingFrameForAI ? 'Capturing...' : 'Starting keyframe for AI'}</span>
               </button>
               <div className="h-px bg-sf-dark-600 my-1" />
             </>

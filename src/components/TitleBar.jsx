@@ -3,17 +3,7 @@ import { Copy, Minus, Settings as SettingsIcon, Square, X } from 'lucide-react'
 import ComfyLauncherChip from './ComfyLauncherChip'
 import UiModeToggle from './UiModeToggle'
 import { useUiMode } from '../hooks/useUiMode'
-import { REEDIT_MODE, REEDIT_TABS } from '../config/mode'
-
-const TOP_TABS = [
-  { id: 'editor', label: 'Editor' },
-  { id: 'generate', label: 'Generate' },
-  { id: 'mog', label: 'MoGraph' },
-  { id: 'stock', label: 'Stock' },
-  { id: 'comfyui', label: 'ComfyUI' },
-  { id: 'llm-assistant', label: 'LLM' },
-  { id: 'export', label: 'Export' },
-]
+import { REEDIT_TABS } from '../config/mode'
 
 // Auto mode hides everything except Import + Proposal — the user uploads
 // material in Import, hits Go, and the orchestrator runs the remaining
@@ -29,31 +19,27 @@ function TitleBar({
   showComfyUiTab = false,
   onOpenSettings,
 }) {
-  // Under REEDIT_MODE the TitleBar surfaces the re-edit pipeline tabs in
-  // pipeline order and hides the generic ComfyStudio ones. The ComfyUI
-  // iframe tab stays opt-in via the same showComfyUiTab setting, appended
-  // at the end so power users can still jump into raw ComfyUI.
+  // The TitleBar surfaces the re-edit pipeline tabs in pipeline order.
+  // The ComfyUI iframe tab stays opt-in via showComfyUiTab, appended at
+  // the end so power users can still jump into raw ComfyUI.
   //
-  // The mode itself is owned by the shared hook so a toggle flip from
+  // The UI mode is owned by the shared hook so a toggle flip from
   // anywhere (TitleBar, WelcomeScreen, dev tools) refreshes this list
   // without a hand-rolled event listener.
   const uiMode = useUiMode()
 
-  const allReeditTabs = REEDIT_TABS
   const visibleReeditTabs = uiMode === 'lucky'
-    ? allReeditTabs.filter((t) => LUCKY_REEDIT_TAB_IDS.has(t.id))
-    : allReeditTabs
+    ? REEDIT_TABS.filter((t) => LUCKY_REEDIT_TAB_IDS.has(t.id))
+    : REEDIT_TABS
 
-  const baseTabs = REEDIT_MODE ? visibleReeditTabs : TOP_TABS
   const tabs = showComfyUiTab
-    ? (REEDIT_MODE ? [...baseTabs, { id: 'comfyui', label: 'ComfyUI' }] : baseTabs)
-    : baseTabs.filter(t => t.id !== 'comfyui')
+    ? [...visibleReeditTabs, { id: 'comfyui', label: 'ComfyUI' }]
+    : visibleReeditTabs.filter(t => t.id !== 'comfyui')
 
   // If the active tab gets hidden by switching to Auto mode, bounce the
   // user to the first visible tab. Otherwise they'd be looking at a
   // workspace that's still mounted but unreachable from the TitleBar.
   useEffect(() => {
-    if (!REEDIT_MODE) return
     if (!tabs.find((t) => t.id === activeTab) && tabs.length > 0) {
       onTabChange?.(tabs[0].id)
     }
@@ -173,7 +159,7 @@ function TitleBar({
         {/* Auto / Simple / Advanced toggle — shared with the
             WelcomeScreen header so the persisted preference is the
             same regardless of where it was set. */}
-        {REEDIT_MODE && <UiModeToggle className="mr-2" />}
+        <UiModeToggle className="mr-2" />
         <ComfyLauncherChip />
         {/* Quick settings entry point next to the ComfyUI pill. Jumps
             straight to the Launcher section so the most common use

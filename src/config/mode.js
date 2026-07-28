@@ -1,14 +1,8 @@
-// Central feature flag for the project:re-edit fork of ComfyStudio.
-//
-// When REEDIT_MODE is true the TitleBar exposes the re-edit pipeline tabs
-// (Import → Analysis → Proposal → Editor → Export) and hides the generic
-// ComfyStudio tabs (Generate, MoGraph, Stock, LLM). The original components
-// stay in the bundle so upstream cherry-picks still apply cleanly; we'll
-// delete the hidden surfaces after M1 lands.
+// Tab configuration for the re-edit pipeline. The REEDIT_MODE feature
+// flag (and the hidden upstream ComfyStudio surfaces it gated — Generate,
+// MoGraph, Stock, LLM) was removed once the pipeline became the product.
 
-export const REEDIT_MODE = true
-
-// Tabs visible in the TitleBar under REEDIT_MODE, in display order.
+// Tabs visible in the TitleBar, in display order.
 // Ids must match the branches in App.jsx's render switch.
 //
 // `projects` and `import` used to be two separate rails; they're collapsed
@@ -30,6 +24,11 @@ export const REEDIT_TABS = [
 // inspector / timeline docked around them). The editor tab keeps the
 // Resolve-style layout; the other re-edit tabs are single-panel.
 export const REEDIT_FULLSCREEN_TABS = new Set(['import', 'analysis', 'optimization', 'proposal', 'review'])
+
+// Every tab id that replaces the docked editor layout entirely. The editor
+// (Timeline + Preview + Inspector) renders only when mainTab is NOT one of
+// these — single source of truth for App.jsx's render switch.
+export const NON_EDITOR_TAB_IDS = ['projects', 'import', 'analysis', 'optimization', 'proposal', 'review', 'export', 'comfyui']
 
 // Decide the initial tab when a project is opened or created.
 // - No sourceVideo yet → Import.
