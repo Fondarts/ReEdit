@@ -1,0 +1,340 @@
+{
+  "_meta": {
+    "title": "LTX-2.3 IC-LoRA Outpaint (oumoumad) — API format, machine-validated",
+    "description": "Validated against ComfyUI 0.20.1 with base-directory E:/Documents/ComfyUI. Bypasses the 5 custom nodes the author's PDF assumes (CM_FloatToInt, Switch image [Crystools] x2, Color Correct (mtb) x2). Ready to enqueue via /prompt or mcp__comfyui__enqueue_workflow.",
+    "source": "https://huggingface.co/oumoumad/LTX-2.3-22b-IC-LoRA-Outpaint",
+    "diffs_vs_author": [
+      "ckpt_name uses bare filename (no LTX-2\\ prefix) — local checkpoints/ folder has no subfolder",
+      "lora_name 4922 set to ltx-2.3-22b-distilled-1.1_lora-dynamic_fro09_avg_rank_111_bf16.safetensors (the distilled LoRA actually present locally)",
+      "lora_name 5011 set to ltx-2.3-22b-ic-lora-outpaint.safetensors (downloaded to models/loras/)",
+      "text_encoder set to gemma_3_12B_it_fp4_mixed.safetensors (the local Gemma flavour)",
+      "5012.image rewired from missing 5087 (Switch image) → 5085 directly (gamma=false branch)",
+      "5067.image1 rewired from missing 5089 (Switch image) → 4851 (decoded video)",
+      "5076.images rewired same as above",
+      "3980.frame_rate set to literal 24 (replaces missing CM_FloatToInt cast)",
+      "ResizeImageMaskNode widget keys use the dynamic-combo schema (resize_type.* prefix) per ComfyUI 0.18+"
+    ],
+    "models_required": [
+      "checkpoints/ltx-2.3-22b-dev-fp8.safetensors",
+      "loras/ltx-2.3-22b-distilled-1.1_lora-dynamic_fro09_avg_rank_111_bf16.safetensors",
+      "loras/ltx-2.3-22b-ic-lora-outpaint.safetensors",
+      "text_encoders/gemma_3_12B_it_fp4_mixed.safetensors"
+    ],
+    "customize": {
+      "video":      "Node 5060.video — set to your input clip filename (must live in ComfyUI/input/)",
+      "image_stub": "Node 2004.image — first-frame PNG of the clip (any image works since bypass_i2v=true; matching aspect avoids ugly resize work)",
+      "prompt":     "Node 2483.text — positive prompt that describes the SCENE BEING OUTPAINTED (the LoRA fills black-padded regions with content matching this)",
+      "seed":       "Node 4832.noise_seed — change for different fills",
+      "pad":        "Node 5086 (ImagePadKJ) — controls canvas extension. Output dims ≈ ((source + pads) ÷ 2) snapped to /32. Defaults below assume a 1080×1920 (9:16) source padded to ~16:9.",
+      "presets": {
+        "9_16_to_16_9_vertical_to_horizontal": { "left": 1166, "right": 1166, "top": 0, "bottom": 0, "expected_output": "1696×960 (≈16:9)" },
+        "16_9_to_9_16_horizontal_to_vertical": { "left": 0, "right": 0, "top": 1166, "bottom": 1166, "expected_output": "960×1696 (≈9:16)" },
+        "horizontal_only_widening_16_9_to_2_35_1": { "left": 480, "right": 480, "top": 0, "bottom": 0, "expected_output": "1440×544 (≈2.65:1)" }
+      }
+    },
+    "frame_count_quirk": "LTX 2.3 only generates lengths of 8k+1 frames (1, 9, 17, 25, 33, 41, 49, 57, 65, …). Source clips with other counts get truncated DOWN to the nearest valid count. To preserve the full clip, pre-pad with freeze frames using ffmpeg (`-vf tpad=stop_mode=clone:stop_duration=Xs`) before sending, then trim the extra frames after."
+  },
+  "1241": {
+    "class_type": "LTXVConditioning",
+    "inputs": {
+      "frame_rate": ["5064", 0],
+      "positive": ["2483", 0],
+      "negative": ["2612", 0]
+    }
+  },
+  "2004": {
+    "class_type": "LoadImage",
+    "inputs": {
+      "image": "first_frame.png"
+    }
+  },
+  "2483": {
+    "class_type": "CLIPTextEncode",
+    "inputs": {
+      "text": "cinematic shot, photorealistic, high quality",
+      "clip": ["5023", 0]
+    }
+  },
+  "2612": {
+    "class_type": "CLIPTextEncode",
+    "inputs": {
+      "text": "pc game, console game, video game, ugly, 3d render, cartoon, photo, still, static, slow",
+      "clip": ["5023", 0]
+    }
+  },
+  "3059": {
+    "class_type": "EmptyLTXVLatentVideo",
+    "inputs": {
+      "width": ["5029", 0],
+      "height": ["5029", 1],
+      "length": ["5029", 2],
+      "batch_size": 1
+    }
+  },
+  "3159": {
+    "class_type": "LTXVImgToVideoConditionOnly",
+    "inputs": {
+      "strength": 0.7,
+      "bypass": ["5019", 0],
+      "vae": ["3940", 2],
+      "image": ["3336", 0],
+      "latent": ["3059", 0]
+    }
+  },
+  "3336": {
+    "class_type": "LTXVPreprocess",
+    "inputs": {
+      "img_compression": 18,
+      "image": ["5090", 0]
+    }
+  },
+  "3940": {
+    "class_type": "CheckpointLoaderSimple",
+    "inputs": {
+      "ckpt_name": "ltx-2.3-22b-dev-fp8.safetensors"
+    }
+  },
+  "3980": {
+    "class_type": "LTXVEmptyLatentAudio",
+    "inputs": {
+      "frames_number": ["5060", 1],
+      "frame_rate": 24,
+      "batch_size": 1,
+      "audio_vae": ["4010", 0]
+    }
+  },
+  "4010": {
+    "class_type": "LTXVAudioVAELoader",
+    "inputs": {
+      "ckpt_name": "ltx-2.3-22b-dev-fp8.safetensors"
+    }
+  },
+  "4528": {
+    "class_type": "LTXVConcatAVLatent",
+    "inputs": {
+      "video_latent": ["5012", 2],
+      "audio_latent": ["3980", 0]
+    }
+  },
+  "4828": {
+    "class_type": "CFGGuider",
+    "inputs": {
+      "cfg": 1,
+      "model": ["5011", 0],
+      "positive": ["5012", 0],
+      "negative": ["5012", 1]
+    }
+  },
+  "4829": {
+    "class_type": "SamplerCustomAdvanced",
+    "inputs": {
+      "noise": ["4832", 0],
+      "guider": ["4828", 0],
+      "sampler": ["4831", 0],
+      "sigmas": ["5025", 0],
+      "latent_image": ["4528", 0]
+    }
+  },
+  "4831": {
+    "class_type": "KSamplerSelect",
+    "inputs": {
+      "sampler_name": "euler_ancestral"
+    }
+  },
+  "4832": {
+    "class_type": "RandomNoise",
+    "inputs": {
+      "noise_seed": 12345
+    }
+  },
+  "4845": {
+    "class_type": "LTXVSeparateAVLatent",
+    "inputs": {
+      "av_latent": ["4829", 0]
+    }
+  },
+  "4848": {
+    "class_type": "LTXVAudioVAEDecode",
+    "inputs": {
+      "samples": ["4845", 1],
+      "audio_vae": ["4010", 0]
+    }
+  },
+  "4851": {
+    "class_type": "VAEDecodeTiled",
+    "inputs": {
+      "tile_size": 512,
+      "overlap": 64,
+      "temporal_size": 512,
+      "temporal_overlap": 4,
+      "samples": ["5013", 2],
+      "vae": ["3940", 2]
+    }
+  },
+  "4922": {
+    "class_type": "LoraLoaderModelOnly",
+    "inputs": {
+      "lora_name": "ltx-2.3-22b-distilled-1.1_lora-dynamic_fro09_avg_rank_111_bf16.safetensors",
+      "strength_model": 0.5,
+      "model": ["3940", 0]
+    }
+  },
+  "5011": {
+    "class_type": "LTXICLoRALoaderModelOnly",
+    "inputs": {
+      "lora_name": "ltx-2.3-22b-ic-lora-outpaint.safetensors",
+      "strength_model": 1,
+      "model": ["4922", 0]
+    }
+  },
+  "5012": {
+    "class_type": "LTXAddVideoICLoRAGuide",
+    "inputs": {
+      "frame_idx": 0,
+      "strength": 1,
+      "latent_downscale_factor": 1,
+      "crop": "disabled",
+      "use_tiled_encode": false,
+      "tile_size": 256,
+      "tile_overlap": 64,
+      "positive": ["1241", 0],
+      "negative": ["1241", 1],
+      "vae": ["3940", 2],
+      "latent": ["3159", 0],
+      "image": ["5085", 0]
+    }
+  },
+  "5013": {
+    "class_type": "LTXVCropGuides",
+    "inputs": {
+      "positive": ["5012", 0],
+      "negative": ["5012", 1],
+      "latent": ["4845", 0]
+    }
+  },
+  "5019": {
+    "class_type": "PrimitiveBoolean",
+    "inputs": {
+      "value": true
+    }
+  },
+  "5023": {
+    "class_type": "LTXAVTextEncoderLoader",
+    "inputs": {
+      "text_encoder": "gemma_3_12B_it_fp4_mixed.safetensors",
+      "ckpt_name": "ltx-2.3-22b-dev-fp8.safetensors",
+      "device": "default"
+    }
+  },
+  "5025": {
+    "class_type": "ManualSigmas",
+    "inputs": {
+      "sigmas": "1.0, 0.99375, 0.9875, 0.98125, 0.975, 0.909375, 0.725, 0.421875, 0.0"
+    }
+  },
+  "5026": {
+    "class_type": "ResizeImageMaskNode",
+    "inputs": {
+      "resize_type": "scale by multiplier",
+      "resize_type.multiplier": 0.5,
+      "scale_method": "lanczos",
+      "input": ["5086", 0]
+    }
+  },
+  "5029": {
+    "class_type": "GetImageSize",
+    "inputs": {
+      "image": ["5085", 0]
+    }
+  },
+  "5060": {
+    "class_type": "VHS_LoadVideo",
+    "inputs": {
+      "video": "input.mp4",
+      "force_rate": 0,
+      "custom_width": 0,
+      "custom_height": 0,
+      "frame_load_cap": 0,
+      "skip_first_frames": 0,
+      "select_every_nth": 1,
+      "format": "AnimateDiff"
+    }
+  },
+  "5064": {
+    "class_type": "VHS_VideoInfo",
+    "inputs": {
+      "video_info": ["5060", 3]
+    }
+  },
+  "5067": {
+    "class_type": "ImageConcanate",
+    "inputs": {
+      "direction": "left",
+      "match_image_size": true,
+      "image1": ["4851", 0],
+      "image2": ["5085", 0]
+    }
+  },
+  "5069": {
+    "class_type": "VHS_VideoCombine",
+    "inputs": {
+      "frame_rate": ["5064", 0],
+      "images": ["5067", 0],
+      "loop_count": 0,
+      "filename_prefix": "outpaint_preview",
+      "format": "video/h264-mp4",
+      "pingpong": false,
+      "save_output": true
+    }
+  },
+  "5076": {
+    "class_type": "VHS_VideoCombine",
+    "inputs": {
+      "frame_rate": ["5064", 0],
+      "images": ["4851", 0],
+      "loop_count": 0,
+      "filename_prefix": "outpaint_result",
+      "format": "video/h264-mp4",
+      "pingpong": false,
+      "save_output": true
+    }
+  },
+  "5085": {
+    "class_type": "ResizeImageMaskNode",
+    "inputs": {
+      "resize_type": "scale to multiple",
+      "resize_type.multiple": 32,
+      "scale_method": "area",
+      "input": ["5026", 0]
+    }
+  },
+  "5086": {
+    "class_type": "ImagePadKJ",
+    "inputs": {
+      "left": 1166,
+      "right": 1166,
+      "top": 0,
+      "bottom": 0,
+      "extra_padding": 0,
+      "pad_mode": "color",
+      "color": "0, 0, 0",
+      "image": ["5060", 0]
+    }
+  },
+  "5090": {
+    "class_type": "ResizeImageMaskNode",
+    "inputs": {
+      "resize_type": "match size",
+      "resize_type.match": ["5085", 0],
+      "resize_type.crop": "center",
+      "scale_method": "area",
+      "input": ["2004", 0]
+    }
+  },
+  "5091": {
+    "class_type": "PrimitiveBoolean",
+    "inputs": {
+      "value": false
+    }
+  }
+}

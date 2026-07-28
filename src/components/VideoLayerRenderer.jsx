@@ -1597,26 +1597,21 @@ const VideoLayer = memo(function VideoLayer({
 
   if (!clip) return null
 
-  // Use animated transform instead of base transform
+  // Use animated transform instead of base transform.
+  // Plain computations (not useMemo): they sit below an early return, so
+  // memo hooks here would violate the Rules of Hooks, and they recompute
+  // every playhead tick anyway since clipTime changes.
   const transformStyle = buildVideoTransform(animatedTransform)
-  const adjustmentSettings = useMemo(() => (
-    normalizeAdjustmentSettings(getAnimatedAdjustmentSettings(clip, clipTime) || clip?.adjustments || {})
-  ), [clip, clipTime])
-  const hasTonalAdjustments = useMemo(
-    () => hasTonalAdjustmentEffect(adjustmentSettings),
-    [adjustmentSettings]
-  )
-  const adjustmentFilterId = useMemo(
-    () => `clip-adjustment-${sanitizeAdjustmentFilterId(clip?.id)}-video`,
-    [clip?.id]
-  )
-  const adjustmentFilterValue = useMemo(() => {
+  const adjustmentSettings = normalizeAdjustmentSettings(getAnimatedAdjustmentSettings(clip, clipTime) || clip?.adjustments || {})
+  const hasTonalAdjustments = hasTonalAdjustmentEffect(adjustmentSettings)
+  const adjustmentFilterId = `clip-adjustment-${sanitizeAdjustmentFilterId(clip?.id)}-video`
+  const adjustmentFilterValue = (() => {
     if (hasTonalAdjustments) {
       return `url(#${adjustmentFilterId})`
     }
     const filterValue = buildCssFilterFromAdjustments(adjustmentSettings)
     return filterValue !== 'none' ? filterValue : undefined
-  }, [adjustmentFilterId, adjustmentSettings, hasTonalAdjustments])
+  })()
   // Combine blur (from transform) with mask filter (e.g. invert) so both apply
   const combinedFilter = [adjustmentFilterValue, transformStyle.filter, maskStyles.filter].filter(Boolean).join(' ') || undefined
   const spriteCombinedFilter = [adjustmentFilterValue, transformStyle.filter, spriteMaskStyles.filter].filter(Boolean).join(' ') || undefined
@@ -1747,30 +1742,22 @@ const ImageLayer = memo(function ImageLayer({
   // Calculate clip-relative time for keyframe evaluation
   const clipTime = playheadPosition - (clip?.startTime || 0)
   
-  // Get animated transform (with keyframes applied)
-  const animatedTransform = useMemo(() => {
-    return getAnimatedTransform(clip, clipTime)
-  }, [clip, clipTime])
-  
+  // Get animated transform (with keyframes applied).
+  // Plain computations (not useMemo): they sit below an early return, so
+  // memo hooks here would violate the Rules of Hooks.
+  const animatedTransform = getAnimatedTransform(clip, clipTime)
+
   const transformStyle = buildVideoTransform(animatedTransform)
-  const adjustmentSettings = useMemo(() => (
-    normalizeAdjustmentSettings(getAnimatedAdjustmentSettings(clip, clipTime) || clip?.adjustments || {})
-  ), [clip, clipTime])
-  const hasTonalAdjustments = useMemo(
-    () => hasTonalAdjustmentEffect(adjustmentSettings),
-    [adjustmentSettings]
-  )
-  const adjustmentFilterId = useMemo(
-    () => `clip-adjustment-${sanitizeAdjustmentFilterId(clip?.id)}-image`,
-    [clip?.id]
-  )
-  const adjustmentFilterValue = useMemo(() => {
+  const adjustmentSettings = normalizeAdjustmentSettings(getAnimatedAdjustmentSettings(clip, clipTime) || clip?.adjustments || {})
+  const hasTonalAdjustments = hasTonalAdjustmentEffect(adjustmentSettings)
+  const adjustmentFilterId = `clip-adjustment-${sanitizeAdjustmentFilterId(clip?.id)}-image`
+  const adjustmentFilterValue = (() => {
     if (hasTonalAdjustments) {
       return `url(#${adjustmentFilterId})`
     }
     const filterValue = buildCssFilterFromAdjustments(adjustmentSettings)
     return filterValue !== 'none' ? filterValue : undefined
-  }, [adjustmentFilterId, adjustmentSettings, hasTonalAdjustments])
+  })()
   const combinedFilter = [adjustmentFilterValue, transformStyle.filter, maskStyles.filter].filter(Boolean).join(' ') || undefined
 
   return (
@@ -1833,30 +1820,22 @@ const TextLayer = memo(function TextLayer({
   // Calculate clip-relative time for keyframe evaluation
   const clipTime = playheadPosition - (clip?.startTime || 0)
   
-  // Get animated transform (with keyframes applied)
-  const animatedTransform = useMemo(() => {
-    return getAnimatedTransform(clip, clipTime)
-  }, [clip, clipTime])
-  
+  // Get animated transform (with keyframes applied).
+  // Plain computations (not useMemo): they sit below an early return, so
+  // memo hooks here would violate the Rules of Hooks.
+  const animatedTransform = getAnimatedTransform(clip, clipTime)
+
   const transformStyle = buildVideoTransform(animatedTransform)
-  const adjustmentSettings = useMemo(() => (
-    normalizeAdjustmentSettings(getAnimatedAdjustmentSettings(clip, clipTime) || clip?.adjustments || {})
-  ), [clip, clipTime])
-  const hasTonalAdjustments = useMemo(
-    () => hasTonalAdjustmentEffect(adjustmentSettings),
-    [adjustmentSettings]
-  )
-  const adjustmentFilterId = useMemo(
-    () => `clip-adjustment-${sanitizeAdjustmentFilterId(clip?.id)}-text`,
-    [clip?.id]
-  )
-  const adjustmentFilterValue = useMemo(() => {
+  const adjustmentSettings = normalizeAdjustmentSettings(getAnimatedAdjustmentSettings(clip, clipTime) || clip?.adjustments || {})
+  const hasTonalAdjustments = hasTonalAdjustmentEffect(adjustmentSettings)
+  const adjustmentFilterId = `clip-adjustment-${sanitizeAdjustmentFilterId(clip?.id)}-text`
+  const adjustmentFilterValue = (() => {
     if (hasTonalAdjustments) {
       return `url(#${adjustmentFilterId})`
     }
     const filterValue = buildCssFilterFromAdjustments(adjustmentSettings)
     return filterValue !== 'none' ? filterValue : undefined
-  }, [adjustmentFilterId, adjustmentSettings, hasTonalAdjustments])
+  })()
   const combinedFilter = [adjustmentFilterValue, transformStyle.filter].filter(Boolean).join(' ') || undefined
   const textProps = clip.textProperties || {}
   const safePreviewScale = Number.isFinite(previewScale) && previewScale > 0 ? previewScale : 1

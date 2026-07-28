@@ -32,7 +32,7 @@ import { clearDiskCacheUrl } from './VideoLayerRenderer'
 import { getActiveHttpBaseSync, getActiveComfyIpcContext } from '../services/localComfyConnection'
 import { swapSceneActiveVersion } from '../services/reeditEdlToTimeline'
 import { commitExtend as commitExtendService } from '../services/reeditExtend'
-import { loadCapabilitySettings, I2V_MODEL_OPTIONS } from '../services/reeditCapabilitySettings'
+import { loadCapabilitySettings, I2V_MODEL_OPTIONS, EXTEND_MODEL_OPTIONS, OUTPAINT_MODEL_OPTIONS } from '../services/reeditCapabilitySettings'
 import { FRAME_RATE, TRANSITION_TYPES, TRANSITION_DEFAULT_SETTINGS } from '../constants/transitions'
 import {
   DEFAULT_LETTERBOX_ASPECT,
@@ -751,6 +751,82 @@ function InspectorPanel({ isExpanded, onToggleExpanded }) {
   const reframeRunning = reframeCommitState.stage
     && reframeCommitState.sceneId === sceneIdForReframe
     && !['done', 'error'].includes(reframeCommitState.stage)
+
+  // Outpaint (widen) — the inverse of crop-reframe: generate NEW canvas
+  // to reach a different aspect. Available on any re-edit scene clip
+  // that isn't already an O-tagged version.
+  const isAlreadyOutpainted = activeVersionForReframe && /^O/i.test(String(activeVersionForReframe))
+  const canOutpaint = Boolean(sceneIdForReframe && isVideoClip && !isAlreadyOutpainted)
+  const [outpaintState, setOutpaintState] = useState({ stage: null, error: null, sceneId: null })
+  useEffect(() => {
+    const unsub = window.electronAPI?.onCommitReframeOutpaintProgress?.((payload) => {
+      if (!payload?.sceneId) return
+      setOutpaintState((prev) => (
+        prev.sceneId && prev.sceneId !== payload.sceneId ? prev : { ...prev, ...payload }
+      ))
+    })
+    return () => { try { unsub?.() } catch (_) { /* ignore */ } }
+  }, [])
+  const outpaintRunning = outpaintState.stage
+    && outpaintState.sceneId === sceneIdForReframe
+    && !['done', 'error'].includes(outpaintState.stage)
+
+  const handleCommitOutpaint = useCallback(async () => {
+    if (!sceneIdForReframe || outpaintRunning) return
+    const projectDir = useProjectStore.getState().currentProjectHandle
+    if (typeof projectDir !== 'string') return
+    const settings = loadCapabilitySettings()?.footageReframe || {}
+    const targetAspect = settings.outpaintTargetAspect || '16:9'
+    const modelId = settings.outpaintModel || 'luma-ray-3.2-reframe'
+    // The scene's analyzed visual description steers what the engine
+    // paints into the new canvas.
+    const scene = useProjectStore.getState().currentProject?.analysis?.scenes?.find((sc) => sc.id === sceneIdForReframe)
+    const prompt = scene?.videoAnalysis?.visual || scene?.caption || ''
+    setOutpaintState({ stage: 'starting', error: null, sceneId: sceneIdForReframe })
+    try {
+      const res = await window.electronAPI.commitReframeOutpaint({
+        sceneId: sceneIdForReframe,
+        projectDir,
+        targetAspect,
+        prompt,
+        modelId,
+        ...getActiveComfyIpcContext(),
+      })
+      if (!res?.success) {
+        setOutpaintState({ stage: 'error', error: res?.error || 'Unknown error.', sceneId: sceneIdForReframe })
+        return
+      }
+      setOutpaintState({ stage: 'done', outputPath: res.outputPath, version: res.version, sceneId: sceneIdForReframe, error: null })
+      // Register the O{NN} version on the scene's optimization stack so
+      // the version dropdown + resolver pick it up, mirroring reframe.
+      const liveProject = useProjectStore.getState().currentProject
+      const scenes = liveProject?.analysis?.scenes || []
+      const nextScenes = scenes.map((s) => {
+        if (s.id !== sceneIdForReframe) return s
+        const stack = Array.isArray(s.optimizations) ? s.optimizations.slice() : []
+        const entry = { version: res.version, path: res.outputPath, kind: 'reframe-outpaint', targetAspect, createdAt: new Date().toISOString() }
+        const idx = stack.findIndex((o) => o.version === entry.version)
+        if (idx >= 0) stack[idx] = entry
+        else stack.push(entry)
+        return { ...s, optimizations: stack, activeOptimizationVersion: entry.version }
+      })
+      await useProjectStore.getState().saveProject({ analysis: { ...(liveProject?.analysis || {}), scenes: nextScenes } })
+      try {
+        swapSceneActiveVersion({
+          sceneId: sceneIdForReframe,
+          version: res.version,
+          scene: nextScenes.find((s) => s.id === sceneIdForReframe),
+          projectDir,
+          canvasWidth: Number(timelineWidth) || undefined,
+          canvasHeight: Number(timelineHeight) || undefined,
+        })
+      } catch (err) {
+        console.warn('[reedit] outpaint version swap failed:', err)
+      }
+    } catch (err) {
+      setOutpaintState({ stage: 'error', error: err?.message || String(err), sceneId: sceneIdForReframe })
+    }
+  }, [sceneIdForReframe, outpaintRunning, timelineWidth, timelineHeight])
 
   // Per-clip override for the i2v model used by Commit extend. Empty
   // string means "use the Settings default". This UI override only
@@ -2160,6 +2236,47 @@ function InspectorPanel({ isExpanded, onToggleExpanded }) {
               </div>
             )}
 
+            {/* Outpaint (widen) — generate new canvas to change aspect
+                instead of cropping. Engine + target aspect come from
+                Settings → Capabilities → Footage reframe. */}
+            {canOutpaint && (
+              <div className="rounded-lg border border-sky-500/30 bg-sky-500/5 p-2 flex flex-col gap-1.5">
+                <div className="text-[10px] text-sf-text-secondary leading-snug">
+                  Widen instead of crop: outpaint fills new canvas to reach {loadCapabilitySettings()?.footageReframe?.outpaintTargetAspect || '16:9'} ({(OUTPAINT_MODEL_OPTIONS.find((m) => m.id === (loadCapabilitySettings()?.footageReframe?.outpaintModel || 'luma-ray-3.2-reframe'))?.label) || 'Luma Ray 3.2'}). Original audio is kept.
+                </div>
+                {outpaintState.stage === 'error' && outpaintState.sceneId === sceneIdForReframe ? (
+                  <div className="text-[10px] text-sf-error leading-snug">{outpaintState.error}</div>
+                ) : outpaintState.stage === 'done' && outpaintState.sceneId === sceneIdForReframe ? (
+                  <div className="text-[10px] text-emerald-300 leading-snug">Committed as {outpaintState.version}.</div>
+                ) : null}
+                <button
+                  type="button"
+                  onClick={handleCommitOutpaint}
+                  disabled={outpaintRunning}
+                  className={`inline-flex items-center gap-1.5 px-2 py-1.5 rounded-md text-[11px] font-medium transition-colors
+                    ${outpaintRunning
+                      ? 'bg-sf-dark-800 text-sf-text-muted cursor-not-allowed'
+                      : 'bg-sky-600 hover:bg-sky-500 text-white'}`}
+                  title="Generate new canvas around this shot to reach the target aspect ratio (engine set in Settings → Capabilities)."
+                >
+                  {outpaintRunning ? (
+                    <>
+                      <Loader2 className="w-3.5 h-3.5 animate-spin" />
+                      {outpaintState.stage === 'uploading' ? 'Uploading…'
+                        : outpaintState.stage === 'queued' ? 'Queued…'
+                        : outpaintState.stage === 'running' ? `Outpainting… ${outpaintState.elapsedSec ? outpaintState.elapsedSec + 's' : ''}`
+                        : 'Starting…'}
+                    </>
+                  ) : (
+                    <>
+                      <Wand2 className="w-3.5 h-3.5" />
+                      Outpaint to {loadCapabilitySettings()?.footageReframe?.outpaintTargetAspect || '16:9'} (widen)
+                    </>
+                  )}
+                </button>
+              </div>
+            )}
+
             {/* Commit extend — only for scene clips where the proposer
                 tagged an `EXTEND +Xs:` directive (stored on asset.settings.
                 reeditExtendHint) and we're still on the original version.
@@ -2180,8 +2297,8 @@ function InspectorPanel({ isExpanded, onToggleExpanded }) {
                     className="flex-1 text-[10px] bg-sf-dark-900 border border-sf-dark-700 rounded px-1.5 py-1 text-sf-text-primary hover:border-sf-dark-500 focus:outline-none focus:border-sf-accent disabled:opacity-50"
                     title="Pick the i2v model just for this commit. Empty falls back to the global default in Settings → Capabilities."
                   >
-                    <option value="">Use Settings default ({(I2V_MODEL_OPTIONS.find((m) => m.id === loadCapabilitySettings()?.footageExtend?.model)?.label) || 'LTX 2.3'})</option>
-                    {I2V_MODEL_OPTIONS.map((m) => (
+                    <option value="">Use Settings default ({(EXTEND_MODEL_OPTIONS.find((m) => m.id === loadCapabilitySettings()?.footageExtend?.model)?.label) || 'LTX 2.3'})</option>
+                    {EXTEND_MODEL_OPTIONS.map((m) => (
                       <option key={m.id} value={m.id}>{m.label}</option>
                     ))}
                   </select>
@@ -3983,6 +4100,47 @@ function InspectorPanel({ isExpanded, onToggleExpanded }) {
               </div>
             )}
 
+            {/* Outpaint (widen) — generate new canvas to change aspect
+                instead of cropping. Engine + target aspect come from
+                Settings → Capabilities → Footage reframe. */}
+            {canOutpaint && (
+              <div className="rounded-lg border border-sky-500/30 bg-sky-500/5 p-2 flex flex-col gap-1.5">
+                <div className="text-[10px] text-sf-text-secondary leading-snug">
+                  Widen instead of crop: outpaint fills new canvas to reach {loadCapabilitySettings()?.footageReframe?.outpaintTargetAspect || '16:9'} ({(OUTPAINT_MODEL_OPTIONS.find((m) => m.id === (loadCapabilitySettings()?.footageReframe?.outpaintModel || 'luma-ray-3.2-reframe'))?.label) || 'Luma Ray 3.2'}). Original audio is kept.
+                </div>
+                {outpaintState.stage === 'error' && outpaintState.sceneId === sceneIdForReframe ? (
+                  <div className="text-[10px] text-sf-error leading-snug">{outpaintState.error}</div>
+                ) : outpaintState.stage === 'done' && outpaintState.sceneId === sceneIdForReframe ? (
+                  <div className="text-[10px] text-emerald-300 leading-snug">Committed as {outpaintState.version}.</div>
+                ) : null}
+                <button
+                  type="button"
+                  onClick={handleCommitOutpaint}
+                  disabled={outpaintRunning}
+                  className={`inline-flex items-center gap-1.5 px-2 py-1.5 rounded-md text-[11px] font-medium transition-colors
+                    ${outpaintRunning
+                      ? 'bg-sf-dark-800 text-sf-text-muted cursor-not-allowed'
+                      : 'bg-sky-600 hover:bg-sky-500 text-white'}`}
+                  title="Generate new canvas around this shot to reach the target aspect ratio (engine set in Settings → Capabilities)."
+                >
+                  {outpaintRunning ? (
+                    <>
+                      <Loader2 className="w-3.5 h-3.5 animate-spin" />
+                      {outpaintState.stage === 'uploading' ? 'Uploading…'
+                        : outpaintState.stage === 'queued' ? 'Queued…'
+                        : outpaintState.stage === 'running' ? `Outpainting… ${outpaintState.elapsedSec ? outpaintState.elapsedSec + 's' : ''}`
+                        : 'Starting…'}
+                    </>
+                  ) : (
+                    <>
+                      <Wand2 className="w-3.5 h-3.5" />
+                      Outpaint to {loadCapabilitySettings()?.footageReframe?.outpaintTargetAspect || '16:9'} (widen)
+                    </>
+                  )}
+                </button>
+              </div>
+            )}
+
             {/* Commit extend — only for scene clips where the proposer
                 tagged an `EXTEND +Xs:` directive (stored on asset.settings.
                 reeditExtendHint) and we're still on the original version.
@@ -4003,8 +4161,8 @@ function InspectorPanel({ isExpanded, onToggleExpanded }) {
                     className="flex-1 text-[10px] bg-sf-dark-900 border border-sf-dark-700 rounded px-1.5 py-1 text-sf-text-primary hover:border-sf-dark-500 focus:outline-none focus:border-sf-accent disabled:opacity-50"
                     title="Pick the i2v model just for this commit. Empty falls back to the global default in Settings → Capabilities."
                   >
-                    <option value="">Use Settings default ({(I2V_MODEL_OPTIONS.find((m) => m.id === loadCapabilitySettings()?.footageExtend?.model)?.label) || 'LTX 2.3'})</option>
-                    {I2V_MODEL_OPTIONS.map((m) => (
+                    <option value="">Use Settings default ({(EXTEND_MODEL_OPTIONS.find((m) => m.id === loadCapabilitySettings()?.footageExtend?.model)?.label) || 'LTX 2.3'})</option>
+                    {EXTEND_MODEL_OPTIONS.map((m) => (
                       <option key={m.id} value={m.id}>{m.label}</option>
                     ))}
                   </select>

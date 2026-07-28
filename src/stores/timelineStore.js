@@ -2869,8 +2869,12 @@ export const useTimelineStore = create(
         const newIndex = index + direction
         if (newIndex < 0 || newIndex >= effects.length) return clip
         
-        // Swap
-        [effects[index], effects[newIndex]] = [effects[newIndex], effects[index]]
+        // Swap. Deliberately not array-destructuring: without semicolons,
+        // a leading `[` glues onto the `return clip` above as a property
+        // access and the swap never runs.
+        const swapped = effects[index]
+        effects[index] = effects[newIndex]
+        effects[newIndex] = swapped
         
         return { ...clip, effects }
       })

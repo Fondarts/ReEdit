@@ -381,24 +381,6 @@ function AudioStemsSection({ sourceVideo, saveProject }) {
   // attempt errored — those need a manual click on Re-run / Retry.
   const autoTriedForPath = useRef(null)
 
-  if (sourceVideo?.hasAudio === false) {
-    return (
-      <div className="mt-4 pt-3 border-t border-sf-dark-800 text-sf-text-muted">
-        Source has no audio — nothing to separate.
-      </div>
-    )
-  }
-
-  if (!projectDir) {
-    // Web builds / unsaved projects don't have a disk-backed handle to
-    // write stems into. Surface that instead of silently failing.
-    return (
-      <div className="mt-4 pt-3 border-t border-sf-dark-800 text-sf-text-muted">
-        Save the project first to enable audio stem separation.
-      </div>
-    )
-  }
-
   const runSeparate = async () => {
     if (running) return
     setError(null)
@@ -454,6 +436,26 @@ function AudioStemsSection({ sourceVideo, saveProject }) {
     // sourceVideo via closure, and we're guarded against double-firing
     // by `autoTriedForPath`. eslint-disable-next-line react-hooks/exhaustive-deps
   }, [projectDir, sourceVideo?.path, stems, running, stage])
+
+  // Early returns live below every hook (Rules of Hooks); the auto-fire
+  // effect above guards these same conditions itself.
+  if (sourceVideo?.hasAudio === false) {
+    return (
+      <div className="mt-4 pt-3 border-t border-sf-dark-800 text-sf-text-muted">
+        Source has no audio — nothing to separate.
+      </div>
+    )
+  }
+
+  if (!projectDir) {
+    // Web builds / unsaved projects don't have a disk-backed handle to
+    // write stems into. Surface that instead of silently failing.
+    return (
+      <div className="mt-4 pt-3 border-t border-sf-dark-800 text-sf-text-muted">
+        Save the project first to enable audio stem separation.
+      </div>
+    )
+  }
 
   // Done state: show the two files + reveal + re-run.
   if (stems && stage !== 'error') {

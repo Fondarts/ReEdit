@@ -1,0 +1,1175 @@
+// Vitest Snapshot v1, https://vitest.dev/guide/snapshot.html
+
+exports[`golden: apple > keeps the prompts stable (snapshot) > system-prompt 1`] = `"You are a senior advertising creative director helping to re-edit an existing commercial using only its already-filmed shots — you cannot add, generate, or invent new footage. You work from a shot log and return a concrete, ordered edit decision list (EDL) with per-shot rationale. You return ONLY a JSON object, no commentary, no markdown fences."`;
+
+exports[`golden: apple > keeps the prompts stable (snapshot) > user-prompt 1`] = `
+"# Goal
+Re-edit this commercial to improve its Comprehension score.
+
+# Brand brief
+(not provided — infer from the shot log)
+
+# Voiceover script (segmented from the source VO)
+Full VO is 7.7s across 3 segments. Pick the subset of segments whose combined spoken duration fits in roughly 29.8s of VO time (leaving ~15 % of the target for breath / pauses between segments). Keep the ORIGINAL ORDER of segments — do NOT reorder; only include or skip each one. Prefer segments that reinforce the core message and the brand role; drop legal disclaimers if the target is tight.
+
+- id="vo-0" (13.0s, 2.2s long): "It's the greatest show of the world."
+- id="vo-1" (16.5s, 3.3s long): "Crufts has a nickname, and we call it the giant killer."
+- id="vo-2" (21.3s, 2.2s long): "You never know what's going to happen."
+
+## Placement on the re-edit timeline (CRITICAL)
+By default the app concatenates picked VO segments back-to-back starting at t=0. That makes every line stack at the top of the cut and leaves the tail silent — wrong for almost every ad. Use \`segmentGaps\` to push segments later in the timeline so the VO breathes with the picture:
+
+- Each value in \`segmentGaps\` is the silence (in seconds) inserted BEFORE that segment fires. Gaps STACK on top of the previous segment's end position. \`gap=0\` means "play immediately after the previous segment ends".
+- Beat structure should drive the gaps: opening line lands early (gap≈0), middle lines breathe with the visual beats they support, **the tagline / closing line MUST land between 24.5s and 35.0s on the timeline** so it pays off the last shot, not the first.
+- Keep gaps realistic: 0.3-2 s between conversational lines, 1.5-6 s before a tagline so it has air. Do not insert a gap so large the VO would extend past the timeline — the placer truncates anything past the end.
+- If you are intentionally stacking everything tight (e.g. dense product-feature voiceover), it's fine to leave \`segmentGaps\` empty — but never let the tagline land in the first half of the cut.
+
+In addition to the EDL, return a \`voiceoverPlan\` field at the top level of the JSON response:
+  "voiceoverPlan": {
+    "segmentIds": ["vo-0", "vo-2", "vo-3"],
+    "segmentGaps": { "vo-0": 0.0, "vo-2": 1.2, "vo-3": 6.5 }
+  }
+Listing the ids (preserve order) of the VO segments that should play on the timeline, plus the silence-before-each-segment in seconds. \`segmentGaps\` is a flat map keyed by id; omitted ids default to 0 (no gap). If the full script fits, include every id. If VO should be silenced entirely, return \`segmentIds: []\`.
+
+# Capabilities (HARD RULES — respect exactly)
+- Footage generation: DISABLED. You MUST NOT propose any \`placeholder\` rows. Every row in the EDL must be \`kind: "original"\` and reference a scene that exists in the shot log.
+- Footage extend: DISABLED. You MUST NOT annotate shots with EXTEND directives. If a gap needs more time, solve it by reordering or (if enabled) a placeholder, never by stretching a shot.
+- Footage reframe: ENABLED. You MAY mark shots for re-framing (zoom + pan within the same aspect ratio) when a tighter or repositioned view would land a beat better.
+  **FORMAT (non-negotiable)**: \`REFRAME zoom=<X.X> anchor=<x>,<y>: <rationale>\` — zoom in 1.0–2.5, anchor both values 0–1 (0,0 = top-left, 1,1 = bottom-right, 0.5,0.5 = center). You MUST emit BOTH \`zoom=\` AND \`anchor=\` on every REFRAME. A directive missing \`anchor=\` is invalid and will be silently dropped — a pure zoom is a symmetric center-crop, which almost never improves brand placement and usually chops off the element you wanted to emphasise.
+  **HOW TO PICK THE ANCHOR — READ THE \`BrandMark\` AND \`Subject\` LINES OF THE SHOT LOG**:
+    * If your rationale mentions establishing the brand, logo, badge, or identity: the shot MUST have a \`BrandMark: <label> centered at [x,y]\` line. Copy THOSE coordinates into \`anchor=\`. If instead the shot says \`BrandMark: none visible\`, the shot has no literal logo — DO NOT propose a brand-focused REFRAME on it. Pick a different shot to establish brand.
+    * For any other REFRAME intent (push in on driver, tighten on product, emphasise reveal), use the \`Subject: <label> centered at [x,y]\` coordinates.
+    * If the Subject line ends with \`LOOSE\`, the bbox is too wide to be a reliable anchor — DO NOT reframe this shot, pick a different one.
+  Example: if \`BrandMark: BMW roundel centered at [0.51,0.38]\` is in the shot log, \`REFRAME zoom=1.6 anchor=0.51,0.38: push in on the BMW roundel to land the brand identity\` is correct. Using \`anchor=0.5,0.5\` on that same shot crops the roundel off the top-left.
+  **GOOD examples** (anchor derived from actual subject position):
+    * \`REFRAME zoom=1.4 anchor=0.5,0.42: logo reads at 0.5,0.42 per the Graphics line — tighten on it without clipping the top\`
+    * \`REFRAME zoom=1.3 anchor=0.3,0.4: driver's face sits in the upper-left third per the Visual description; push toward it\`
+    * \`REFRAME zoom=1.5 anchor=0.5,0.85: tagline is bottom-center; crop in so the copy fills the screen\`
+  **BAD examples** (will be dropped):
+    * \`REFRAME: zoom=1.3: Opens on the logo\` — no anchor, just a center zoom
+    * \`REFRAME zoom=1.5 anchor=0.5,0.5: push in on the BMW grille\` — Graphics line said the logo was at 0.5,0.42 but the proposal used 0.5,0.5 → logo gets cropped off the top
+  **HARD RULE (ENFORCED BY PARSER)**: any REFRAME with \`zoom > 1.2\` and \`anchor=0.5,0.5\` (or within ±0.05 of dead center on both axes) will be DROPPED automatically. The parser treats that combination as "the LLM didn't bother to locate the subject" — a symmetric center-crop is almost never the right answer for a reframe. If the subject truly sits dead-center in the frame AND a modest zoom is enough, just use \`zoom=1.15 anchor=0.5,0.5\` (light enough to stay within tolerance). Otherwise pick a real anchor or don't reframe at all.
+  Aspect stays at the delivery target — do NOT change aspect ratio.
+- Color correction: ENABLED. You MUST actively consider color grading as part of the re-edit. Whenever the target metric, framework, brand brief, or ad-concept section mentions visual qualities (e.g. "bright", "high-contrast", "warm", "cool", "vibrant", "desaturated", "moody", "clinical", "cinematic"), you SHOULD annotate the shots that fail those qualities with a corrective \`COLOR:\` directive — do not silently ignore the cue. Prefix the note with \`COLOR:\` followed by any combination of these keys (all integer values in the -100..+100 range unless noted, 0 = no change): \`exposure\`, \`contrast\`, \`saturation\`, \`gain\`, \`gamma\`, \`offset\`, \`hue\` (-180..+180 degrees). Example: \`COLOR: exposure=+18 contrast=+22 saturation=-6: lift the blacks and punch the mids so the product reads on small screens\`. Another: \`COLOR: saturation=-25 gain=-8: drain the clinic scene to neutral before the product reveal\`. Keep grades subtle — ±10 to ±25 on each axis is a strong edit; ±50 is destructive. Use a maximum of 4 keys per shot; leave the rest neutral. If a shot is already on-concept, omit the directive.
+- Use original music stem: ENABLED. The source video's music has been separated via Demucs into an isolated stem. You MAY layer that music stem under ANY row of the EDL — including placeholder rows and shots that had no music in the original cut. To request this on a row, prefix the note with \`AUDIO music:\` (e.g. \`AUDIO music: carry the main theme under this shot\`).
+- Use original voiceover stem: ENABLED. The source video's voiceover has been separated via Demucs into an isolated stem. You MAY reuse VO lines on any row, decoupled from where they originally appeared. Prefix the note with \`AUDIO vo: "<exact verbatim line>"\` to indicate which VO line should play there.
+
+# Editing craft (cut-quality rules — apply on every ordering decision)
+Professional editing principles. Apply them while ordering shots and writing notes, using the shot log's \`Motion\`, \`Subject\`, and \`Cinematography\` lines as the data you reason over.
+
+- **Jump cuts** — use them to tighten pacing, sustain attention on VO-driven beats, or reinforce a modern / social tone. Avoid them when they break a continuous action mid-gesture, make the subject look erratic without intent, or read as a mistake. When the natural jump would be clumsy, cover it: cut to a different shot scale of the same subject, an environment / B-roll insert, a clean detail, or a motion-motivated cut. A visible-but-functional jump cut is fine; one that reads as an accident is not.
+- **180° / screen direction** — keep eyeline and movement direction consistent across cuts. Read each shot's \`Subject\` bbox (left- vs right-of-frame) and \`Motion.subject\` direction: a subject exiting frame-right should re-enter the next shot from frame-left, never from the same side (that reads as a reversal). Break the axis only with intent — for impact, deliberate disorientation, or when a neutral / movement-bridging shot sits between the two opposing-direction shots.
+- **Cut on motion** — a cut that lands MID-gesture or mid-camera-move feels invisible; a cut between two static beats feels like a bump. Pair shots whose \`Motion\` and \`Cinematography.camera_movement_quality\` continue across the boundary (handheld → handheld, push-in → push-in, tracking-left → tracking-left).
+- **Action continuity** — when a real-world action begins on shot N and continues on shot N+1, character position, hand / prop position, and energy level have to match. Source-ad mismatches are unavoidable in a re-edit, so when continuity would break, INSERT a cutaway between the two shots (different shot scale of the same subject, a related detail, an environment insert) instead of slamming them together. Use \`shot_size\` and \`framing\` to find a safe insert candidate in the shot log.
+- **Camera continuity** — do not slam-cut between two camera moves that fight each other (right-pan into left-pan, fast push-in into slow pull-back, locked-off into frantic handheld) unless that contradiction IS the point. Resolve the conflict with a static / neutral shot between them, or cut to a different angle of the same beat. Match-energy cuts read as deliberate; cross-energy cuts need a narrative reason.
+- **Rhythm with intent** — rhythm follows emotional intent, not mechanics. Earn density (faster scenes-per-second) on product reveals, high-energy beats, and information-dense sections; earn held shots on human, emotional, and persuasion beats. Do not blanket-accelerate every cut — frantic ≠ engaging, and a wall of sub-second cuts reads as nervous, not modern.
+- **Hook in the first 1–3s** — the opening row's pull compounds across the whole watch. Lead with the single strongest visual moment available, a provocative VO line, an immediate visible result / transformation, a human reaction (face, body language), a product-in-use action, a recognisable problem the audience identifies with, or a concrete promise. Avoid opening on a logo card, a slow establishing shot, or context that delays the point — these bleed audience before the message lands.
+- **No churn** — do not reorder for the sake of reordering, and do not chase visible difference from the source cut as a goal in itself. If a sequence in the original already serves the metric well, keep it. The proposal is judged by what it improves, not by how different it looks from the original. Equally, do not keep a weak shot just because it was in the original — strength of filming is not a reason to retain a shot that drags the metric.
+
+# Shot log (from the current cut)
+Each shot below is a multi-line block separated by \`---\`:
+- Visual: factual description of what happens on screen.
+- Chips: brand presence · emotion · framing · overall movement.
+- Motion: camera movement (with intensity) and subject motion (with direction).
+- Cinematography: precise filmmaker terms — shot size, angle, rig, lens, DOF, focus dynamics, composition, lighting style, colour palette, special techniques. Omitted when the analyzer couldn't categorise the shot.
+- Audio: verbatim voiceover (VO), music description, SFX list, ambient bed. Omitted on silent clips.
+- Graphics: on-screen text with its role (title, tagline, caption, legal_disclaimer, etc.) and logos present. Omitted on clean frames.
+- Pacing: shot boundary character (cut_type) and tempo feel.
+Use Audio.VO to anchor narrative continuity — never split a VO line across shots arbitrarily. Use Pacing + music tempo to size shot durations. Use Graphics to decide which shots MUST carry brand elements (logo, tagline, legal disclaimer) and which ones can be replaced. Use Cinematography to keep visual continuity tight: when ordering shots, alternate or match \`shot_size\` deliberately (don't bounce ECU→Wide→ECU at random), keep \`lighting_style\` consistent within a beat, and match \`composition\` lines (a leading-line shot pairs well with another that continues the line).
+
+## scene-001 · 0.00–1.63s · 1.63s
+Visual: A medium shot of an Irish Terrier sitting upright in a yellow armchair against a textured blue studio backdrop. The dog wears a silver chain collar with a leash attached, looking directly at the camera with alert ears. The lighting is soft and directional, creating a gentle key light on the dog's face and casting subtle shadows to the right.
+BrandMark: none visible — do NOT propose a brand-focused REFRAME on this shot
+Subject: Irish Terrier sitting in armchair centered at [0.48,0.61] (bbox ~0.23×0.78) (LOOSE — too wide for a tight reframe; skip REFRAME on this shot)
+Chips: brand=None · emotion=calm · framing=Medium · movement=Slow
+Motion: camera=static · subject=slow
+Cinematography: shot=medium · rig=locked_off · lens=normal · DOF=medium · comp=centered · light=three_point · palette=mustard yellow, deep teal, warm brown, slate blue
+Audio: music=gentle, ambient synth pad, slow tempo, calm mood · ambient=quiet room tone
+Pacing: tempo=slow
+
+---
+
+## scene-002 · 1.63–3.34s · 1.71s
+Visual: A medium shot of a smiling woman with dark hair, glasses, and a pearl necklace, wearing a pink tweed blazer, holding a small Jack Russell terrier dog. They are seated in a studio setting with a textured blue backdrop, flanked by a warm lamp on the right. The camera is locked-off with a shallow depth of field, illuminated by a soft, motivated key light.
+BrandMark: none visible — do NOT propose a brand-focused REFRAME on this shot
+Subject: woman holding a dog centered at [0.51,0.53] (bbox ~0.46×0.94) (LOOSE — too wide for a tight reframe; skip REFRAME on this shot)
+Chips: brand=Driver/face visible · emotion=calm · framing=Medium · movement=Slow
+Motion: camera=static · subject=slow
+Cinematography: shot=medium · rig=locked_off · lens=normal · DOF=shallow · comp=centered · light=three_point · palette=warm pink, deep teal, soft cream
+Audio: music=gentle, acoustic guitar melody, slow tempo, warm and comforting mood · ambient=quiet room tone
+Pacing: tempo=slow
+
+---
+
+## scene-003 · 3.34–5.17s · 1.84s
+Optimized: V01 — on-screen graphics (text / logo overlays) have been removed; the Graphics block below describes the ORIGINAL overlays, which are no longer visible on the active clip.
+Visual: A locked-off medium shot captures a Papillon dog with long black and white fur sitting on a mustard-yellow velvet armchair. The setting is a stylized studio interior with a dark teal wall, a teal throw pillow with orange piping, and a red lamp on a side table. The dog turns its head toward the camera, alertly looking forward as post-production text overlays the center of the frame.
+BrandMark: none visible — do NOT propose a brand-focused REFRAME on this shot
+Subject: Papillon dog centered at [0.41,0.52] (bbox ~0.48×0.66) (LOOSE — too wide for a tight reframe; skip REFRAME on this shot)
+Chips: brand=Text/logo on-screen · emotion=playful · framing=Medium · movement=Slow
+Motion: camera=static · subject=moderate
+Cinematography: shot=medium · rig=locked_off · lens=normal · DOF=medium · comp=centered · light=three_point · palette=mustard yellow, deep teal, crimson red, black and white
+Audio: music=soft, ambient synth pad with a gentle, rising tone, slow tempo, calm mood
+Graphics: text (title)="GET UP CLOSE WITH" at [0.50,0.42]
+Pacing: tempo=slow
+
+---
+
+## scene-004 · 5.17–7.47s · 2.29s
+Optimized: V01 — on-screen graphics (text / logo overlays) have been removed; the Graphics block below describes the ORIGINAL overlays, which are no longer visible on the active clip.
+Visual: A group of six people stand smiling behind a green table displaying five brown Lagotto Romagnolo dogs. The setting is a brightly lit indoor exhibition hall with event signage and other attendees visible in the background. The camera is locked-off at eye level, capturing a medium group shot with a shallow depth of field that keeps the focus on the dogs and their handlers.
+BrandMark: none visible — do NOT propose a brand-focused REFRAME on this shot
+Subject: brown curly-haired dog centered at [0.71,0.57] (bbox ~0.19×0.55) (LOOSE — too wide for a tight reframe; skip REFRAME on this shot)
+Chips: brand=Text/logo on-screen · emotion=playful · framing=Medium · movement=Slow
+Motion: camera=static · subject=slow
+Cinematography: shot=group · rig=locked_off · lens=normal · DOF=shallow · comp=centered · light=high_key · palette=vibrant green, warm brown, cream, teal
+Audio: music=uplifting and bright acoustic pop, acoustic guitar and light percussion, mid tempo · ambient=soft indoor crowd murmur
+Graphics: text (title)="GET UP CLOSE WITH
+THE STARS" at [0.50,0.47]
+Pacing: tempo=slow
+
+---
+
+## scene-005 · 7.47–10.18s · 2.71s
+Optimized: V01 — on-screen graphics (text / logo overlays) have been removed; the Graphics block below describes the ORIGINAL overlays, which are no longer visible on the active clip.
+Visual: A locked-off wide shot with deep focus captures three meticulously groomed poodles on grooming tables inside a vast exhibition hall. The central poodle is white, flanked by a light apricot poodle on the left and a golden-apricot poodle on the right. The camera slowly pushes in as the poodles stand poised, surrounded by the bustling, industrial-lit environment of a major dog show.
+BrandMark: none visible — do NOT propose a brand-focused REFRAME on this shot
+Subject: groomed apricot poodle on blue table centered at [0.27,0.56] (bbox ~0.17×0.69) (LOOSE — too wide for a tight reframe; skip REFRAME on this shot)
+Chips: brand=None · emotion=focused · framing=Wide · movement=Slow
+Motion: camera=push_in (subtle)
+Cinematography: shot=long · rig=gimbal · lens=wide · DOF=deep · comp=symmetrical · light=natural_daylight · palette=lime green, soft cream, industrial gray
+Audio: music=upbeat electronic synth pop, driving tempo, energetic mood · ambient=muffled indoor crowd chatter and dog show background noise
+Graphics: text (title)="OF THE WORLD'S
+BIGGEST
+DOG SHOW" at [0.50,0.36]
+Pacing: tempo=mid
+
+---
+
+## scene-006 · 10.18–11.01s · 0.83s
+Visual: A medium shot captures a man in a dark jacket and a woman in a black dress with a red scarf grooming a white Borzoi dog on a table. The setting is a large indoor exhibition hall with industrial lighting and other dog show setups in the background. The camera remains static, maintaining a steady eye-level view of the interaction.
+BrandMark: none visible — do NOT propose a brand-focused REFRAME on this shot
+Subject: white Borzoi dog centered at [0.50,0.57] (bbox ~0.12×0.50) (LOOSE — too wide for a tight reframe; skip REFRAME on this shot)
+Chips: brand=None · emotion=calm · framing=Medium · movement=Slow
+Motion: camera=static · subject=slow
+Cinematography: shot=medium · rig=locked_off · lens=normal · DOF=medium · comp=centered · light=natural_daylight · palette=white, dark blue, red, gray
+Audio: ambient=low background chatter and indoor hall ambience
+Pacing: tempo=slow
+
+---
+
+## scene-007 · 11.01–12.05s · 1.04s
+Visual: A medium shot captures a blonde woman in a red cardigan and white skirt grooming a large, light-apricot standard poodle on a blue grooming table. The setting is a spacious indoor exhibition hall with a high steel-truss ceiling, illuminated by cool, even overhead lighting. The woman gently holds the poodle's front leg, while the dog stands patiently in profile, facing right. The camera remains locked-off with a medium depth of field, keeping the subjects sharp against the bustling background.
+BrandMark: none visible — do NOT propose a brand-focused REFRAME on this shot
+Subject: groomer's face centered at [0.80,0.63] (bbox ~0.31×0.72) (LOOSE — too wide for a tight reframe; skip REFRAME on this shot)
+Chips: brand=Driver/face visible · emotion=focused · framing=Medium · movement=Slow
+Motion: camera=static · subject=slow
+Cinematography: shot=medium · rig=locked_off · lens=normal · DOF=medium · comp=rule_of_thirds · light=natural_daylight · palette=apricot, vibrant red, clean white, industrial gray
+Audio: music=upbeat electronic pop, synth and light percussion, mid-tempo, cheerful · ambient=muffled indoor crowd chatter and hall acoustics
+Pacing: tempo=slow
+
+---
+
+## scene-008 · 12.05–12.97s · 0.92s
+Visual: A medium close-up shot captures a fluffy brown poodle being groomed at an indoor dog show. A person wearing a textured blue jacket uses a brush on the dog's head while holding its muzzle steady. The background features the bustling, dimly lit arena of the Crufts dog show with green partitions and overhead lighting.
+BrandMark: Crufts logo on tag centered at [0.89,0.74] (bbox ~0.14×0.11) — use this anchor for any brand-focused REFRAME
+Subject: brown poodle centered at [0.45,0.63] (bbox ~0.29×0.74) (LOOSE — too wide for a tight reframe; skip REFRAME on this shot)
+Chips: brand=Logo visible · emotion=focused · framing=Medium · movement=Slow
+Motion: camera=handheld (subtle) · subject=slow
+Cinematography: shot=medium_close_up · rig=handheld · lens=wide · DOF=shallow · comp=rule_of_thirds · light=practical · palette=vibrant blue, warm brown, dark gray
+Audio: ambient=low indoor crowd murmur and dog show atmosphere
+Pacing: tempo=slow
+
+---
+
+## scene-009 · 12.97–14.60s · 1.63s
+Visual: A wide, locked-off shot captures a dog show arena under bright stadium lighting. A handler in dark clothing guides a large, long-haired white dog across the green turf. In the background, a seated audience and event staff watch from behind a low barrier.
+BrandMark: none visible — do NOT propose a brand-focused REFRAME on this shot
+Subject: large white long-haired dog centered at [0.94,0.67] (bbox ~0.12×0.19)
+Chips: brand=None · emotion=focused · framing=Wide · movement=Moderate
+Motion: camera=static · subject=moderate (right-to-left)
+Cinematography: shot=long · angle=low_angle · rig=locked_off · lens=wide · DOF=deep · comp=leading_lines · light=practical · palette=vibrant green, dark charcoal, bright white
+Audio: VO="It's the greatest..." · music=upbeat electronic synth pop, fast tempo, energetic mood · ambient=crowd chatter and arena acoustics
+Pacing: tempo=mid
+
+---
+
+## scene-010 · 14.60–16.14s · 1.54s
+Visual: A medium long shot captures a bearded man in a light blue suit guiding a large, fluffy black Tibetan Mastiff on a leash across a green carpeted stage. In the background, a woman in a dark blue dress stands near a circular archway branded with 'Crufts Dog Show'. The camera pans left to track their movement under bright, even stage lighting.
+BrandMark: none visible — do NOT propose a brand-focused REFRAME on this shot
+Subject: Tibetan Mastiff dog walking on stage centered at [0.39,0.75] (bbox ~0.16×0.51) (LOOSE — too wide for a tight reframe; skip REFRAME on this shot)
+Chips: brand=None · emotion=focused · framing=Medium · movement=Moderate
+Motion: camera=pan_left (subtle) · subject=moderate (toward camera)
+Cinematography: shot=medium_long · lens=normal · DOF=medium · focus=focus_pull · comp=rule_of_thirds · light=high_key · palette=light blue, deep black, vibrant green
+Audio: VO="show of the world" · music=upbeat electronic synth pop, mid tempo, energetic · ambient=crowd chatter and applause
+Pacing: tempo=mid
+
+---
+
+## scene-011 · 16.14–17.56s · 1.42s
+Visual: A medium shot of a light brindle Whippet trotting gracefully across a bright green carpeted show ring. In the soft-focus background, handlers are seen kneeling on the green surface. The camera tracks the dog's smooth, rhythmic movement with a steady, low-angle pan, keeping the subject sharply in focus against the shallow depth of field.
+BrandMark: none visible — do NOT propose a brand-focused REFRAME on this shot
+Subject: brindle Whippet centered at [0.38,0.59] (bbox ~0.25×0.79) (LOOSE — too wide for a tight reframe; skip REFRAME on this shot)
+Chips: brand=None · emotion=focused · framing=Medium · movement=Moderate
+Motion: camera=pan_right (subtle) · subject=moderate (left-to-right)
+Cinematography: shot=medium · angle=low_angle · rig=gimbal · lens=telephoto · DOF=shallow · focus=focus_pull · comp=rule_of_thirds · light=high_key · palette=bright green, cream, light brindle
+Audio: VO="Rufus has a nickname..." · music=upbeat acoustic guitar and light percussion, cheerful tempo · ambient=muffled indoor arena crowd murmur
+Pacing: cut=hard_cut · tempo=mid
+
+---
+
+## scene-012 · 17.56–18.39s · 0.83s
+Visual: A close-up shot of a small Papillon dog with distinctive white and brown fur, standing on a white surface against a solid green background. Two handlers in formal attire, wearing dark blazers, gently hold and position the dog's head and hindquarters. The camera remains locked-off with a shallow depth of field, keeping the dog in sharp focus while the background is softly blurred.
+BrandMark: none visible — do NOT propose a brand-focused REFRAME on this shot
+Subject: Papillon dog centered at [0.57,0.56] (bbox ~0.40×0.89) (LOOSE — too wide for a tight reframe; skip REFRAME on this shot)
+Chips: brand=None · emotion=focused · framing=Close-up · movement=Slow
+Motion: camera=static · subject=slow
+Cinematography: shot=close_up · rig=locked_off · lens=telephoto · DOF=shallow · comp=centered · light=high_key · palette=emerald green, crisp white, warm chestnut, navy blue
+Pacing: tempo=slow
+
+---
+
+## scene-013 · 18.39–19.27s · 0.88s
+Visual: A medium close-up shot of a bald man with glasses, wearing a gray patterned suit jacket, a white shirt, and a bright orange tie. He has a green rosette pinned to his lapel and is looking downward. The background is a dark, soft-focus curtain with small, out-of-focus white lights, creating a shallow depth of field.
+BrandMark: none visible — do NOT propose a brand-focused REFRAME on this shot
+Subject: man in suit looking down centered at [0.46,0.55] (bbox ~0.56×0.90) (LOOSE — too wide for a tight reframe; skip REFRAME on this shot)
+Chips: brand=None · emotion=serious · framing=Close-up · movement=Slow
+Motion: camera=static · subject=slow
+Cinematography: shot=medium_close_up · rig=locked_off · lens=normal · DOF=shallow · comp=centered · light=three_point · palette=gray, orange, green, black
+Audio: VO="the giant killer" · ambient=low room tone
+Pacing: tempo=slow
+
+---
+
+## scene-014 · 19.27–20.35s · 1.08s
+Optimized: V01 — on-screen graphics (text / logo overlays) have been removed; the Graphics block below describes the ORIGINAL overlays, which are no longer visible on the active clip.
+Visual: A low-angle, shallow-DOF tracking shot captures a long-haired white Maltese dog trotting on green turf alongside a handler wearing plaid trousers and black leather shoes. The camera tracks backward, keeping pace with the dog's forward motion. Bright, even studio lighting illuminates the scene, creating a clean, high-key aesthetic.
+BrandMark: none visible — do NOT propose a brand-focused REFRAME on this shot
+Subject: Maltese dog trotting centered at [0.69,0.44] (bbox ~0.56×0.80) (LOOSE — too wide for a tight reframe; skip REFRAME on this shot)
+Chips: brand=Text/logo on-screen · emotion=playful · framing=Medium · movement=Moderate
+Motion: camera=pull_out (moderate) · subject=moderate (toward camera)
+Cinematography: shot=medium_long · angle=low_angle · rig=gimbal · lens=telephoto · DOF=shallow · focus=focus_pull · comp=rule_of_thirds · light=high_key · palette=bright white, vibrant green, dark brown plaid, yellow text
+Audio: music=energetic electronic dance music, synth-driven, fast tempo
+Graphics: text (title)="THE
+ULTIMATE" at [0.40,0.43]
+Pacing: tempo=fast
+
+---
+
+## scene-015 · 20.35–21.27s · 0.92s
+Optimized: V01 — on-screen graphics (text / logo overlays) have been removed; the Graphics block below describes the ORIGINAL overlays, which are no longer visible on the active clip.
+Visual: A medium shot captures an elegant Afghan Hound with long, flowing tan and cream fur trotting from left to right. The dog is guided by a handler, visible only from the waist down in black pants and a white top, against a vibrant red and green studio backdrop. The camera tracks the dog's fluid movement with a smooth, locked-off pan, keeping the subject centered under bright, even studio lighting.
+BrandMark: none visible — do NOT propose a brand-focused REFRAME on this shot
+Subject: Afghan Hound trotting centered at [0.52,0.50] (bbox ~0.89×1.00) (LOOSE — too wide for a tight reframe; skip REFRAME on this shot)
+Chips: brand=None · emotion=playful · framing=Medium · movement=Moderate
+Motion: camera=static · subject=moderate (left-to-right)
+Cinematography: shot=medium · rig=locked_off · lens=normal · DOF=medium · comp=centered · light=high_key · palette=vibrant red, deep green, cream, tan
+Graphics: text (title)="THE
+ULTIMATE DOG
+SPECTACULAR" at [0.50,0.48]
+Pacing: tempo=mid
+
+---
+
+## scene-016 · 21.27–22.90s · 1.63s
+Optimized: V01 — on-screen graphics (text / logo overlays) have been removed; the Graphics block below describes the ORIGINAL overlays, which are no longer visible on the active clip.
+Visual: A wide, eye-level shot captures a dog show arena with a bright green artificial turf floor and a large green Skoda banner in the background. Several handlers stand with their dogs, including a Great Dane and a Whippet, while spectators watch from tiered seating behind a green barrier. A handler in a green jacket and beige trousers runs across the foreground with a light-colored Whippet on a leash, moving from left to right.
+Subject: handler running with dog centered at [0.87,0.58] (bbox ~0.11×0.56) (LOOSE — too wide for a tight reframe; skip REFRAME on this shot)
+Chips: brand=Logo visible · emotion=focused · framing=Wide · movement=Moderate
+Motion: camera=static · subject=moderate (left-to-right)
+Cinematography: shot=long · rig=locked_off · lens=normal · DOF=deep · comp=rule_of_thirds · light=high_key · palette=bright green, dark green, beige, white
+Audio: VO="But you never know what's going to happen." · ambient=crowd murmur, indoor arena acoustics
+Graphics: text (title)="PRESENTED IN
+APPLE IMMERSIVE" at [0.54,0.49]
+Pacing: tempo=mid
+
+---
+
+## scene-017 · 22.90–23.69s · 0.79s
+Optimized: V01 — on-screen graphics (text / logo overlays) have been removed; the Graphics block below describes the ORIGINAL overlays, which are no longer visible on the active clip.
+Visual: A medium shot captures a woman in a sparkling blue dress leaning down to embrace a brown and white dog. The background is a softly blurred indoor setting with cool tones. The camera remains static, maintaining a shallow depth of field that keeps the focus on the emotional interaction between the woman and the dog.
+BrandMark: none visible — do NOT propose a brand-focused REFRAME on this shot
+Subject: brown and white dog being embraced centered at [0.62,0.79] (bbox ~0.46×0.43) (LOOSE — too wide for a tight reframe; skip REFRAME on this shot)
+Chips: brand=Text/logo on-screen · emotion=calm · framing=Medium · movement=Slow
+Motion: camera=static · subject=slow
+Cinematography: shot=medium · rig=locked_off · lens=normal · DOF=shallow · comp=centered · light=high_key · palette=royal blue, warm brown, soft white
+Graphics: text (title)="PRESENTED IN
+APPLE IMMERSIVE" at [0.50,0.49]
+Pacing: tempo=slow
+
+---
+
+## scene-018 · 23.69–34.99s · 11.30s
+End-card: TRUE — this shot is the ad's brand-signature frame. Use it AS-IS in the cut: do not annotate it with REFRAME, COLOR, EXTEND, or any directive. If the metric calls for ending on the brand, place this row last with no modifications. If you don't need a brand sign-off, simply omit this shot. Never propose generating a replacement end-card via a placeholder.
+Visual: A graphic title card displaying white text on a solid black background. The camera is locked off, presenting a static, centered composition. The text transitions from 'TOP DOGS in Apple Immersive' to 'Watch only on Apple Vision Pro' with a clean cut.
+BrandMark: Apple logo centered at [0.41,0.69] (bbox ~0.03×0.05) — use this anchor for any brand-focused REFRAME
+Subject: TOP DOGS title text centered at [0.50,0.47] (bbox ~0.67×0.20) (LOOSE — too wide for a tight reframe; skip REFRAME on this shot)
+Chips: brand=Text/logo on-screen · emotion=focused · framing=Wide · movement=Static
+Motion: camera=static
+Cinematography: shot=establishing · rig=locked_off · lens=normal · DOF=deep · comp=centered · light=high_key · palette=white, black
+Audio: music=ambient, synth-driven, low tempo, mysterious · ambient=low synth hum
+Graphics: text (title)="TOP DOGS
+in Apple Immersive" at [0.50,0.47] · logo=Apple logo in white, centered on screen in the second frame
+Pacing: cut=hard_cut · tempo=slow
+
+# Your task
+Propose a new edit decision list that improves Comprehension. The tools available to you depend on the Capabilities block above:
+- **Always**: reorder shots, cut weak moments, promote high-value shots to prime timecodes (first and last seconds).
+- **Reframe** (\`REFRAME:\` directive): tighten or reposition a shot when the current framing buries a beat.
+- **Color grading** (\`COLOR:\` directive): correct shots that fight the target metric / brand mood. If the framework or brief explicitly calls for a look (bright, warm, moody, desaturated, etc), you MUST apply COLOR to the shots that miss it — reordering alone will not fix an off-concept grade.
+- **Music stem** (\`AUDIO music:\` directive): layer the isolated music stem anywhere.
+- **VO stem** (\`AUDIO vo: "..."\` directive): reuse a VO line on a different shot.
+
+**HARD BUDGET — 35.0s total (acceptable 29.8–40.3s).**
+You have 18 scenes, 35.0s of source footage, average 1.94s per shot.
+Each row's on-timeline duration = source-scene length.
+You can reach the target using existing scenes alone — include enough of them that the natural durations sum to ~35.0s.
+Before returning, SUM the on-timeline durations of every row (source-scene durations). If the sum is below 29.8s, ADD more material until you're in range. Do not return a short EDL.
+
+Return ONLY a JSON object in this schema:
+
+{
+  "rationale": "2–4 sentence overall strategy explaining how this re-edit improves Comprehension.",
+  "edl": [
+    {
+      "index": 1,
+      "kind": "original",
+      "sourceSceneId": "scene-001",
+      "newTcIn": 0.00,
+      "newTcOut": 2.00,
+      "note": "1 sentence on why this shot is here at this timecode (rationale, not a prompt)."
+    },
+    {
+      "index": 2,
+      "kind": "placeholder",
+      "sourceSceneId": null,
+      "newTcIn": 2.00,
+      "newTcOut": 3.50,
+      "note": "Close-up of a hand gripping a black leather steering wheel with the chrome Honda logo centered in-frame; subtle tilt-up as the grip tightens; golden-hour warm side-light; shallow depth of field with the dashboard softly out of focus.",
+      "referenceFrame": { "sourceSceneId": "scene-003", "framePosition": "end" }
+    }
+  ]
+}
+
+Rules:
+- "original" rows must reference a sourceSceneId that exists in the shot log.
+- "placeholder" rows have sourceSceneId: null AND a required referenceFrame object pointing to an existing shot (see the Capabilities block above for how to choose it). framePosition is one of "start" | "middle" | "end".
+- Consecutive rows must be contiguous (newTcIn of row N+1 equals newTcOut of row N).
+- First row starts at 0.
+- JSON only. No prose around the JSON. No markdown fences.
+
+PLACEHOLDER QUALITY (critical — these notes are fed directly to a video-generation model that has NO access to the rest of the cut or to any other shot. The note is the model's ENTIRE world.):
+- Write each placeholder's note as a concrete DIRECTOR'S SHOT INSTRUCTION, not a meta description ("add a shot of X" is forbidden).
+- **SELF-CONTAINED — HARD RULE.** The downstream i2v model only sees this single string. Phrases like "matching the surrounding shots", "same look as the previous scene", "continuing the previous camera move", "in keeping with the rest of the edit", "consistent with the cut", "as established earlier" are FORBIDDEN — they evaluate to nothing for the model and waste tokens. INLINE every visual detail you'd want the model to copy. If the prior shot is a cold-blue twilight handheld push-in on a rocky ridge, write that out: "cold blue twilight, handheld micro-shake, slow forward push, rocky alpine ridge in fog". Never refer to another shot — describe its properties directly inside this note.
+- **Style anchor — REQUIRED first clause.** Open every note with the rendering register so the i2v model latches onto it before anything else. Pick from (or combine): "realistic, cinematic", "high-contrast commercial polish", "documentary handheld grit", "moody anamorphic film look", "glossy product hero", "dynamic action-cam energy", "soft naturalistic ad cinematography". Do NOT write "matching the surrounding look" — name the look itself.
+- **Camera-motion continuity — REQUIRED, inlined.** Read the Motion field of the shots IMMEDIATELY BEFORE and AFTER this placeholder in the EDL. Translate that continuity into CONCRETE motion words inside this note. Never sandwich a locked-off static shot between two dynamic shots, or drop a high-motion shot between two contemplative locked frames. Rules of thumb:
+        * If both neighbours are MOVING (push-in, pan, dolly, handheld): write the exact compatible move ("slow forward dolly, gentle handheld breath, left-to-right drift at walking pace") — do NOT write "match the previous shot's movement".
+        * If both neighbours are STATIC / LOCKED: write "locked-off, tripod-stable, no camera movement" or "barely-perceptible 1% drift". Never describe motion you don't want.
+        * If neighbours DIFFER (static → dynamic, or vice versa): write a bridge in concrete terms ("starts locked-off then builds into a confident forward push at the halfway mark").
+- **Inline the look itself, never reference other shots.** Include explicit values for: lighting (key direction, hardness, color temperature in K or words like "warm tungsten 3200K", "overcast 6500K", "magic-hour orange", "moonlit cyan"), color palette (2-4 dominant colors), atmosphere (haze / clear / smoke / rain), lens feel ("anamorphic flare", "telephoto compression", "wide 24mm distortion", "shallow depth of field"), grain/texture if relevant.
+- After style + motion + look, include: subject + action, framing (ECU / close-up / medium / wide / aerial), motion intensity + direction, time of day.
+- 35–70 words per note. Concrete nouns + verbs, never adjectives like "cool", "epic", "beautiful", "stunning". Specific over evocative ("a winding mountain road at golden hour with low fog drifting across the asphalt, slow forward dolly at 5km/h, warm amber 3000K key from camera-left, shallow depth of field on the centre line" beats "cool-looking landscape shot matching the surrounding mood").
+- HARD BAN, restated for emphasis: NO products, NO brand logos / marks / badges / wordmarks, NO close-ups of branded surfaces (steering wheels, grilles, packaging, screens). NO on-screen text, NO end-cards, NO graphic overlays. NO faces if face-generation is disabled above. These rules override anything the brief or the metric framework says — products and graphics are out of scope for generated placeholders.
+- Generated placeholders are CONTEXT cuts: landscapes, environments, hands, silhouettes, atmospheres, abstract motion (light rays, dust, wind in grass), aerial reveals, weather, time-of-day shifts. They exist to set mood / bridge beats / extend a moment — NEVER to be the hero shot.
+- If you can't write a placeholder that obeys these rules, return one fewer placeholder. Quality over quota.
+- Banned referential phrases (auto-rejected): "matching", "as in", "consistent with", "continuing", "in keeping with", "same look as", "established earlier", "the rest of the cut", "the surrounding shots". Also banned content-wise: "generic brand shot", "establishing shot", "product hero", "cutaway", "end-card", "brand signature".
+- If the same placeholder intent repeats, vary the angle/framing so the final edit doesn't feel looped."
+`;
+
+exports[`golden: bmw-x3 > keeps the prompts stable (snapshot) > system-prompt 1`] = `"You are a senior advertising creative director helping to re-edit an existing commercial using only its already-filmed shots — you cannot add, generate, or invent new footage. You work from a shot log and return a concrete, ordered edit decision list (EDL) with per-shot rationale. You return ONLY a JSON object, no commentary, no markdown fences."`;
+
+exports[`golden: bmw-x3 > keeps the prompts stable (snapshot) > user-prompt 1`] = `
+"# Goal
+Re-edit this commercial to improve its Comprehension score.
+
+# Brand brief
+(not provided — infer from the shot log)
+
+# Voiceover script (segmented from the source VO)
+Full VO is 13.8s across 6 segments. Pick the subset of segments whose combined spoken duration fits in roughly 25.6s of VO time (leaving ~15 % of the target for breath / pauses between segments). Keep the ORIGINAL ORDER of segments — do NOT reorder; only include or skip each one. Prefer segments that reinforce the core message and the brand role; drop legal disclaimers if the target is tight.
+
+- id="vo-0" (1.9s, 1.4s long): "Sometimes,"
+- id="vo-1" (3.3s, 2.5s long): "it's not where you're going that matters."
+- id="vo-2" (7.0s, 2.0s long): "It's how you get there."
+- id="vo-3" (14.1s, 2.9s long): "Because life isn't about reaching a destination."
+- id="vo-4" (18.5s, 3.0s long): "It's about the moments we share along the way."
+- id="vo-5" (22.0s, 2.0s long) [tagline]: "Joy is in the journey."
+
+## Placement on the re-edit timeline (CRITICAL)
+By default the app concatenates picked VO segments back-to-back starting at t=0. That makes every line stack at the top of the cut and leaves the tail silent — wrong for almost every ad. Use \`segmentGaps\` to push segments later in the timeline so the VO breathes with the picture:
+
+- Each value in \`segmentGaps\` is the silence (in seconds) inserted BEFORE that segment fires. Gaps STACK on top of the previous segment's end position. \`gap=0\` means "play immediately after the previous segment ends".
+- Beat structure should drive the gaps: opening line lands early (gap≈0), middle lines breathe with the visual beats they support, **the tagline / closing line MUST land between 21.1s and 30.1s on the timeline** so it pays off the last shot, not the first. One of the segments above is tagged \`[tagline]\` — that is the line whose placement matters most.
+- Keep gaps realistic: 0.3-2 s between conversational lines, 1.5-6 s before a tagline so it has air. Do not insert a gap so large the VO would extend past the timeline — the placer truncates anything past the end.
+- If you are intentionally stacking everything tight (e.g. dense product-feature voiceover), it's fine to leave \`segmentGaps\` empty — but never let the tagline land in the first half of the cut.
+
+In addition to the EDL, return a \`voiceoverPlan\` field at the top level of the JSON response:
+  "voiceoverPlan": {
+    "segmentIds": ["vo-0", "vo-2", "vo-3"],
+    "segmentGaps": { "vo-0": 0.0, "vo-2": 1.2, "vo-3": 6.5 }
+  }
+Listing the ids (preserve order) of the VO segments that should play on the timeline, plus the silence-before-each-segment in seconds. \`segmentGaps\` is a flat map keyed by id; omitted ids default to 0 (no gap). If the full script fits, include every id. If VO should be silenced entirely, return \`segmentIds: []\`.
+
+# Capabilities (HARD RULES — respect exactly)
+- Footage generation: DISABLED. You MUST NOT propose any \`placeholder\` rows. Every row in the EDL must be \`kind: "original"\` and reference a scene that exists in the shot log.
+- Footage extend: DISABLED. You MUST NOT annotate shots with EXTEND directives. If a gap needs more time, solve it by reordering or (if enabled) a placeholder, never by stretching a shot.
+- Footage reframe: ENABLED. You MAY mark shots for re-framing (zoom + pan within the same aspect ratio) when a tighter or repositioned view would land a beat better.
+  **FORMAT (non-negotiable)**: \`REFRAME zoom=<X.X> anchor=<x>,<y>: <rationale>\` — zoom in 1.0–2.5, anchor both values 0–1 (0,0 = top-left, 1,1 = bottom-right, 0.5,0.5 = center). You MUST emit BOTH \`zoom=\` AND \`anchor=\` on every REFRAME. A directive missing \`anchor=\` is invalid and will be silently dropped — a pure zoom is a symmetric center-crop, which almost never improves brand placement and usually chops off the element you wanted to emphasise.
+  **HOW TO PICK THE ANCHOR — READ THE \`BrandMark\` AND \`Subject\` LINES OF THE SHOT LOG**:
+    * If your rationale mentions establishing the brand, logo, badge, or identity: the shot MUST have a \`BrandMark: <label> centered at [x,y]\` line. Copy THOSE coordinates into \`anchor=\`. If instead the shot says \`BrandMark: none visible\`, the shot has no literal logo — DO NOT propose a brand-focused REFRAME on it. Pick a different shot to establish brand.
+    * For any other REFRAME intent (push in on driver, tighten on product, emphasise reveal), use the \`Subject: <label> centered at [x,y]\` coordinates.
+    * If the Subject line ends with \`LOOSE\`, the bbox is too wide to be a reliable anchor — DO NOT reframe this shot, pick a different one.
+  Example: if \`BrandMark: BMW roundel centered at [0.51,0.38]\` is in the shot log, \`REFRAME zoom=1.6 anchor=0.51,0.38: push in on the BMW roundel to land the brand identity\` is correct. Using \`anchor=0.5,0.5\` on that same shot crops the roundel off the top-left.
+  **GOOD examples** (anchor derived from actual subject position):
+    * \`REFRAME zoom=1.4 anchor=0.5,0.42: logo reads at 0.5,0.42 per the Graphics line — tighten on it without clipping the top\`
+    * \`REFRAME zoom=1.3 anchor=0.3,0.4: driver's face sits in the upper-left third per the Visual description; push toward it\`
+    * \`REFRAME zoom=1.5 anchor=0.5,0.85: tagline is bottom-center; crop in so the copy fills the screen\`
+  **BAD examples** (will be dropped):
+    * \`REFRAME: zoom=1.3: Opens on the logo\` — no anchor, just a center zoom
+    * \`REFRAME zoom=1.5 anchor=0.5,0.5: push in on the BMW grille\` — Graphics line said the logo was at 0.5,0.42 but the proposal used 0.5,0.5 → logo gets cropped off the top
+  **HARD RULE (ENFORCED BY PARSER)**: any REFRAME with \`zoom > 1.2\` and \`anchor=0.5,0.5\` (or within ±0.05 of dead center on both axes) will be DROPPED automatically. The parser treats that combination as "the LLM didn't bother to locate the subject" — a symmetric center-crop is almost never the right answer for a reframe. If the subject truly sits dead-center in the frame AND a modest zoom is enough, just use \`zoom=1.15 anchor=0.5,0.5\` (light enough to stay within tolerance). Otherwise pick a real anchor or don't reframe at all.
+  Aspect stays at the delivery target — do NOT change aspect ratio.
+- Color correction: ENABLED. You MUST actively consider color grading as part of the re-edit. Whenever the target metric, framework, brand brief, or ad-concept section mentions visual qualities (e.g. "bright", "high-contrast", "warm", "cool", "vibrant", "desaturated", "moody", "clinical", "cinematic"), you SHOULD annotate the shots that fail those qualities with a corrective \`COLOR:\` directive — do not silently ignore the cue. Prefix the note with \`COLOR:\` followed by any combination of these keys (all integer values in the -100..+100 range unless noted, 0 = no change): \`exposure\`, \`contrast\`, \`saturation\`, \`gain\`, \`gamma\`, \`offset\`, \`hue\` (-180..+180 degrees). Example: \`COLOR: exposure=+18 contrast=+22 saturation=-6: lift the blacks and punch the mids so the product reads on small screens\`. Another: \`COLOR: saturation=-25 gain=-8: drain the clinic scene to neutral before the product reveal\`. Keep grades subtle — ±10 to ±25 on each axis is a strong edit; ±50 is destructive. Use a maximum of 4 keys per shot; leave the rest neutral. If a shot is already on-concept, omit the directive.
+- Use original music stem: ENABLED. The source video's music has been separated via Demucs into an isolated stem. You MAY layer that music stem under ANY row of the EDL — including placeholder rows and shots that had no music in the original cut. To request this on a row, prefix the note with \`AUDIO music:\` (e.g. \`AUDIO music: carry the main theme under this shot\`).
+- Use original voiceover stem: ENABLED. The source video's voiceover has been separated via Demucs into an isolated stem. You MAY reuse VO lines on any row, decoupled from where they originally appeared. Prefix the note with \`AUDIO vo: "<exact verbatim line>"\` to indicate which VO line should play there.
+
+# Editing craft (cut-quality rules — apply on every ordering decision)
+Professional editing principles. Apply them while ordering shots and writing notes, using the shot log's \`Motion\`, \`Subject\`, and \`Cinematography\` lines as the data you reason over.
+
+- **Jump cuts** — use them to tighten pacing, sustain attention on VO-driven beats, or reinforce a modern / social tone. Avoid them when they break a continuous action mid-gesture, make the subject look erratic without intent, or read as a mistake. When the natural jump would be clumsy, cover it: cut to a different shot scale of the same subject, an environment / B-roll insert, a clean detail, or a motion-motivated cut. A visible-but-functional jump cut is fine; one that reads as an accident is not.
+- **180° / screen direction** — keep eyeline and movement direction consistent across cuts. Read each shot's \`Subject\` bbox (left- vs right-of-frame) and \`Motion.subject\` direction: a subject exiting frame-right should re-enter the next shot from frame-left, never from the same side (that reads as a reversal). Break the axis only with intent — for impact, deliberate disorientation, or when a neutral / movement-bridging shot sits between the two opposing-direction shots.
+- **Cut on motion** — a cut that lands MID-gesture or mid-camera-move feels invisible; a cut between two static beats feels like a bump. Pair shots whose \`Motion\` and \`Cinematography.camera_movement_quality\` continue across the boundary (handheld → handheld, push-in → push-in, tracking-left → tracking-left).
+- **Action continuity** — when a real-world action begins on shot N and continues on shot N+1, character position, hand / prop position, and energy level have to match. Source-ad mismatches are unavoidable in a re-edit, so when continuity would break, INSERT a cutaway between the two shots (different shot scale of the same subject, a related detail, an environment insert) instead of slamming them together. Use \`shot_size\` and \`framing\` to find a safe insert candidate in the shot log.
+- **Camera continuity** — do not slam-cut between two camera moves that fight each other (right-pan into left-pan, fast push-in into slow pull-back, locked-off into frantic handheld) unless that contradiction IS the point. Resolve the conflict with a static / neutral shot between them, or cut to a different angle of the same beat. Match-energy cuts read as deliberate; cross-energy cuts need a narrative reason.
+- **Rhythm with intent** — rhythm follows emotional intent, not mechanics. Earn density (faster scenes-per-second) on product reveals, high-energy beats, and information-dense sections; earn held shots on human, emotional, and persuasion beats. Do not blanket-accelerate every cut — frantic ≠ engaging, and a wall of sub-second cuts reads as nervous, not modern.
+- **Hook in the first 1–3s** — the opening row's pull compounds across the whole watch. Lead with the single strongest visual moment available, a provocative VO line, an immediate visible result / transformation, a human reaction (face, body language), a product-in-use action, a recognisable problem the audience identifies with, or a concrete promise. Avoid opening on a logo card, a slow establishing shot, or context that delays the point — these bleed audience before the message lands.
+- **No churn** — do not reorder for the sake of reordering, and do not chase visible difference from the source cut as a goal in itself. If a sequence in the original already serves the metric well, keep it. The proposal is judged by what it improves, not by how different it looks from the original. Equally, do not keep a weak shot just because it was in the original — strength of filming is not a reason to retain a shot that drags the metric.
+
+# Shot log (from the current cut)
+Each shot below is a multi-line block separated by \`---\`:
+- Visual: factual description of what happens on screen.
+- Chips: brand presence · emotion · framing · overall movement.
+- Motion: camera movement (with intensity) and subject motion (with direction).
+- Cinematography: precise filmmaker terms — shot size, angle, rig, lens, DOF, focus dynamics, composition, lighting style, colour palette, special techniques. Omitted when the analyzer couldn't categorise the shot.
+- Audio: verbatim voiceover (VO), music description, SFX list, ambient bed. Omitted on silent clips.
+- Graphics: on-screen text with its role (title, tagline, caption, legal_disclaimer, etc.) and logos present. Omitted on clean frames.
+- Pacing: shot boundary character (cut_type) and tempo feel.
+Use Audio.VO to anchor narrative continuity — never split a VO line across shots arbitrarily. Use Pacing + music tempo to size shot durations. Use Graphics to decide which shots MUST carry brand elements (logo, tagline, legal disclaimer) and which ones can be replaced. Use Cinematography to keep visual continuity tight: when ordering shots, alternate or match \`shot_size\` deliberately (don't bounce ECU→Wide→ECU at random), keep \`lighting_style\` consistent within a beat, and match \`composition\` lines (a leading-line shot pairs well with another that continues the line).
+
+## scene-001 · 0.00–2.00s · 2.00s
+Optimized: V01 — on-screen graphics (text / logo overlays) have been removed; the Graphics block below describes the ORIGINAL overlays, which are no longer visible on the active clip.
+Visual: A white BMW SUV drives from left to right along a paved road winding through a dense pine forest. The camera tracks the vehicle from a parallel position, capturing the car through a foreground layer of passing tree trunks that create a flickering shutter effect. The scene is illuminated by bright, natural daylight filtering through the canopy, casting dynamic shadows across the road and the car's body.
+BrandMark: none visible — do NOT propose a brand-focused REFRAME on this shot
+Subject: white BMW SUV centered at [0.58,0.69] (bbox ~0.18×0.11)
+Chips: brand=Product visible · emotion=freedom · framing=Wide · movement=Moderate
+Motion: camera=vehicle_tracking (moderate) · subject=moderate (left-to-right)
+Cinematography: shot=long · rig=vehicle_mount · lens=normal · DOF=medium · focus=focus_pull · comp=foreground_layered · light=natural_daylight · palette=forest green, deep brown, crisp white
+Audio: music=low ambient synth pad, slow tempo, atmospheric and subtle · SFX=[low rumble of a car engine passing] · ambient=soft wind rustling through trees
+Graphics: text (legal_disclaimer)="European Model Shown. Features and equipment may vary in Canada. Professional Driver. Closed Course." at [0.50,0.95]
+Pacing: cut=hard_cut · tempo=mid
+
+---
+
+## scene-002 · 2.00–3.96s · 1.96s
+Visual: A high-angle, close-up shot captures a young woman with brown hair lying on her back in a field of dry, golden grass. She is wearing a blue denim jacket with white stitched patterns over a tan knit sweater. Her eyes are closed, and her face is bathed in the warm, soft light of the golden hour as the camera remains static with a shallow depth of field.
+BrandMark: none visible — do NOT propose a brand-focused REFRAME on this shot
+Subject: woman's face centered at [0.53,0.63] (bbox ~0.50×0.74) (LOOSE — too wide for a tight reframe; skip REFRAME on this shot)
+Chips: brand=None · emotion=calm · framing=Close-up · movement=Static
+Motion: camera=static
+Cinematography: shot=close_up · angle=high_angle · rig=locked_off · lens=normal · DOF=shallow · comp=centered · light=golden_hour · palette=golden amber, denim blue, warm tan
+Audio: VO="Sometimes" · music=soft ambient synth pad, slow tempo, peaceful mood · ambient=gentle outdoor wind rustle
+Pacing: cut=hard_cut · tempo=slow
+
+---
+
+## scene-003 · 3.96–5.44s · 1.48s
+Visual: A group of young adults walks through a sun-drenched grassy field during golden hour, their figures backlit by a bright, low-angle sun that creates a warm haze and lens flare. The camera tracks laterally, keeping the subjects in a medium long shot as they move through the tall grass, with a shallow depth of field rendering the foreground blades and distant trees in soft focus. The lighting is natural and warm, casting soft silhouettes and highlighting the textures of their casual clothing.
+BrandMark: none visible — do NOT propose a brand-focused REFRAME on this shot
+Subject: man walking in field centered at [0.62,0.58] (bbox ~0.09×0.35) (LOOSE — too wide for a tight reframe; skip REFRAME on this shot)
+Chips: brand=None · emotion=freedom · framing=Medium · movement=Moderate
+Motion: camera=truck_right (subtle) · subject=slow (left-to-right)
+Cinematography: shot=medium_long · rig=gimbal · lens=normal · DOF=shallow · comp=foreground_layered · light=golden_hour · palette=warm gold, soft green, muted denim
+Audio: VO="It's not where you're going that..." · music=soft acoustic guitar, slow tempo, reflective mood · ambient=gentle wind rustling through grass
+Pacing: cut=hard_cut · tempo=slow
+
+---
+
+## scene-004 · 5.44–6.44s · 1.00s
+Optimized: V01 — on-screen graphics (text / logo overlays) have been removed; the Graphics block below describes the ORIGINAL overlays, which are no longer visible on the active clip.
+Visual: An extreme close-up shot of the front grille of a modern white BMW SUV, showcasing the iconic kidney grille and the brand roundel on the hood. The vehicle is moving through a sun-dappled forest, with blurred trees visible in the background. The camera is locked-off relative to the car, capturing the details of the grille and headlight with shallow depth of field.
+BrandMark: BMW roundel on hood centered at [0.76,0.18] (bbox ~0.09×0.07) — use this anchor for any brand-focused REFRAME
+Subject: BMW kidney grille centered at [0.66,0.58] (bbox ~0.68×0.65) (LOOSE — too wide for a tight reframe; skip REFRAME on this shot)
+Chips: brand=Logo visible · emotion=technical · framing=ECU · movement=Moderate
+Motion: camera=vehicle_tracking (subtle) · subject=moderate
+Cinematography: shot=extreme_close_up · rig=vehicle_mount · lens=normal · DOF=shallow · comp=centered · light=natural_daylight · palette=white, black, forest green, chrome
+Audio: VO="matters." · music=low ambient synth pad, slow tempo, atmospheric · SFX=[low rumble of a car engine] · ambient=soft wind rustle
+Graphics: text (legal_disclaimer)="European Model Shown. Features and equipment may vary in Canada. Professional Driver. Closed Course." at [0.50,0.95]
+Pacing: cut=hard_cut · tempo=slow
+
+---
+
+## scene-005 · 6.44–7.56s · 1.12s
+Optimized: V01 — on-screen graphics (text / logo overlays) have been removed; the Graphics block below describes the ORIGINAL overlays, which are no longer visible on the active clip.
+Visual: A white BMW SUV drives along a winding, sun-dappled road bordered by a dense pine forest. The camera tracks alongside the vehicle from a low-angle, maintaining a medium shot that emphasizes the car's front grille and headlights. The lighting is natural daylight with soft shadows cast by the trees, creating a dynamic play of light and shadow across the car's body.
+BrandMark: BMW roundel on hood centered at [0.54,0.46] (bbox ~0.02×0.03) — use this anchor for any brand-focused REFRAME
+Subject: white BMW SUV centered at [0.68,0.48] (bbox ~0.53×0.57) (LOOSE — too wide for a tight reframe; skip REFRAME on this shot)
+Chips: brand=Product visible · emotion=freedom · framing=Medium · movement=Moderate
+Motion: camera=vehicle_tracking (moderate) · subject=moderate (toward camera)
+Cinematography: shot=medium · angle=low_angle · rig=vehicle_mount · lens=normal · DOF=medium · comp=centered · light=natural_daylight · palette=forest green, asphalt gray, clean white
+Audio: music=uplifting electronic synth, mid tempo, driving beat · ambient=soft wind and road hum
+Graphics: text (legal_disclaimer)="European Model Shown. Features and equipment may vary in Canada. Professional Driver. Closed Course." at [0.50,0.95]
+Pacing: cut=hard_cut · tempo=mid
+
+---
+
+## scene-006 · 7.56–9.24s · 1.68s
+Optimized: V01 — on-screen graphics (text / logo overlays) have been removed; the Graphics block below describes the ORIGINAL overlays, which are no longer visible on the active clip.
+Visual: A white BMW SUV drives along a winding two-lane asphalt road cutting through a dense pine forest. The camera tracks behind the vehicle from a low angle, capturing the dappled sunlight filtering through the tall trees and casting dynamic shadows across the road and the car's body. The shot maintains a medium-long perspective with a smooth tracking motion, keeping the rear of the SUV in sharp focus while the surrounding forest recedes into a soft blur.
+BrandMark: BMW roundel on tailgate centered at [0.71,0.50] (bbox ~0.02×0.03) — use this anchor for any brand-focused REFRAME
+Subject: white BMW SUV centered at [0.59,0.57] (bbox ~0.43×0.45) (LOOSE — too wide for a tight reframe; skip REFRAME on this shot)
+Chips: brand=Product visible · emotion=freedom · framing=Medium · movement=Moderate
+Motion: camera=vehicle_tracking (moderate) · subject=moderate (away from camera)
+Cinematography: shot=medium_long · angle=low_angle · rig=vehicle_mount · lens=normal · DOF=medium · focus=focus_pull · comp=leading_lines · light=natural_daylight · palette=forest green, asphalt gray, alpine white, warm sunlight
+Audio: VO="It's how you get there." · music=low ambient synth pad, slow tempo, atmospheric · SFX=[low rumble of car engine] · ambient=soft wind rustling through trees
+Graphics: text (legal_disclaimer)="European Model Shown. Features and equipment may vary in Canada. Professional Driver. Closed Course." at [0.50,0.95]
+Pacing: cut=hard_cut · tempo=mid
+
+---
+
+## scene-007 · 9.24–10.44s · 1.20s
+Optimized: V01 — on-screen graphics (text / logo overlays) have been removed; the Graphics block below describes the ORIGINAL overlays, which are no longer visible on the active clip.
+Visual: A silver BMW SUV drives along a winding road through a dense pine forest in daylight. The camera tracks alongside the vehicle in a low-angle medium shot, capturing the front grille and headlight as the background trees blur past. The lighting is natural daylight filtered through the forest canopy, creating dynamic shadows on the car's body.
+BrandMark: BMW roundel on hood centered at [0.57,0.46] (bbox ~0.01×0.04) — use this anchor for any brand-focused REFRAME
+Subject: silver BMW SUV centered at [0.74,0.50] (bbox ~0.51×0.64) (LOOSE — too wide for a tight reframe; skip REFRAME on this shot)
+Chips: brand=Product visible · emotion=freedom · framing=Medium · movement=Moderate
+Motion: camera=vehicle_tracking (moderate) · subject=moderate (left-to-right)
+Cinematography: shot=medium · angle=low_angle · rig=vehicle_mount · lens=normal · DOF=medium · comp=rule_of_thirds · light=natural_daylight · palette=forest green, silver metallic, deep shadow black
+Audio: music=low ambient synth drone, slow tempo, mysterious mood · SFX=[low rumble of car engine] · ambient=soft wind rustling through trees
+Graphics: text (legal_disclaimer)="European Model Shown. Features and equipment may vary in Canada. Professional Driver. Closed Course." at [0.50,0.95]
+Pacing: cut=hard_cut · tempo=mid
+
+---
+
+## scene-008 · 10.44–11.52s · 1.08s
+Optimized: V01 — on-screen graphics (text / logo overlays) have been removed; the Graphics block below describes the ORIGINAL overlays, which are no longer visible on the active clip.
+Visual: A handheld, over-the-shoulder shot from the backseat of a vehicle captures a driver with a shaved head wearing a dark green jacket, looking out toward the road ahead. The interior of the car is dark and out of focus, while the bright daylight outside is visible through the windshield and side window. The camera moves with organic handheld shake, maintaining a shallow depth of field that keeps the driver's head and the car interior soft while focusing on the road ahead.
+BrandMark: none visible — do NOT propose a brand-focused REFRAME on this shot
+Subject: driver's head centered at [0.61,0.25] (bbox ~0.17×0.42) (LOOSE — too wide for a tight reframe; skip REFRAME on this shot)
+Chips: brand=None · emotion=focused · framing=Medium · movement=Moderate
+Motion: camera=handheld (moderate) · subject=slow
+Cinematography: shot=medium_close_up · rig=handheld · lens=normal · DOF=shallow · comp=foreground_layered · light=backlit · palette=charcoal, dark green, bright daylight blue
+Audio: music=intense electronic synth swell, fast tempo, dramatic mood · SFX=[low rumble of car engine] · ambient=low vehicle cabin hum
+Graphics: text (legal_disclaimer)="European Model Shown. Features and equipment may vary in Canada. Professional Driver. Closed Course." at [0.50,0.95]
+Pacing: cut=hard_cut · tempo=mid
+
+---
+
+## scene-009 · 11.52–12.44s · 0.92s
+Optimized: V01 — on-screen graphics (text / logo overlays) have been removed; the Graphics block below describes the ORIGINAL overlays, which are no longer visible on the active clip.
+Visual: A medium close-up shot of a young girl with light brown hair looking out of a car's rear passenger window. The scene is set outdoors during the day, with soft, natural light illuminating her face. The camera is positioned outside the car, looking in, capturing her profile as she gazes forward with a curious expression. The background is softly blurred, creating a shallow depth of field that emphasizes the girl.
+BrandMark: none visible — do NOT propose a brand-focused REFRAME on this shot
+Subject: girl's face centered at [0.32,0.63] (bbox ~0.48×0.75) (LOOSE — too wide for a tight reframe; skip REFRAME on this shot)
+Chips: brand=None · emotion=calm · framing=Medium · movement=Slow
+Motion: camera=static · subject=slow
+Cinematography: shot=medium_close_up · rig=locked_off · lens=normal · DOF=shallow · comp=rule_of_thirds · light=natural_daylight · palette=warm skin tones, muted greens, soft gray, dark car interior
+Audio: ambient=soft wind noise
+Graphics: text (legal_disclaimer)="European Model Shown. Features and equipment may vary in Canada. Professional Driver. Closed Course." at [0.50,0.95]
+Pacing: cut=hard_cut · tempo=slow
+
+---
+
+## scene-010 · 12.44–13.44s · 1.00s
+Optimized: V01 — on-screen graphics (text / logo overlays) have been removed; the Graphics block below describes the ORIGINAL overlays, which are no longer visible on the active clip.
+Visual: A tracking shot captures a silver BMW SUV driving along a dirt road at dusk. The vehicle is positioned on the right side of the frame, moving forward as dust kicks up from its tires. The background features a soft-focus landscape of rolling hills under a warm, golden sky, with a legal disclaimer overlayed at the bottom of the screen.
+BrandMark: BMW roundel on hood centered at [0.54,0.46] (bbox ~0.02×0.02) — use this anchor for any brand-focused REFRAME
+Subject: BMW SUV driving on dirt road centered at [0.73,0.53] (bbox ~0.53×0.58) (LOOSE — too wide for a tight reframe; skip REFRAME on this shot)
+Chips: brand=Product visible · emotion=freedom · framing=Medium · movement=Moderate
+Motion: camera=vehicle_tracking (moderate) · subject=moderate (toward camera)
+Cinematography: shot=medium_long · angle=low_angle · rig=vehicle_mount · lens=normal · DOF=shallow · comp=rule_of_thirds · light=golden_hour · palette=warm amber, dusty brown, silver metallic
+Graphics: text (legal_disclaimer)="European Model Shown. Features and equipment may vary in Canada. Professional Driver. Closed Course." at [0.50,0.95]
+Pacing: tempo=mid
+
+---
+
+## scene-011 · 13.44–15.72s · 2.28s
+Optimized: V01 — on-screen graphics (text / logo overlays) have been removed; the Graphics block below describes the ORIGINAL overlays, which are no longer visible on the active clip.
+Visual: The clip begins with a low-angle, shallow-depth-of-field tracking shot of a white SUV kicking up dust on a dirt road, with the camera positioned close to the rear bumper. It then cuts to a wide tracking shot from a parallel vehicle, showing the SUV driving through a dry, mountainous landscape dotted with sparse trees and shrubs during the golden hour. The warm, low-angle sunlight casts long shadows and bathes the scene in a soft, warm glow.
+BrandMark: none visible — do NOT propose a brand-focused REFRAME on this shot
+Subject: white SUV kicking up dust centered at [0.26,0.42] (bbox ~0.53×0.62) (LOOSE — too wide for a tight reframe; skip REFRAME on this shot)
+Chips: brand=Product visible · emotion=freedom · framing=Wide · movement=High
+Motion: camera=vehicle_tracking (moderate) · subject=fast (left-to-right)
+Cinematography: shot=long · rig=vehicle_mount · lens=normal · DOF=medium · comp=rule_of_thirds · light=golden_hour · palette=warm amber, dusty brown, muted green, pale blue
+Audio: VO="Because life isn't about..." · music=soft, atmospheric synth pad with a gentle, rhythmic pulse, low tempo, contemplative mood · SFX=[low rumble of a car engine, tires crunching on gravel and dirt] · ambient=subtle wind noise and distant outdoor atmosphere
+Graphics: text (legal_disclaimer)="European Model Shown. Features and equipment may vary in Canada. Professional Driver. Closed Course." at [0.50,0.95]
+Pacing: cut=hard_cut · tempo=mid
+
+---
+
+## scene-012 · 15.72–16.52s · 0.80s
+Optimized: V01 — on-screen graphics (text / logo overlays) have been removed; the Graphics block below describes the ORIGINAL overlays, which are no longer visible on the active clip.
+Visual: A wide, locked-off shot with deep focus captures a modern diner exterior under bright, direct daylight. A white BMW SUV is parked in front of the diner, where a woman stands by the driver's side door, a man leans into the open rear passenger door, and another man walks toward the entrance. The scene is evenly lit by natural daylight, showcasing the clean architectural lines of the diner and the vehicle.
+BrandMark: BMW roundel on tailgate centered at [0.42,0.66] (bbox ~0.01×0.02) — use this anchor for any brand-focused REFRAME
+Subject: white BMW SUV centered at [0.50,0.70] (bbox ~0.34×0.30) (LOOSE — too wide for a tight reframe; skip REFRAME on this shot)
+Chips: brand=Product visible · emotion=calm · framing=Wide · movement=Slow
+Motion: camera=static · subject=slow
+Cinematography: shot=establishing · rig=locked_off · lens=wide · DOF=deep · comp=centered · light=natural_daylight · palette=warm beige, slate gray, clean white
+Audio: VO="reaching a destination" · music=soft, ambient electronic tones, slow tempo, calm mood · ambient=quiet outdoor atmosphere
+Graphics: text (legal_disclaimer)="European Model Shown. Features and equipment may vary in Canada." at [0.50,0.95]
+Pacing: cut=hard_cut · tempo=slow
+
+---
+
+## scene-013 · 16.52–17.20s · 0.68s
+Optimized: V01 — on-screen graphics (text / logo overlays) have been removed; the Graphics block below describes the ORIGINAL overlays, which are no longer visible on the active clip.
+Visual: A shallow-DOF close-up shot captures a person's hands holding a smartphone in the foreground, displaying a vehicle on screen, while a white BMW sedan sits parked in the soft-focus background. The setting is an outdoor parking lot under bright, natural daylight with a desert-like landscape visible in the distance. The camera remains static, maintaining a sharp focus on the phone screen while the physical car in the background remains blurred.
+BrandMark: none visible — do NOT propose a brand-focused REFRAME on this shot
+Subject: smartphone screen displaying car centered at [0.32,0.31] (bbox ~0.24×0.63) (LOOSE — too wide for a tight reframe; skip REFRAME on this shot)
+Chips: brand=Product visible · emotion=technical · framing=Close-up · movement=Static
+Motion: camera=static
+Cinematography: shot=close_up · rig=locked_off · lens=normal · DOF=shallow · comp=foreground_layered · light=natural_daylight · palette=warm sand, soft white, slate blue
+Audio: VO="nation." · music=ambient electronic pad, slow tempo, calm mood · ambient=soft outdoor room tone
+Graphics: text (legal_disclaimer)="European Model Shown. Features and equipment may vary in Canada." at [0.50,0.95]
+Pacing: cut=hard_cut · tempo=slow
+
+---
+
+## scene-014 · 17.20–17.84s · 0.64s
+Optimized: V01 — on-screen graphics (text / logo overlays) have been removed; the Graphics block below describes the ORIGINAL overlays, which are no longer visible on the active clip.
+Visual: A shallow-DOF medium close-up captures a man's hand holding a black smartphone in profile, with his face partially visible in the left foreground. In the soft-focus background, a woman with short dark hair and gold hoop earrings sits at a diner booth, smiling. The scene is bathed in warm, motivated indoor light, casting soft shadows against a patterned orange and brown tiled wall.
+BrandMark: none visible — do NOT propose a brand-focused REFRAME on this shot
+Subject: smartphone held in hand centered at [0.55,0.36] (bbox ~0.07×0.24)
+Chips: brand=Product visible · emotion=calm · framing=Medium · movement=Static
+Motion: camera=static
+Cinematography: shot=medium_close_up · rig=locked_off · lens=normal · DOF=shallow · comp=foreground_layered · light=practical · palette=warm amber, deep brown, cream, navy blue
+Audio: music=upbeat, rhythmic electronic pop with a steady synth beat and light percussion, mid-tempo · ambient=subtle diner room tone
+Graphics: text (legal_disclaimer)="European Model Shown. Features and equipment may vary in Canada." at [0.50,0.95]
+Pacing: cut=hard_cut · tempo=mid
+
+---
+
+## scene-015 · 17.84–18.52s · 0.68s
+Optimized: V01 — on-screen graphics (text / logo overlays) have been removed; the Graphics block below describes the ORIGINAL overlays, which are no longer visible on the active clip.
+Visual: A shallow-DOF medium close-up captures a man in profile on the left, looking down at a smartphone held in his hand, while a woman with dark hair and a striped sweater reacts with an excited smile in the soft-focus background. The setting appears to be a brightly lit indoor cafe or restaurant during the day, with warm, natural light illuminating the subjects. The camera remains locked off, maintaining a tight focus on the man's face and the phone, emphasizing the shared moment of joy.
+BrandMark: none visible — do NOT propose a brand-focused REFRAME on this shot
+Subject: man's face in profile centered at [0.15,0.49] (bbox ~0.29×0.99) (LOOSE — too wide for a tight reframe; skip REFRAME on this shot)
+Chips: brand=None · emotion=playful · framing=Medium · movement=Slow
+Motion: camera=static · subject=slow
+Cinematography: shot=medium_close_up · rig=locked_off · lens=normal · DOF=shallow · comp=foreground_layered · light=natural_daylight · palette=warm burgundy, cream, deep purple, soft yellow
+Audio: music=upbeat acoustic indie pop, acoustic guitar and light percussion, mid tempo, cheerful · ambient=soft indoor cafe chatter and ambient room tone
+Graphics: text (legal_disclaimer)="European Model Shown. Features and equipment may vary in Canada." at [0.50,0.95]
+Pacing: cut=hard_cut · tempo=mid
+
+---
+
+## scene-016 · 18.52–19.60s · 1.08s
+Optimized: V01 — on-screen graphics (text / logo overlays) have been removed; the Graphics block below describes the ORIGINAL overlays, which are no longer visible on the active clip.
+Visual: A wide, locked-off shot of a white BMW iX1 parked on a wooden ramp leading onto a sandy beach, with its driver-side door open. In the background, three figures stand near the shoreline against a massive, sunlit cliffside under a bright, hazy sky. The scene is bathed in warm, natural daylight with soft shadows, creating a serene and adventurous atmosphere.
+BrandMark: BMW roundel on the rear tailgate centered at [0.29,0.65] (bbox ~0.01×0.02) — use this anchor for any brand-focused REFRAME
+Subject: white BMW iX1 parked on the beach centered at [0.40,0.70] (bbox ~0.33×0.28) (LOOSE — too wide for a tight reframe; skip REFRAME on this shot)
+Chips: brand=Product visible · emotion=freedom · framing=Wide · movement=Static
+Motion: camera=static
+Cinematography: shot=long · rig=locked_off · lens=wide · DOF=deep · comp=rule_of_thirds · light=natural_daylight · palette=warm sand, soft blue sky, deep green cliffs, clean white car
+Audio: VO="It's about..." · music=soft, ambient electronic tone, slow tempo, calm mood · ambient=gentle ocean waves and soft wind
+Graphics: text (legal_disclaimer)="European Model Shown. Features and Equipment may vary in Canada." at [0.50,0.95]
+Pacing: cut=hard_cut · tempo=slow
+
+---
+
+## scene-017 · 19.60–21.04s · 1.44s
+Optimized: V01 — on-screen graphics (text / logo overlays) have been removed; the Graphics block below describes the ORIGINAL overlays, which are no longer visible on the active clip.
+Visual: A POV shot from inside a vehicle looking out through the windshield at a sunny beach. The dashboard and steering wheel are visible in the dark foreground, while the bright background shows a sandy beach, ocean waves, and a rocky cliffside under a clear sky. A person with long hair is seen from behind, standing on the beach and looking towards the water.
+BrandMark: none visible — do NOT propose a brand-focused REFRAME on this shot
+Subject: person on beach centered at [0.59,0.54] (bbox ~0.06×0.09)
+Chips: brand=Text/logo on-screen · emotion=calm · framing=Medium · movement=Slow
+Motion: camera=static · subject=slow
+Cinematography: shot=medium · rig=locked_off · lens=wide · DOF=deep · comp=foreground_layered · light=natural_daylight · palette=warm sand, deep charcoal, ocean blue
+Audio: VO="The moments we share along" · music=soft, ambient synth pad with gentle piano notes, slow tempo, peaceful mood · ambient=soft ocean waves and wind
+Graphics: text (legal_disclaimer)="European Model Shown. Features and equipment may vary in Canada." at [0.50,0.95]
+Pacing: cut=hard_cut · tempo=slow
+
+---
+
+## scene-018 · 21.04–21.84s · 0.80s
+Visual: A low-angle, handheld medium shot captures a person in a textured, dark orange garment moving across the frame on a sandy beach at golden hour. The low-angle sun creates a warm, backlit glow, casting a soft silhouette on the subject's back as they move. In the background, the calm ocean waves gently lap against the shore under a bright, hazy sky, with another figure partially visible on the right.
+BrandMark: none visible — do NOT propose a brand-focused REFRAME on this shot
+Subject: person in orange garment centered at [0.30,0.50] (bbox ~0.61×1.00) (LOOSE — too wide for a tight reframe; skip REFRAME on this shot)
+Chips: brand=None · emotion=freedom · framing=Medium · movement=Moderate
+Motion: camera=handheld (subtle) · subject=moderate (left-to-right)
+Cinematography: shot=medium · angle=low_angle · rig=handheld · lens=normal · DOF=shallow · comp=foreground_layered · light=golden_hour · palette=warm orange, soft cream, hazy blue
+Audio: VO="way" · music=upbeat electronic pop, synthesizer and light percussion, mid tempo, energetic · ambient=soft ocean waves and wind
+Pacing: cut=hard_cut · tempo=mid
+
+---
+
+## scene-019 · 21.84–22.32s · 0.48s
+Visual: A group of friends are gathered on a sandy beach at sunset, embracing in a warm group hug. The low-angle golden hour sun backlights the subjects, creating a soft rim light and casting long shadows on the wet sand. The camera is handheld, capturing the intimate moment with organic, subtle movement and a shallow depth of field that keeps the focus on the central embracing figures while the ocean waves gently roll in the background.
+BrandMark: none visible — do NOT propose a brand-focused REFRAME on this shot
+Subject: man in dark jacket hugging friends centered at [0.46,0.65] (bbox ~0.38×0.70) (LOOSE — too wide for a tight reframe; skip REFRAME on this shot)
+Chips: brand=None · emotion=freedom · framing=Medium · movement=Moderate
+Motion: camera=handheld (subtle) · subject=moderate
+Cinematography: shot=medium · rig=handheld · lens=normal · DOF=shallow · comp=centered · light=golden_hour · palette=warm amber, soft blue, sandy beige
+Audio: music=upbeat electronic pop, synthesizers and driving beat, fast tempo, energetic mood · ambient=soft ocean waves crashing
+Pacing: cut=hard_cut · tempo=mid
+
+---
+
+## scene-020 · 22.32–22.96s · 0.64s
+Visual: A group of five friends in casual, flowing clothing run and play in the shallow surf of a sandy beach during golden hour. The low-angle sun casts a warm, orange glow across the wet sand, creating long shadows and highlighting the texture of the footprints. The camera is positioned at a high angle, looking down at the group as they move toward the water, capturing the energetic and joyful atmosphere of the scene.
+BrandMark: none visible — do NOT propose a brand-focused REFRAME on this shot
+Subject: group of friends playing in the surf centered at [0.45,0.38] (bbox ~0.40×0.39) (LOOSE — too wide for a tight reframe; skip REFRAME on this shot)
+Chips: brand=None · emotion=freedom · framing=Wide · movement=Moderate
+Motion: camera=static · subject=moderate (away from camera)
+Cinematography: shot=long · angle=high_angle · rig=steadicam · lens=wide · DOF=deep · comp=leading_lines · light=golden_hour · palette=warm amber, deep teal, sandy beige
+Audio: VO="Joy" · music=uplifting acoustic guitar and soft percussion, mid tempo, joyful mood · SFX=[gentle ocean waves crashing] · ambient=soft wind and distant ocean sounds
+Pacing: cut=hard_cut · tempo=mid
+
+---
+
+## scene-021 · 22.96–23.96s · 1.00s
+Optimized: V01 — on-screen graphics (text / logo overlays) have been removed; the Graphics block below describes the ORIGINAL overlays, which are no longer visible on the active clip.
+Visual: A white BMW iX electric SUV drives along a dusty dirt road at dusk, with its headlights illuminated. The camera is positioned low to the ground, tracking backward in front of the vehicle as it moves forward, creating a dynamic sense of motion. The background features soft, rolling hills silhouetted against a warm, gradient sky of orange and purple hues.
+BrandMark: BMW roundel on hood centered at [0.53,0.33] (bbox ~0.03×0.03) — use this anchor for any brand-focused REFRAME
+Subject: white BMW iX SUV centered at [0.41,0.48] (bbox ~0.60×0.67) (LOOSE — too wide for a tight reframe; skip REFRAME on this shot)
+Chips: brand=Product visible · emotion=freedom · framing=Medium · movement=Moderate
+Motion: camera=pull_out (moderate) · subject=moderate (toward camera)
+Cinematography: shot=medium_long · angle=low_angle · rig=vehicle_mount · lens=normal · DOF=medium · comp=centered · light=blue_hour · palette=warm orange, dusty brown, cool white, dark gray
+Audio: music=ambient electronic pad, slow tempo, atmospheric · SFX=[low electric motor hum] · ambient=soft wind
+Graphics: text (tagline)="JOY IS IN THE JOURNEY.
+
+European Model Shown. Features and equipment may vary in Canada. Professional Driver. Closed Course." at [0.50,0.50]
+Pacing: cut=hard_cut · tempo=slow
+
+---
+
+## scene-022 · 23.96–24.96s · 1.00s
+Optimized: V01 — on-screen graphics (text / logo overlays) have been removed; the Graphics block below describes the ORIGINAL overlays, which are no longer visible on the active clip.
+Visual: A low-angle, tracking shot from behind a white BMW iX as it drives along an asphalt road. The camera is positioned low to the ground, capturing the rear wheel and bumper in sharp focus while the road surface rushes past with motion blur. The lighting is soft and overcast, casting gentle shadows on the car's body, with post-production text overlays positioned in the center and bottom of the frame.
+BrandMark: none visible — do NOT propose a brand-focused REFRAME on this shot
+Subject: rear wheel of white BMW iX centered at [0.44,0.41] (bbox ~0.13×0.54) (LOOSE — too wide for a tight reframe; skip REFRAME on this shot)
+Chips: brand=Text/logo on-screen · emotion=freedom · framing=Medium · movement=Moderate
+Motion: camera=vehicle_tracking (moderate) · subject=moderate (away_from_camera)
+Cinematography: shot=medium_close_up · angle=low_angle · rig=vehicle_mount · lens=wide · DOF=medium · comp=diagonal · light=overcast · palette=cool gray, matte white, dark charcoal
+Audio: music=low ambient electronic drone, slow tempo, atmospheric · SFX=[low rumble of car engine and road noise] · ambient=subtle wind rush
+Graphics: text (tagline)="JOY IS IN THE JOURNEY.
+
+European Model Shown. Features and equipment may vary in Canada. Professional Driver. Closed Course." at [0.50,0.50]
+Pacing: cut=hard_cut · tempo=slow
+
+---
+
+## scene-023 · 24.96–27.68s · 2.72s
+Optimized: V01 — on-screen graphics (text / logo overlays) have been removed; the Graphics block below describes the ORIGINAL overlays, which are no longer visible on the active clip.
+Visual: A low-angle, tracking medium shot of a white BMW X3 driving along a highway at dusk. The camera is positioned low to the ground, tracking alongside the vehicle as it moves from right to left, creating a dynamic sense of speed. The background features a soft-focus cityscape with buildings and hills under a warm, golden-hour sky, with the vehicle's headlights illuminated.
+BrandMark: BMW roundel on hood centered at [0.42,0.44] (bbox ~0.01×0.02) — use this anchor for any brand-focused REFRAME
+Subject: BMW X3 driving on highway centered at [0.64,0.52] (bbox ~0.55×0.48) (LOOSE — too wide for a tight reframe; skip REFRAME on this shot)
+Chips: brand=Product visible · emotion=freedom · framing=Medium · movement=Moderate
+Motion: camera=vehicle_tracking (moderate) · subject=moderate (right-to-left)
+Cinematography: shot=medium · angle=low_angle · rig=vehicle_mount · lens=normal · DOF=medium · comp=rule_of_thirds · light=golden_hour · palette=warm amber, cool gray, white
+Audio: music=upbeat electronic synth, mid tempo, modern and driving · SFX=[low hum of car engine] · ambient=subtle wind rush
+Graphics: text (title)="THE NEW
+X3
+
+European Model Shown. Features and equipment may vary in Canada. Professional Driver. Closed Course." at [0.14,0.75]
+Pacing: cut=hard_cut · tempo=mid
+
+---
+
+## scene-024 · 27.68–30.04s · 2.36s
+End-card: TRUE — this shot is the ad's brand-signature frame. Use it AS-IS in the cut: do not annotate it with REFRAME, COLOR, EXTEND, or any directive. If the metric calls for ending on the brand, place this row last with no modifications. If you don't need a brand sign-off, simply omit this shot. Never propose generating a replacement end-card via a placeholder.
+Visual: A static, graphic-first end-card on a solid black background. The central focus is the BMW roundel logo, positioned above the white text tagline 'The Ultimate Driving Experience'. A small, white legal disclaimer is positioned at the bottom of the frame, remaining static throughout the clip.
+BrandMark: BMW roundel logo centered at [0.50,0.45] (bbox ~0.09×0.16) — use this anchor for any brand-focused REFRAME
+Subject: BMW roundel logo centered at [0.50,0.45] (bbox ~0.09×0.16)
+Chips: brand=Logo visible · emotion=serious · framing=Wide · movement=Static
+Motion: camera=static
+Cinematography: shot=establishing · rig=locked_off · lens=normal · DOF=deep · comp=centered · light=high_key · palette=black, white, blue
+Audio: music=low-pitched synth drone with a subtle mechanical hum, slow tempo, serious mood · SFX=[low engine revving sound]
+Graphics: text (tagline)="The Ultimate Driving Experience®
+
+©2024 BMW Canada Inc. "BMW", the BMW logo, BMW model designations and all other BMW related marks, images and symbols are the exclusive property and/or trademarks of BMW AG, used under licence." at [0.51,0.60] · logo=BMW roundel logo centered in the upper half of the frame at [0.50,0.45]
+Pacing: cut=hard_cut · tempo=slow
+
+# Your task
+Propose a new edit decision list that improves Comprehension. The tools available to you depend on the Capabilities block above:
+- **Always**: reorder shots, cut weak moments, promote high-value shots to prime timecodes (first and last seconds).
+- **Reframe** (\`REFRAME:\` directive): tighten or reposition a shot when the current framing buries a beat.
+- **Color grading** (\`COLOR:\` directive): correct shots that fight the target metric / brand mood. If the framework or brief explicitly calls for a look (bright, warm, moody, desaturated, etc), you MUST apply COLOR to the shots that miss it — reordering alone will not fix an off-concept grade.
+- **Music stem** (\`AUDIO music:\` directive): layer the isolated music stem anywhere.
+- **VO stem** (\`AUDIO vo: "..."\` directive): reuse a VO line on a different shot.
+
+**HARD BUDGET — 30.1s total (acceptable 25.6–34.6s).**
+You have 24 scenes, 30.0s of source footage, average 1.25s per shot.
+Each row's on-timeline duration = source-scene length.
+You can reach the target using existing scenes alone — include enough of them that the natural durations sum to ~30.1s.
+Before returning, SUM the on-timeline durations of every row (source-scene durations). If the sum is below 25.6s, ADD more material until you're in range. Do not return a short EDL.
+
+Return ONLY a JSON object in this schema:
+
+{
+  "rationale": "2–4 sentence overall strategy explaining how this re-edit improves Comprehension.",
+  "edl": [
+    {
+      "index": 1,
+      "kind": "original",
+      "sourceSceneId": "scene-001",
+      "newTcIn": 0.00,
+      "newTcOut": 2.00,
+      "note": "1 sentence on why this shot is here at this timecode (rationale, not a prompt)."
+    },
+    {
+      "index": 2,
+      "kind": "placeholder",
+      "sourceSceneId": null,
+      "newTcIn": 2.00,
+      "newTcOut": 3.50,
+      "note": "Close-up of a hand gripping a black leather steering wheel with the chrome Honda logo centered in-frame; subtle tilt-up as the grip tightens; golden-hour warm side-light; shallow depth of field with the dashboard softly out of focus.",
+      "referenceFrame": { "sourceSceneId": "scene-003", "framePosition": "end" }
+    }
+  ]
+}
+
+Rules:
+- "original" rows must reference a sourceSceneId that exists in the shot log.
+- "placeholder" rows have sourceSceneId: null AND a required referenceFrame object pointing to an existing shot (see the Capabilities block above for how to choose it). framePosition is one of "start" | "middle" | "end".
+- Consecutive rows must be contiguous (newTcIn of row N+1 equals newTcOut of row N).
+- First row starts at 0.
+- JSON only. No prose around the JSON. No markdown fences.
+
+PLACEHOLDER QUALITY (critical — these notes are fed directly to a video-generation model that has NO access to the rest of the cut or to any other shot. The note is the model's ENTIRE world.):
+- Write each placeholder's note as a concrete DIRECTOR'S SHOT INSTRUCTION, not a meta description ("add a shot of X" is forbidden).
+- **SELF-CONTAINED — HARD RULE.** The downstream i2v model only sees this single string. Phrases like "matching the surrounding shots", "same look as the previous scene", "continuing the previous camera move", "in keeping with the rest of the edit", "consistent with the cut", "as established earlier" are FORBIDDEN — they evaluate to nothing for the model and waste tokens. INLINE every visual detail you'd want the model to copy. If the prior shot is a cold-blue twilight handheld push-in on a rocky ridge, write that out: "cold blue twilight, handheld micro-shake, slow forward push, rocky alpine ridge in fog". Never refer to another shot — describe its properties directly inside this note.
+- **Style anchor — REQUIRED first clause.** Open every note with the rendering register so the i2v model latches onto it before anything else. Pick from (or combine): "realistic, cinematic", "high-contrast commercial polish", "documentary handheld grit", "moody anamorphic film look", "glossy product hero", "dynamic action-cam energy", "soft naturalistic ad cinematography". Do NOT write "matching the surrounding look" — name the look itself.
+- **Camera-motion continuity — REQUIRED, inlined.** Read the Motion field of the shots IMMEDIATELY BEFORE and AFTER this placeholder in the EDL. Translate that continuity into CONCRETE motion words inside this note. Never sandwich a locked-off static shot between two dynamic shots, or drop a high-motion shot between two contemplative locked frames. Rules of thumb:
+        * If both neighbours are MOVING (push-in, pan, dolly, handheld): write the exact compatible move ("slow forward dolly, gentle handheld breath, left-to-right drift at walking pace") — do NOT write "match the previous shot's movement".
+        * If both neighbours are STATIC / LOCKED: write "locked-off, tripod-stable, no camera movement" or "barely-perceptible 1% drift". Never describe motion you don't want.
+        * If neighbours DIFFER (static → dynamic, or vice versa): write a bridge in concrete terms ("starts locked-off then builds into a confident forward push at the halfway mark").
+- **Inline the look itself, never reference other shots.** Include explicit values for: lighting (key direction, hardness, color temperature in K or words like "warm tungsten 3200K", "overcast 6500K", "magic-hour orange", "moonlit cyan"), color palette (2-4 dominant colors), atmosphere (haze / clear / smoke / rain), lens feel ("anamorphic flare", "telephoto compression", "wide 24mm distortion", "shallow depth of field"), grain/texture if relevant.
+- After style + motion + look, include: subject + action, framing (ECU / close-up / medium / wide / aerial), motion intensity + direction, time of day.
+- 35–70 words per note. Concrete nouns + verbs, never adjectives like "cool", "epic", "beautiful", "stunning". Specific over evocative ("a winding mountain road at golden hour with low fog drifting across the asphalt, slow forward dolly at 5km/h, warm amber 3000K key from camera-left, shallow depth of field on the centre line" beats "cool-looking landscape shot matching the surrounding mood").
+- HARD BAN, restated for emphasis: NO products, NO brand logos / marks / badges / wordmarks, NO close-ups of branded surfaces (steering wheels, grilles, packaging, screens). NO on-screen text, NO end-cards, NO graphic overlays. NO faces if face-generation is disabled above. These rules override anything the brief or the metric framework says — products and graphics are out of scope for generated placeholders.
+- Generated placeholders are CONTEXT cuts: landscapes, environments, hands, silhouettes, atmospheres, abstract motion (light rays, dust, wind in grass), aerial reveals, weather, time-of-day shifts. They exist to set mood / bridge beats / extend a moment — NEVER to be the hero shot.
+- If you can't write a placeholder that obeys these rules, return one fewer placeholder. Quality over quota.
+- Banned referential phrases (auto-rejected): "matching", "as in", "consistent with", "continuing", "in keeping with", "same look as", "established earlier", "the rest of the cut", "the surrounding shots". Also banned content-wise: "generic brand shot", "establishing shot", "product hero", "cutaway", "end-card", "brand signature".
+- If the same placeholder intent repeats, vary the angle/framing so the final edit doesn't feel looped."
+`;
+
+exports[`golden: rise-of-electric > keeps the prompts stable (snapshot) > system-prompt 1`] = `"You are a senior advertising creative director helping to re-edit an existing commercial using only its already-filmed shots plus, when a structural gap truly requires it, a few AI-generated placeholder shots you explicitly propose. You work from a shot log and return a concrete, ordered edit decision list (EDL) with per-shot rationale. You return ONLY a JSON object, no commentary, no markdown fences."`;
+
+exports[`golden: rise-of-electric > keeps the prompts stable (snapshot) > user-prompt 1`] = `
+"# Goal
+Re-edit this commercial to improve its Attention score.
+
+# Brand brief
+(not provided — infer from the shot log)
+
+# Capabilities (HARD RULES — respect exactly)
+- Footage generation: ENABLED. You MAY add 1–3 \`placeholder\` rows to fill structural gaps, as specified in the output schema below.
+      Each placeholder is HARD-CAPPED at **3.0 s** — longer generated footage drifts and starts looking AI-rendered. Treat the cap as a CEILING, not a target.
+      Pick the SHORTEST duration that serves the beat. Sweet spot for ad intercuts is **1.0–2.0 s**; reserve 2.5–3 s ONLY when a held look or a slow camera move genuinely needs the breath. Default to 1.5 s when uncertain. Long placeholders age faster than short ones — short, decisive placeholders read more cinematic.
+      EVERY placeholder MUST carry a \`referenceFrame\` field naming an existing shot to copy the visual style from. The downstream Kling image-to-video model uses that frame as the reference image, so the generated clip stays consistent with the rest of the cut.
+      Pick the reference deliberately:
+        * If the placeholder is a CONTINUATION of the previous shot (same scene, same moment, beat extension): set \`referenceFrame.sourceSceneId\` to the shot that ENDS just before the placeholder, with \`framePosition: "end"\`.
+        * If the placeholder bridges INTO the next shot: use the next shot with \`framePosition: "start"\`.
+        * If the placeholder is its OWN beat / a new mini-scene: pick the shot whose lighting + setting most closely matches the look you want (use the structured Visual / Lighting / Color fields from the shot log) and use \`framePosition: "middle"\`.
+      Always pick a referenceFrame from a shot that EXISTS in the shot log — never null. The generated fill will steal that frame's palette, lighting, and (when applicable) subject, so choose carefully.
+      HARD BAN — PRODUCTS + BRANDING. You MUST NOT propose any placeholder whose subject, foreground, or focal element is a product, product part (steering wheel, grille, badge, car body, packaging, label, screen, device), brand logo, brand mark, or branded surface. If the original brief talks about the product, find a way to suggest it through CONTEXT (the road, the driver's reaction, the environment), not through a generated shot of the product itself. The image generator misrenders products and brand marks; every output here would be a discardable shot. When in doubt, skip the placeholder entirely — fewer, safer placeholders is better than a logo-fake.
+      HARD BAN — TEXT + GRAPHICS. You MUST NOT propose placeholder shots that contain any of: on-screen text, titles, taglines, wordmarks, lower thirds, supers, end-cards, logo cards, brand-signature frames, callouts, captions, graphic overlays, animated typography, or any compositing element a motion designer would normally add in post. The model can't spell or align graphics reliably. If the beat needs to "deliver a brand signature" or "land the headline", write the note as a pure cinematic image (e.g. "tail-lights disappearing into a sunset"), NOT as a graphic. End-cards in particular are forbidden — never propose one as a placeholder; if the cut needs an end-card the post team will composite one over the last shot.
+- Footage extend: DISABLED. You MUST NOT annotate shots with EXTEND directives. If a gap needs more time, solve it by reordering or (if enabled) a placeholder, never by stretching a shot.
+- Footage reframe: ENABLED. You MAY mark shots for re-framing (zoom + pan within the same aspect ratio) when a tighter or repositioned view would land a beat better.
+  **FORMAT (non-negotiable)**: \`REFRAME zoom=<X.X> anchor=<x>,<y>: <rationale>\` — zoom in 1.0–2.5, anchor both values 0–1 (0,0 = top-left, 1,1 = bottom-right, 0.5,0.5 = center). You MUST emit BOTH \`zoom=\` AND \`anchor=\` on every REFRAME. A directive missing \`anchor=\` is invalid and will be silently dropped — a pure zoom is a symmetric center-crop, which almost never improves brand placement and usually chops off the element you wanted to emphasise.
+  **HOW TO PICK THE ANCHOR — READ THE \`BrandMark\` AND \`Subject\` LINES OF THE SHOT LOG**:
+    * If your rationale mentions establishing the brand, logo, badge, or identity: the shot MUST have a \`BrandMark: <label> centered at [x,y]\` line. Copy THOSE coordinates into \`anchor=\`. If instead the shot says \`BrandMark: none visible\`, the shot has no literal logo — DO NOT propose a brand-focused REFRAME on it. Pick a different shot to establish brand.
+    * For any other REFRAME intent (push in on driver, tighten on product, emphasise reveal), use the \`Subject: <label> centered at [x,y]\` coordinates.
+    * If the Subject line ends with \`LOOSE\`, the bbox is too wide to be a reliable anchor — DO NOT reframe this shot, pick a different one.
+  Example: if \`BrandMark: BMW roundel centered at [0.51,0.38]\` is in the shot log, \`REFRAME zoom=1.6 anchor=0.51,0.38: push in on the BMW roundel to land the brand identity\` is correct. Using \`anchor=0.5,0.5\` on that same shot crops the roundel off the top-left.
+  **GOOD examples** (anchor derived from actual subject position):
+    * \`REFRAME zoom=1.4 anchor=0.5,0.42: logo reads at 0.5,0.42 per the Graphics line — tighten on it without clipping the top\`
+    * \`REFRAME zoom=1.3 anchor=0.3,0.4: driver's face sits in the upper-left third per the Visual description; push toward it\`
+    * \`REFRAME zoom=1.5 anchor=0.5,0.85: tagline is bottom-center; crop in so the copy fills the screen\`
+  **BAD examples** (will be dropped):
+    * \`REFRAME: zoom=1.3: Opens on the logo\` — no anchor, just a center zoom
+    * \`REFRAME zoom=1.5 anchor=0.5,0.5: push in on the BMW grille\` — Graphics line said the logo was at 0.5,0.42 but the proposal used 0.5,0.5 → logo gets cropped off the top
+  **HARD RULE (ENFORCED BY PARSER)**: any REFRAME with \`zoom > 1.2\` and \`anchor=0.5,0.5\` (or within ±0.05 of dead center on both axes) will be DROPPED automatically. The parser treats that combination as "the LLM didn't bother to locate the subject" — a symmetric center-crop is almost never the right answer for a reframe. If the subject truly sits dead-center in the frame AND a modest zoom is enough, just use \`zoom=1.15 anchor=0.5,0.5\` (light enough to stay within tolerance). Otherwise pick a real anchor or don't reframe at all.
+  Aspect stays at the delivery target — do NOT change aspect ratio.
+- Color correction: ENABLED. You MUST actively consider color grading as part of the re-edit. Whenever the target metric, framework, brand brief, or ad-concept section mentions visual qualities (e.g. "bright", "high-contrast", "warm", "cool", "vibrant", "desaturated", "moody", "clinical", "cinematic"), you SHOULD annotate the shots that fail those qualities with a corrective \`COLOR:\` directive — do not silently ignore the cue. Prefix the note with \`COLOR:\` followed by any combination of these keys (all integer values in the -100..+100 range unless noted, 0 = no change): \`exposure\`, \`contrast\`, \`saturation\`, \`gain\`, \`gamma\`, \`offset\`, \`hue\` (-180..+180 degrees). Example: \`COLOR: exposure=+18 contrast=+22 saturation=-6: lift the blacks and punch the mids so the product reads on small screens\`. Another: \`COLOR: saturation=-25 gain=-8: drain the clinic scene to neutral before the product reveal\`. Keep grades subtle — ±10 to ±25 on each axis is a strong edit; ±50 is destructive. Use a maximum of 4 keys per shot; leave the rest neutral. If a shot is already on-concept, omit the directive.
+- Use original music stem: ENABLED. The source video's music has been separated via Demucs into an isolated stem. You MAY layer that music stem under ANY row of the EDL — including placeholder rows and shots that had no music in the original cut. To request this on a row, prefix the note with \`AUDIO music:\` (e.g. \`AUDIO music: carry the main theme under this shot\`).
+- Use original voiceover stem: DISABLED. Do NOT propose reusing VO lines outside their original shot. VO and the shot where it was recorded stay bound together.
+
+# Editing craft (cut-quality rules — apply on every ordering decision)
+Professional editing principles. Apply them while ordering shots and writing notes, using the shot log's \`Motion\`, \`Subject\`, and \`Cinematography\` lines as the data you reason over.
+
+- **Jump cuts** — use them to tighten pacing, sustain attention on VO-driven beats, or reinforce a modern / social tone. Avoid them when they break a continuous action mid-gesture, make the subject look erratic without intent, or read as a mistake. When the natural jump would be clumsy, cover it: cut to a different shot scale of the same subject, an environment / B-roll insert, a clean detail, or a motion-motivated cut. A visible-but-functional jump cut is fine; one that reads as an accident is not.
+- **180° / screen direction** — keep eyeline and movement direction consistent across cuts. Read each shot's \`Subject\` bbox (left- vs right-of-frame) and \`Motion.subject\` direction: a subject exiting frame-right should re-enter the next shot from frame-left, never from the same side (that reads as a reversal). Break the axis only with intent — for impact, deliberate disorientation, or when a neutral / movement-bridging shot sits between the two opposing-direction shots.
+- **Cut on motion** — a cut that lands MID-gesture or mid-camera-move feels invisible; a cut between two static beats feels like a bump. Pair shots whose \`Motion\` and \`Cinematography.camera_movement_quality\` continue across the boundary (handheld → handheld, push-in → push-in, tracking-left → tracking-left).
+- **Action continuity** — when a real-world action begins on shot N and continues on shot N+1, character position, hand / prop position, and energy level have to match. Source-ad mismatches are unavoidable in a re-edit, so when continuity would break, INSERT a cutaway between the two shots (different shot scale of the same subject, a related detail, an environment insert) instead of slamming them together. Use \`shot_size\` and \`framing\` to find a safe insert candidate in the shot log.
+- **Camera continuity** — do not slam-cut between two camera moves that fight each other (right-pan into left-pan, fast push-in into slow pull-back, locked-off into frantic handheld) unless that contradiction IS the point. Resolve the conflict with a static / neutral shot between them, or cut to a different angle of the same beat. Match-energy cuts read as deliberate; cross-energy cuts need a narrative reason.
+- **Rhythm with intent** — rhythm follows emotional intent, not mechanics. Earn density (faster scenes-per-second) on product reveals, high-energy beats, and information-dense sections; earn held shots on human, emotional, and persuasion beats. Do not blanket-accelerate every cut — frantic ≠ engaging, and a wall of sub-second cuts reads as nervous, not modern.
+- **Hook in the first 1–3s** — the opening row's pull compounds across the whole watch. Lead with the single strongest visual moment available, a provocative VO line, an immediate visible result / transformation, a human reaction (face, body language), a product-in-use action, a recognisable problem the audience identifies with, or a concrete promise. Avoid opening on a logo card, a slow establishing shot, or context that delays the point — these bleed audience before the message lands.
+- **No churn** — do not reorder for the sake of reordering, and do not chase visible difference from the source cut as a goal in itself. If a sequence in the original already serves the metric well, keep it. The proposal is judged by what it improves, not by how different it looks from the original. Equally, do not keep a weak shot just because it was in the original — strength of filming is not a reason to retain a shot that drags the metric.
+
+# Shot log (from the current cut)
+Each shot below is a multi-line block separated by \`---\`:
+- Visual: factual description of what happens on screen.
+- Chips: brand presence · emotion · framing · overall movement.
+- Motion: camera movement (with intensity) and subject motion (with direction).
+- Cinematography: precise filmmaker terms — shot size, angle, rig, lens, DOF, focus dynamics, composition, lighting style, colour palette, special techniques. Omitted when the analyzer couldn't categorise the shot.
+- Audio: verbatim voiceover (VO), music description, SFX list, ambient bed. Omitted on silent clips.
+- Graphics: on-screen text with its role (title, tagline, caption, legal_disclaimer, etc.) and logos present. Omitted on clean frames.
+- Pacing: shot boundary character (cut_type) and tempo feel.
+Use Audio.VO to anchor narrative continuity — never split a VO line across shots arbitrarily. Use Pacing + music tempo to size shot durations. Use Graphics to decide which shots MUST carry brand elements (logo, tagline, legal disclaimer) and which ones can be replaced. Use Cinematography to keep visual continuity tight: when ordering shots, alternate or match \`shot_size\` deliberately (don't bounce ECU→Wide→ECU at random), keep \`lighting_style\` consistent within a beat, and match \`composition\` lines (a leading-line shot pairs well with another that continues the line).
+
+## scene-001 · 0.00–0.96s · 0.96s
+Visual: A static, extremely low-key shot of dark, rocky ground shrouded in deep shadow. The scene is dimly lit with cool, blue-toned ambient light, revealing rough textures of stones and soil. There is no visible movement or subject action, creating a mysterious and desolate atmosphere.
+BrandMark: none visible — do NOT propose a brand-focused REFRAME on this shot
+Subject: textured rocky ground in shadow centered at [0.50,0.55] (bbox ~0.40×0.30) (LOOSE — too wide for a tight reframe; skip REFRAME on this shot)
+Chips: brand=None · emotion=tense · framing=Close-up · movement=Static
+Motion: camera=static
+Cinematography: shot=close_up · angle=low_angle · rig=locked_off · lens=normal · DOF=shallow · comp=centered · light=low_key · palette=deep navy, charcoal, dark slate
+Audio: music=low, ominous synth drone, slow tempo, suspenseful mood · SFX=[deep, resonant bass thud] · ambient=low-frequency room tone
+Pacing: tempo=slow
+
+---
+
+## scene-002 · 0.96–3.28s · 2.32s
+Visual: A low-angle, close-up shot of dark, wet gravel and stones on the ground. The scene is dimly lit with cool, blue-toned ambient light, creating a dramatic and moody atmosphere. Suddenly, a powerful blast of air or an unseen force blows across the ground, violently scattering the small rocks and dust from right to left. The camera remains locked off, capturing the sudden, explosive motion of the debris in sharp focus.
+BrandMark: none visible — do NOT propose a brand-focused REFRAME on this shot
+Subject: scattering stones centered at [0.50,0.55] (bbox ~0.12×0.21)
+Chips: brand=Text/logo on-screen · emotion=tense · framing=Close-up · movement=High
+Motion: camera=static · subject=explosive (right-to-left)
+Cinematography: shot=close_up · angle=low_angle · rig=locked_off · lens=normal · DOF=medium · comp=centered · light=low_key · palette=deep blue, charcoal, cool gray · techniques=[slow_motion]
+Audio: SFX=[low rumble of an engine, whoosh of wind and scattering rocks] · ambient=low-frequency hum
+Graphics: text (title)="THE RISE OF ELECTRIC" at [0.50,0.50]
+Pacing: cut=hard_cut · tempo=fast
+
+---
+
+## scene-003 · 3.28–6.80s · 3.52s
+Optimized: V01 — on-screen graphics (text / logo overlays) have been removed; the Graphics block below describes the ORIGINAL overlays, which are no longer visible on the active clip.
+Visual: A blue Mercedes-Benz G-Class SUV drives away from the camera, emerging from a thick bank of fog. The setting is a dramatic mountain pass at dusk, with jagged peaks silhouetted against a soft, twilight sky. The camera tracks backward in a smooth, aerial-like motion, revealing the vast, rugged landscape as the vehicle disappears into the distance.
+BrandMark: none visible — do NOT propose a brand-focused REFRAME on this shot
+Subject: Mercedes-Benz G-Class SUV driving away centered at [0.61,0.50] (bbox ~0.22×0.30) (LOOSE — too wide for a tight reframe; skip REFRAME on this shot)
+Chips: brand=Product visible · emotion=freedom · framing=Wide · movement=Moderate
+Motion: camera=pull_out (moderate) · subject=moderate (away from camera)
+Cinematography: shot=long · rig=steadicam · lens=normal · DOF=deep · comp=centered · light=blue_hour · palette=cool blue, slate gray, soft pink highlights
+Audio: music=low, atmospheric synth drone with a subtle, rhythmic pulse, creating a sense of mystery and anticipation · SFX=[deep, muffled engine hum, whoosh of wind through the mountains] · ambient=soft wind and distant mountain atmosphere
+Graphics: text (legal_disclaimer)="Mercedes-Benz G 580 mit EQ-Technologie | Energieverbrauch kombiniert:
+30,3-27,7 kWh/100 km | CO₂-Emissionen kombiniert: 0 g/km | CO₂-Klasse: A" at [0.50,0.87]
+Pacing: cut=hard_cut · tempo=slow
+
+---
+
+## scene-004 · 6.80–7.92s · 1.12s
+Optimized: V01 — on-screen graphics (text / logo overlays) have been removed; the Graphics block below describes the ORIGINAL overlays, which are no longer visible on the active clip.
+Visual: An overhead, high-angle shot captures two climbers in dark, hooded jackets ascending a steep, textured rock face. The scene is dimly lit with cool, blue-toned light, casting deep shadows across the craggy stone. The camera remains static as the climbers slowly scale the vertical wall using ropes.
+BrandMark: none visible — do NOT propose a brand-focused REFRAME on this shot
+Subject: climber ascending rock face centered at [0.58,0.38] (bbox ~0.14×0.33) (LOOSE — too wide for a tight reframe; skip REFRAME on this shot)
+Chips: brand=Text/logo on-screen · emotion=focused · framing=Wide · movement=Slow
+Motion: camera=static · subject=slow (upward)
+Cinematography: shot=long · angle=overhead · rig=locked_off · lens=normal · DOF=deep · comp=diagonal · light=low_key · palette=deep slate, cool blue, dark charcoal
+Audio: music=low, atmospheric ambient drone, slow tempo, tense mood · ambient=subtle wind and rope tension hum
+Graphics: text (legal_disclaimer)="Mercedes-Benz G 580 mit EQ-Technologie | Energieverbrauch kombiniert:
+30,3-27,7 kWh/100 km | CO2-Emissionen kombiniert: 0 g/km | CO2-Klasse: A" at [0.50,0.87]
+Pacing: tempo=slow
+
+---
+
+## scene-005 · 7.92–8.48s · 0.56s
+Optimized: V01 — on-screen graphics (text / logo overlays) have been removed; the Graphics block below describes the ORIGINAL overlays, which are no longer visible on the active clip.
+Visual: A close-up shot of a blue Mercedes-Benz G-Class wheel and front fender navigating a dark, rocky terrain. The vehicle's metallic blue paint contrasts with the black multi-spoke wheel and the dark, textured ground. The camera is locked off, capturing the wheel's rotation and suspension movement as it rolls over the uneven surface under low-key, dramatic lighting.
+BrandMark: Mercedes-Benz star logo on the wheel hub centered at [0.42,0.59] (bbox ~0.04×0.08) — use this anchor for any brand-focused REFRAME
+Subject: rotating black wheel of the blue vehicle centered at [0.44,0.53] (bbox ~0.43×0.65) (LOOSE — too wide for a tight reframe; skip REFRAME on this shot)
+Chips: brand=Product visible · emotion=technical · framing=Close-up · movement=Slow
+Motion: camera=static · subject=slow
+Cinematography: shot=close_up · angle=low_angle · rig=locked_off · lens=normal · DOF=medium · comp=diagonal · light=low_key · palette=deep blue, dark charcoal, metallic black
+Audio: SFX=[low rumble of a vehicle engine, crunching sound of tires on gravel] · ambient=low mechanical hum
+Graphics: text (legal_disclaimer)="Mercedes-Benz G 580 mit EQ-Technologie | Energieverbrauch kombiniert:
+30,3-27,7 kWh/100 km | CO2-Emissionen kombiniert: 0 g/km | CO2-Klasse: A" at [0.50,0.88]
+Pacing: tempo=slow
+
+---
+
+## scene-006 · 8.48–9.36s · 0.88s
+Optimized: V01 — on-screen graphics (text / logo overlays) have been removed; the Graphics block below describes the ORIGINAL overlays, which are no longer visible on the active clip.
+Visual: A low-angle, dynamic tracking shot of a blue Mercedes-Benz G-Class climbing a steep, rocky mountain path at dusk. The vehicle is angled sharply, navigating rugged terrain under a dramatic, cloudy sky with soft, cool twilight. The camera tracks alongside the vehicle, emphasizing its off-road capability with a shallow depth of field that keeps the car sharp against the soft mountain backdrop.
+BrandMark: Mercedes-Benz star logo on grille centered at [0.43,0.29] (bbox ~0.04×0.06) — use this anchor for any brand-focused REFRAME
+Subject: Mercedes-Benz G-Class climbing rocky terrain centered at [0.49,0.45] (bbox ~0.35×0.43) (LOOSE — too wide for a tight reframe; skip REFRAME on this shot)
+Chips: brand=Product visible · emotion=freedom · framing=Wide · movement=High
+Motion: camera=vehicle_tracking (moderate) · subject=moderate (toward camera)
+Cinematography: shot=medium_long · angle=low_angle · rig=vehicle_mount · lens=wide · DOF=shallow · focus=focus_pull · comp=diagonal · light=blue_hour · palette=deep blue, slate gray, warm twilight orange
+Graphics: text (legal_disclaimer)="Mercedes-Benz G 580 mit EQ-Technologie | Energieverbrauch kombiniert:
+30,3-27,7 kWh/100 km | CO₂-Emissionen kombiniert: 0 g/km | CO₂-Klasse: A" at [0.50,0.87]
+Pacing: tempo=mid
+
+---
+
+## scene-007 · 9.36–11.20s · 1.84s
+Visual: A blue Mercedes-Benz G-Class SUV climbs a steep, rocky incline inside a dark, cavernous environment. The vehicle's headlights illuminate the rugged terrain ahead, casting dramatic shadows against the textured rock face. The camera tracks the vehicle's upward progress with a smooth, low-angle tracking shot, emphasizing the steepness of the slope and the car's off-road capability.
+BrandMark: none visible — do NOT propose a brand-focused REFRAME on this shot
+Subject: blue Mercedes-Benz G-Class SUV climbing steep rocks centered at [0.46,0.50] (bbox ~0.29×0.29)
+Chips: brand=Product visible · emotion=focused · framing=Medium · movement=Moderate
+Motion: camera=truck_right (moderate) · subject=moderate (left-to-right)
+Cinematography: shot=medium_long · angle=low_angle · rig=gimbal · lens=normal · DOF=medium · focus=focus_pull · comp=diagonal · light=low_key · palette=deep blue, slate gray, warm headlight glow
+Audio: music=low, atmospheric synth drone, slow tempo, mysterious mood · SFX=[low rumble of an engine, tires crunching on loose gravel] · ambient=subtle cave echo and low-frequency hum
+Pacing: cut=hard_cut · tempo=slow
+
+---
+
+## scene-008 · 11.20–12.12s · 0.92s
+Visual: A medium close-up shot captures a person in dark blue overalls climbing a wet, dark rock face. The scene is dimly lit with a cool, blue-toned key light that accentuates the texture of the glistening rock and the fabric of the clothing. The camera remains static, focusing on the climber's effort as they ascend.
+BrandMark: none visible — do NOT propose a brand-focused REFRAME on this shot
+Subject: climber in blue overalls centered at [0.34,0.50] (bbox ~0.68×0.99) (LOOSE — too wide for a tight reframe; skip REFRAME on this shot)
+Chips: brand=None · emotion=focused · framing=Medium · movement=Slow
+Motion: camera=static · subject=slow (upward)
+Cinematography: shot=medium_close_up · rig=locked_off · lens=normal · DOF=medium · comp=diagonal · light=low_key · palette=deep blue, dark charcoal, cool white highlights
+Audio: music=low-frequency ambient drone, tense and atmospheric · SFX=[squelch of wet fabric and movement] · ambient=subtle dripping water
+Pacing: tempo=slow
+
+---
+
+## scene-009 · 12.12–12.64s · 0.52s
+Visual: An extreme close-up shot captures a dark, textured, rocky surface sliding diagonally across the frame. The lighting is low-key and dramatic, casting deep shadows and highlighting the rough, craggy texture of the material. The camera remains locked-off as the dark mass moves rapidly from the top right toward the bottom left, kicking up fine dust and debris.
+BrandMark: none visible — do NOT propose a brand-focused REFRAME on this shot
+Subject: textured rock surface centered at [0.52,0.15] (bbox ~0.24×0.31) (LOOSE — too wide for a tight reframe; skip REFRAME on this shot)
+Chips: brand=None · emotion=tense · framing=ECU · movement=High
+Motion: camera=static · subject=fast (top-right to bottom-left)
+Cinematography: shot=extreme_close_up · angle=high_angle · rig=locked_off · lens=macro · DOF=shallow · comp=diagonal · light=low_key · palette=charcoal, dark slate, cool gray
+Audio: music=low, ominous ambient drone · SFX=[scraping and grinding of heavy stone] · ambient=low-frequency rumble
+Pacing: tempo=mid
+
+---
+
+## scene-010 · 12.64–13.44s · 0.80s
+Visual: A shallow-DOF medium close-up captures two figures in heavy winter gear on a rocky, dark terrain at night. One figure in the foreground, wearing a light-colored jacket with orange straps, leans forward while another hooded figure in the background reaches out to assist. The scene is lit with a cool, blue-toned key light, creating a dramatic, low-key atmosphere.
+BrandMark: none visible — do NOT propose a brand-focused REFRAME on this shot
+Subject: hooded figure reaching out centered at [0.78,0.54] (bbox ~0.44×0.73) (LOOSE — too wide for a tight reframe; skip REFRAME on this shot)
+Chips: brand=None · emotion=tense · framing=Medium · movement=Slow
+Motion: camera=static · subject=slow
+Cinematography: shot=medium_close_up · rig=locked_off · lens=normal · DOF=shallow · comp=diagonal · light=low_key · palette=cool blue, slate gray, muted orange
+Audio: music=low-frequency ambient drone, tense, slow tempo · ambient=subtle wind howl
+Pacing: tempo=slow
+
+---
+
+## scene-011 · 13.44–14.84s · 1.40s
+Visual: A blue Mercedes-Benz G-Class SUV drives dynamically across a dark, rocky terrain under a twilight sky. The camera is positioned at a low, canted Dutch angle, tracking the vehicle's movement from left to right with a shallow depth of field. The lighting is cool and atmospheric, suggesting the blue hour, with soft ambient light reflecting off the car's metallic body.
+BrandMark: none visible — do NOT propose a brand-focused REFRAME on this shot
+Subject: blue Mercedes-Benz G-Class SUV centered at [0.48,0.55] (bbox ~0.96×0.89) (LOOSE — too wide for a tight reframe; skip REFRAME on this shot)
+Chips: brand=Product visible · emotion=adventure · framing=Medium · movement=High
+Motion: camera=vehicle_tracking (moderate) · subject=moderate (left-to-right)
+Cinematography: shot=medium_long · angle=dutch_angle · rig=vehicle_mount · lens=normal · DOF=shallow · focus=focus_pull · comp=diagonal · light=blue_hour · palette=deep blue, slate gray, dark charcoal
+Audio: SFX=[deep engine rumble] · ambient=wind and outdoor atmosphere
+Pacing: tempo=mid
+
+---
+
+## scene-012 · 14.84–16.24s · 1.40s
+Visual: An aerial drone shot flies rapidly through a dramatic mountain pass. The towering, snow-dusted peaks are shrouded in thick, moving clouds under an overcast sky. The camera sweeps forward and downward, creating a sense of high-speed flight through the rugged, cold landscape.
+BrandMark: none visible — do NOT propose a brand-focused REFRAME on this shot
+Subject: snow-dusted mountain peak centered at [0.71,0.24] (bbox ~0.33×0.41) (LOOSE — too wide for a tight reframe; skip REFRAME on this shot)
+Chips: brand=None · emotion=awe · framing=Aerial · movement=High
+Motion: camera=aerial (aggressive) · subject=slow
+Cinematography: shot=extreme_long · angle=high_angle · rig=aerial_drone · lens=wide · DOF=deep · comp=leading_lines · light=overcast · palette=slate gray, icy white, muted blue
+Audio: music=low, atmospheric drone with a subtle, tense rumble · SFX=[deep wind rush sound effect] · ambient=wind howling
+Pacing: tempo=fast
+
+---
+
+## scene-013 · 16.24–17.12s · 0.88s
+Visual: A low-angle, close-up tracking shot captures the front left wheel of a blue Mercedes-Benz G-Class as it navigates a rugged, rocky terrain. The dark, multi-spoke wheel spins rapidly, kicking up loose gravel and dust against a dramatic, overcast mountain backdrop. The camera is mounted low and close to the tire, creating a dynamic sense of speed and power with a shallow depth of field.
+BrandMark: Mercedes-Benz star logo on the wheel hub centered at [0.48,0.53] (bbox ~0.03×0.08) — use this anchor for any brand-focused REFRAME
+Subject: spinning front wheel of the blue SUV centered at [0.42,0.52] (bbox ~0.36×0.75) (LOOSE — too wide for a tight reframe; skip REFRAME on this shot)
+Chips: brand=Product visible · emotion=powerful · framing=Close-up · movement=High
+Motion: camera=vehicle_tracking (moderate) · subject=fast (toward camera)
+Cinematography: shot=close_up · angle=low_angle · rig=vehicle_mount · lens=wide · DOF=shallow · comp=diagonal · light=overcast · palette=deep blue, dark charcoal, slate gray
+Audio: SFX=[low rumble of a car engine, crunching of gravel and rocks under tires] · ambient=wind and outdoor atmosphere
+Pacing: tempo=fast
+
+---
+
+## scene-014 · 17.12–19.72s · 2.60s
+Visual: A low-angle, dynamic tracking shot captures a dark Mercedes-Benz G-Class driving through dense fog and rocky terrain. The scene transitions from a thick cloud cover to reveal the vehicle emerging onto a rugged mountain path at dusk. The camera tracks backward, maintaining a low perspective that emphasizes the vehicle's powerful stance and bright headlights.
+BrandMark: Mercedes-Benz star logo centered at [0.50,0.51] (bbox ~0.03×0.05) — use this anchor for any brand-focused REFRAME
+Subject: Mercedes-Benz G-Class centered at [0.44,0.55] (bbox ~0.51×0.57) (LOOSE — too wide for a tight reframe; skip REFRAME on this shot)
+Chips: brand=Driver/face visible · emotion=focused · framing=Medium · movement=Moderate
+Motion: camera=pull_out (moderate) · subject=moderate (toward camera)
+Cinematography: shot=medium_long · angle=low_angle · rig=vehicle_mount · lens=wide · DOF=medium · comp=centered · light=blue_hour · palette=cool blue, slate gray, bright white headlights
+Audio: music=low, dramatic ambient drone with mechanical whirring · SFX=[low engine hum, gravel crunching under tires] · ambient=wind and distant mountain atmosphere
+Pacing: cut=hard_cut · tempo=mid
+
+---
+
+## scene-015 · 19.72–35.80s · 16.08s
+End-card: TRUE — this shot is the ad's brand-signature frame. Use it AS-IS in the cut: do not annotate it with REFRAME, COLOR, EXTEND, or any directive. If the metric calls for ending on the brand, place this row last with no modifications. If you don't need a brand sign-off, simply omit this shot. Never propose generating a replacement end-card via a placeholder.
+Visual: An extreme long shot captures a dramatic, snow-dusted mountain peak piercing a cloudy sky. The camera pulls back slowly in a smooth aerial drone movement, revealing a bright sun low on the horizon casting a warm, golden flare. Post-production text overlays appear on the right side of the frame, followed by a call-to-action on the left.
+BrandMark: none visible — do NOT propose a brand-focused REFRAME on this shot
+Subject: mountain peak centered at [0.44,0.46] (bbox ~0.22×0.37) (LOOSE — too wide for a tight reframe; skip REFRAME on this shot)
+Chips: brand=Text/logo on-screen · emotion=awe · framing=Aerial · movement=Slow
+Motion: camera=pull_out (subtle)
+Cinematography: shot=extreme_long · rig=aerial_drone · lens=wide · DOF=deep · comp=rule_of_thirds · light=golden_hour · palette=cool blue, slate gray, warm gold, white
+Audio: music=atmospheric synth pad with a low, resonant drone, slow tempo, mysterious and grand mood · SFX=[low rumble of wind or engine, subtle digital chime] · ambient=low-frequency wind hum
+Graphics: text (tagline)="The Geländewagen. Electrified.
+Subscribe" at [0.67,0.49] · other=A blue chevron pointing right, acting as an icon next to the 'Subscribe' text.
+Pacing: cut=hard_cut · tempo=slow
+
+# Your task
+Propose a new edit decision list that improves Attention. The tools available to you depend on the Capabilities block above:
+- **Always**: reorder shots, cut weak moments, promote high-value shots to prime timecodes (first and last seconds).
+- **Placeholder rows**: add 1–3 NEW placeholder shots if a structural gap truly needs one.
+- **Reframe** (\`REFRAME:\` directive): tighten or reposition a shot when the current framing buries a beat.
+- **Color grading** (\`COLOR:\` directive): correct shots that fight the target metric / brand mood. If the framework or brief explicitly calls for a look (bright, warm, moody, desaturated, etc), you MUST apply COLOR to the shots that miss it — reordering alone will not fix an off-concept grade.
+- **Music stem** (\`AUDIO music:\` directive): layer the isolated music stem anywhere.
+
+**HARD BUDGET — 35.8s total (acceptable 30.4–41.2s).**
+You have 15 scenes, 35.8s of source footage, average 2.39s per shot.
+Each row's on-timeline duration = source-scene length.
+You can reach the target using existing scenes alone — include enough of them that the natural durations sum to ~35.8s.
+Before returning, SUM the on-timeline durations of every row (source-scene durations + placeholder rows). If the sum is below 30.4s, ADD more material until you're in range. Do not return a short EDL.
+
+Return ONLY a JSON object in this schema:
+
+{
+  "rationale": "2–4 sentence overall strategy explaining how this re-edit improves Attention.",
+  "edl": [
+    {
+      "index": 1,
+      "kind": "original",
+      "sourceSceneId": "scene-001",
+      "newTcIn": 0.00,
+      "newTcOut": 2.00,
+      "note": "1 sentence on why this shot is here at this timecode (rationale, not a prompt)."
+    },
+    {
+      "index": 2,
+      "kind": "placeholder",
+      "sourceSceneId": null,
+      "newTcIn": 2.00,
+      "newTcOut": 3.50,
+      "note": "Close-up of a hand gripping a black leather steering wheel with the chrome Honda logo centered in-frame; subtle tilt-up as the grip tightens; golden-hour warm side-light; shallow depth of field with the dashboard softly out of focus.",
+      "referenceFrame": { "sourceSceneId": "scene-003", "framePosition": "end" }
+    }
+  ]
+}
+
+Rules:
+- "original" rows must reference a sourceSceneId that exists in the shot log.
+- "placeholder" rows have sourceSceneId: null AND a required referenceFrame object pointing to an existing shot (see the Capabilities block above for how to choose it). framePosition is one of "start" | "middle" | "end".
+- Consecutive rows must be contiguous (newTcIn of row N+1 equals newTcOut of row N).
+- First row starts at 0.
+- JSON only. No prose around the JSON. No markdown fences.
+
+PLACEHOLDER QUALITY (critical — these notes are fed directly to a video-generation model that has NO access to the rest of the cut or to any other shot. The note is the model's ENTIRE world.):
+- Write each placeholder's note as a concrete DIRECTOR'S SHOT INSTRUCTION, not a meta description ("add a shot of X" is forbidden).
+- **SELF-CONTAINED — HARD RULE.** The downstream i2v model only sees this single string. Phrases like "matching the surrounding shots", "same look as the previous scene", "continuing the previous camera move", "in keeping with the rest of the edit", "consistent with the cut", "as established earlier" are FORBIDDEN — they evaluate to nothing for the model and waste tokens. INLINE every visual detail you'd want the model to copy. If the prior shot is a cold-blue twilight handheld push-in on a rocky ridge, write that out: "cold blue twilight, handheld micro-shake, slow forward push, rocky alpine ridge in fog". Never refer to another shot — describe its properties directly inside this note.
+- **Style anchor — REQUIRED first clause.** Open every note with the rendering register so the i2v model latches onto it before anything else. Pick from (or combine): "realistic, cinematic", "high-contrast commercial polish", "documentary handheld grit", "moody anamorphic film look", "glossy product hero", "dynamic action-cam energy", "soft naturalistic ad cinematography". Do NOT write "matching the surrounding look" — name the look itself.
+- **Camera-motion continuity — REQUIRED, inlined.** Read the Motion field of the shots IMMEDIATELY BEFORE and AFTER this placeholder in the EDL. Translate that continuity into CONCRETE motion words inside this note. Never sandwich a locked-off static shot between two dynamic shots, or drop a high-motion shot between two contemplative locked frames. Rules of thumb:
+        * If both neighbours are MOVING (push-in, pan, dolly, handheld): write the exact compatible move ("slow forward dolly, gentle handheld breath, left-to-right drift at walking pace") — do NOT write "match the previous shot's movement".
+        * If both neighbours are STATIC / LOCKED: write "locked-off, tripod-stable, no camera movement" or "barely-perceptible 1% drift". Never describe motion you don't want.
+        * If neighbours DIFFER (static → dynamic, or vice versa): write a bridge in concrete terms ("starts locked-off then builds into a confident forward push at the halfway mark").
+- **Inline the look itself, never reference other shots.** Include explicit values for: lighting (key direction, hardness, color temperature in K or words like "warm tungsten 3200K", "overcast 6500K", "magic-hour orange", "moonlit cyan"), color palette (2-4 dominant colors), atmosphere (haze / clear / smoke / rain), lens feel ("anamorphic flare", "telephoto compression", "wide 24mm distortion", "shallow depth of field"), grain/texture if relevant.
+- After style + motion + look, include: subject + action, framing (ECU / close-up / medium / wide / aerial), motion intensity + direction, time of day.
+- 35–70 words per note. Concrete nouns + verbs, never adjectives like "cool", "epic", "beautiful", "stunning". Specific over evocative ("a winding mountain road at golden hour with low fog drifting across the asphalt, slow forward dolly at 5km/h, warm amber 3000K key from camera-left, shallow depth of field on the centre line" beats "cool-looking landscape shot matching the surrounding mood").
+- HARD BAN, restated for emphasis: NO products, NO brand logos / marks / badges / wordmarks, NO close-ups of branded surfaces (steering wheels, grilles, packaging, screens). NO on-screen text, NO end-cards, NO graphic overlays. NO faces if face-generation is disabled above. These rules override anything the brief or the metric framework says — products and graphics are out of scope for generated placeholders.
+- Generated placeholders are CONTEXT cuts: landscapes, environments, hands, silhouettes, atmospheres, abstract motion (light rays, dust, wind in grass), aerial reveals, weather, time-of-day shifts. They exist to set mood / bridge beats / extend a moment — NEVER to be the hero shot.
+- If you can't write a placeholder that obeys these rules, return one fewer placeholder. Quality over quota.
+- Banned referential phrases (auto-rejected): "matching", "as in", "consistent with", "continuing", "in keeping with", "same look as", "established earlier", "the rest of the cut", "the surrounding shots". Also banned content-wise: "generic brand shot", "establishing shot", "product hero", "cutaway", "end-card", "brand signature".
+- If the same placeholder intent repeats, vary the angle/framing so the final edit doesn't feel looped."
+`;

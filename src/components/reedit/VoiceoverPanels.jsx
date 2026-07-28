@@ -157,6 +157,9 @@ function VoiceoverSegmentRow({ seg, selected, autoEdit, voPlan, onToggle, onEdit
 export function OriginalVoiceoverPanel({ analysis, voPlan, onChangeVoPlan, proposerPickedIds, capabilities, targetDurationSec, sourceVideo }) {
   const segments = analysis?.overall?.voiceover_segments
   const usableSegments = Array.isArray(segments) ? segments : []
+  // Hooks must run before any early return (Rules of Hooks).
+  const [vadRunning, setVadRunning] = useState(false)
+  const [vadError, setVadError] = useState(null)
   if (!capabilities?.useOriginalVoiceover) return null
 
   if (usableSegments.length === 0) {
@@ -219,9 +222,8 @@ export function OriginalVoiceoverPanel({ analysis, voPlan, onChangeVoPlan, propo
   // Voice-activity-detection — snaps each segment's start to the
   // closest energy onset in the VO stem. Reuses the main-process
   // waveform service (ffmpeg) for high-resolution peaks instead of
-  // decoding in the renderer.
-  const [vadRunning, setVadRunning] = useState(false)
-  const [vadError, setVadError] = useState(null)
+  // decoding in the renderer. (vadRunning/vadError state lives above
+  // the early return with the other hooks.)
   const stemPath = sourceVideo?.stems?.vocalsPath || null
   const stemUrl = stemPath ? `comfystudio://${encodeURIComponent(stemPath)}` : null
   const runVadSnap = async () => {

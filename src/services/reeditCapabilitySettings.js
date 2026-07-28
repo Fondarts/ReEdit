@@ -23,6 +23,31 @@ export const I2V_MODEL_OPTIONS = [
   { id: 'wan-2.2-svi', label: 'WAN 2.2 14B SVI Pro (extend-aware, video-context)' },
 ]
 
+// Extend-capable models. Local last-frame i2v drifts past ~2 s, so those
+// cap at 2.0; cloud video-context extension (Vidu sees the whole clip's
+// motion) holds up to ~5 s. The ceiling is enforced three times: in the
+// proposer prompt, in the UI slider, and as a clamp in main.js.
+export const EXTEND_MODEL_OPTIONS = [
+  { id: 'ltx-2.3', label: 'LTX 2.3 (local, last-frame)', maxExtendSec: 2.0 },
+  { id: 'wan-2.2-14b', label: 'WAN 2.2 14B (local, last-frame)', maxExtendSec: 2.0 },
+  { id: 'wan-2.2-svi', label: 'WAN 2.2 SVI Pro (local, video-context)', maxExtendSec: 2.0 },
+  { id: 'viduq2-pro-extend', label: 'Vidu Q2 Extend (cloud, video-context)', maxExtendSec: 5.0 },
+]
+
+export function maxExtendSecForModel(modelId) {
+  const opt = EXTEND_MODEL_OPTIONS.find((o) => o.id === modelId)
+  return opt?.maxExtendSec ?? 2.0
+}
+
+// Outpaint engines for the reframe capability. Crop-reframe can only
+// remove pixels; outpaint fills NEW canvas so 9:16 footage becomes true
+// 16:9. Luma runs on Comfy Cloud (≤30 s source, 1080p out); the LTX
+// IC-LoRA path runs on local ComfyUI using the bundled workflow.
+export const OUTPAINT_MODEL_OPTIONS = [
+  { id: 'luma-ray-3.2-reframe', label: 'Luma Ray 3.2 Reframe (cloud — one shot, 1080p)' },
+  { id: 'ltx-ic-local', label: 'LTX 2.3 IC-LoRA Outpaint (local — needs outpaint LoRA)' },
+]
+
 export const UPSCALE_MODEL_OPTIONS = [
   { id: 'RealESRGAN_x4plus.pth', label: 'RealESRGAN x4+ (default — works on Cloud + Local)' },
   { id: '4x_NMKD-Siax_200k.pth', label: '4x NMKD-Siax 200k (sharper, local only)' },
@@ -67,6 +92,11 @@ export const DEFAULT_CAPABILITY_SETTINGS = Object.freeze({
     // bakes the zoom+crop into a full-resolution MP4). Stored here so
     // main.js can read it per-run instead of hard-coding.
     upscaleModel: 'RealESRGAN_x4plus.pth',
+    // 'crop' zooms/crops inside the existing frame (default, free);
+    // 'outpaint' generates new canvas to reach a different aspect.
+    mode: 'crop',
+    outpaintModel: 'luma-ray-3.2-reframe',
+    outpaintTargetAspect: '16:9',
   },
   // Music + VO knobs are stubbed for now — UI shows "coming soon"
   // so the section layout stays stable as we flesh them out.

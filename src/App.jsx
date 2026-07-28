@@ -2,10 +2,6 @@ import { useState, useCallback, useEffect, useRef } from 'react'
 import { RefreshCw, ExternalLink } from 'lucide-react'
 import TitleBar from './components/TitleBar'
 import ExportPanel from './components/ExportPanel'
-import GenerateWorkspace from './components/GenerateWorkspace'
-import LLMAssistantWorkspace from './components/LLMAssistantWorkspace'
-import MOGWorkspace from './components/MOGWorkspace'
-import StockPanel from './components/StockPanel'
 import WorkspaceErrorBoundary from './components/WorkspaceErrorBoundary'
 import LeftPanel from './components/LeftPanel'
 import PreviewPanel from './components/PreviewPanel'
@@ -19,8 +15,7 @@ import SettingsModal from './components/SettingsModal'
 import WelcomeScreen from './components/WelcomeScreen'
 import BottomBar from './components/BottomBar'
 import useProjectStore from './stores/projectStore'
-import { WORKFLOW_SETUP_SECTION_ID } from './services/workflowSetupManager'
-import { REEDIT_MODE, REEDIT_FULLSCREEN_TABS, pickInitialReeditTab } from './config/mode'
+import { REEDIT_FULLSCREEN_TABS, NON_EDITOR_TAB_IDS, pickInitialReeditTab } from './config/mode'
 import ImportVideoView from './components/reedit/ImportVideoView'
 import AnalysisView from './components/reedit/AnalysisView'
 import OptimizationView from './components/reedit/OptimizationView'
@@ -152,14 +147,7 @@ function App() {
     if (!showComfyUiTab && mainTab === 'comfyui') setMainTab('editor')
   }, [showComfyUiTab, mainTab])
 
-  // When user sends timeline frame to Generate (right-click preview → Extend with AI / Starting keyframe for AI)
-  useEffect(() => {
-    const handler = () => setMainTab('generate')
-    window.addEventListener('comfystudio-open-generate-with-frame', handler)
-    return () => window.removeEventListener('comfystudio-open-generate-with-frame', handler)
-  }, [])
-
-  // Allow Generate tab to open ComfyUI directly (used for workflow import guidance).
+  // Allow opening the ComfyUI tab directly (used for workflow import guidance).
   useEffect(() => {
     const handler = () => {
       if (showComfyUiTab) {
@@ -203,7 +191,7 @@ function App() {
     } catch (_) { /* ignore */ }
   }, [])
 
-  const isFullScreenTab = mainTab === 'export' || mainTab === 'generate' || mainTab === 'mog' || mainTab === 'llm-assistant' || mainTab === 'stock' || (showComfyUiTab && mainTab === 'comfyui') || (REEDIT_MODE && REEDIT_FULLSCREEN_TABS.has(mainTab))
+  const isFullScreenTab = mainTab === 'export' || (showComfyUiTab && mainTab === 'comfyui') || REEDIT_FULLSCREEN_TABS.has(mainTab)
   // Editor layout insets (used for content when on Editor, and always for tab bar so it doesn't shift)
   const editorLeftInset = leftPanelExpanded ? ICON_BAR_WIDTH + leftPanelWidth : ICON_BAR_WIDTH
   const editorRightInset = inspectorExpanded ? ICON_BAR_WIDTH + inspectorWidth : ICON_BAR_WIDTH
@@ -226,7 +214,7 @@ function App() {
     initialize()
   }, [initialize])
 
-  // Under REEDIT_MODE the first surface after opening/creating a project
+  // The first surface after opening/creating a project
   // is not the timeline — it's the re-edit pipeline. We land on the
   // right stage (Import / Analysis) only when the user is opening
   // their FIRST project this session (i.e. coming out of WelcomeScreen
@@ -238,7 +226,6 @@ function App() {
   // from "switched to a different project").
   const lastSeenProjectNameRef = useRef(null)
   useEffect(() => {
-    if (!REEDIT_MODE) return
     if (!currentProject) {
       lastSeenProjectNameRef.current = null
       return
@@ -390,25 +377,9 @@ function App() {
             />
           </div>
         )}
-        {/* Generate tab – keep mounted so queue/progress survives tab switches */}
-        <div
-          className="flex-1 flex flex-col min-h-0 overflow-hidden bg-sf-dark-950"
-          style={{ display: mainTab === 'generate' ? 'flex' : 'none' }}
-        >
-          <GenerateWorkspace onOpenWorkflowSetup={() => openSettingsModal(WORKFLOW_SETUP_SECTION_ID)} />
-        </div>
-        {mainTab === 'mog' && (
-          <div className="flex-1 flex flex-col min-h-0 overflow-hidden bg-sf-dark-950">
-            <WorkspaceErrorBoundary>
-              <MOGWorkspace />
-            </WorkspaceErrorBoundary>
-          </div>
-        )}
         {/* Full-screen overlay views without long-running operations. Mount
             only when active — nothing important dies when they unmount. */}
         {mainTab === 'export' && <ExportPanel />}
-        {mainTab === 'stock' && <StockPanel />}
-        {mainTab === 'llm-assistant' && <LLMAssistantWorkspace />}
 
         {/* Re-edit pipeline views. Kept MOUNTED across tab switches (only
             `display` toggles visibility) so that:
@@ -481,14 +452,14 @@ function App() {
             entirely. Staying mounted keeps the InspectorPanel's
             "Commit reframe" progress listener alive while the user
             flips over to Analysis to queue another job. */}
-        {![ 'projects', 'import', 'analysis', 'optimization', 'proposal', 'review', 'export', 'stock', 'llm-assistant', 'comfyui', 'generate', 'mog' ].includes(mainTab) && uiMode === 'lucky' && (
+        {!NON_EDITOR_TAB_IDS.includes(mainTab) && uiMode === 'lucky' && (
           <EditorSimple
             timelineHeight={timelineHeight}
             onTimelineResize={handleTimelineResize}
             onOpenAudioGenerate={openAudioModal}
           />
         )}
-        {![ 'projects', 'import', 'analysis', 'optimization', 'proposal', 'review', 'export', 'stock', 'llm-assistant', 'comfyui', 'generate', 'mog' ].includes(mainTab) && uiMode === 'advanced' && (
+        {!NON_EDITOR_TAB_IDS.includes(mainTab) && uiMode === 'advanced' && (
           <>
             {/* Left Panel - Full Height Mode (spans entire left side) */}
             {leftPanelFullHeight && (

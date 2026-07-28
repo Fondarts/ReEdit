@@ -235,14 +235,14 @@ function splitRationaleDirectives(note) {
         .replace(/zoom\s*=\s*[\d.]+/gi, '')
         .replace(/anchor\s*=\s*[\d.]+\s*,\s*[\d.]+/gi, '')
     } else if (type === 'extend') {
-      const sec = /([+\-]?[\d.]+)\s*s?\b/.exec(block)
+      const sec = /([+-]?[\d.]+)\s*s?\b/.exec(block)
       if (sec) params = `+${parseFloat(sec[1]).toFixed(1)}s`
-      rationale = block.replace(/[+\-]?[\d.]+\s*s?\b/, '')
+      rationale = block.replace(/[+-]?[\d.]+\s*s?\b/, '')
     } else if (type === 'color') {
       // Color params run `key=value` pairs (saturation=+10 contrast=+15 ...)
       // up until the first prose sentence. We grab every key=value pair
       // at the head of the block, then the rest is the rationale.
-      const head = /^[\s:]*((?:[a-zA-Z_]+\s*=\s*[+\-]?[\d.]+\s*)+)/i.exec(block)
+      const head = /^[\s:]*((?:[a-zA-Z_]+\s*=\s*[+-]?[\d.]+\s*)+)/i.exec(block)
       if (head) {
         params = head[1].trim().replace(/\s+/g, ' ')
         rationale = block.slice(head[0].length)
