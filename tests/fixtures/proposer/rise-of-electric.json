@@ -1,0 +1,2240 @@
+{
+  "source": "project.comfystudio",
+  "scenes": [
+    {
+      "index": 1,
+      "id": "scene-001",
+      "tcIn": 0,
+      "tcOut": 0.96,
+      "duration": 0.96,
+      "thumbnail": "F:/Proyectos/Kissd ReEdit/The Rise of Electric/.reedit/scenes/scene-001.jpg",
+      "caption": "A static, extremely low-key shot of dark, rocky ground shrouded in deep shadow. The scene is dimly lit with cool, blue-toned ambient light, revealing rough textures of stones and soil. There is no visible movement or subject action, creating a mysterious and desolate atmosphere.",
+      "structured": {
+        "visual": "A static, extremely low-key shot of dark, rocky ground shrouded in deep shadow. The scene is dimly lit with cool, blue-toned ambient light, revealing rough textures of stones and soil. There is no visible movement or subject action, creating a mysterious and desolate atmosphere.",
+        "brand": "None",
+        "emotion": "tense",
+        "framing": "Close-up",
+        "movement": "Static",
+        "audio": {
+          "has_voiceover": false,
+          "voiceover_transcript": null,
+          "music": "low, ominous synth drone, slow tempo, suspenseful mood",
+          "sfx": [
+            "deep, resonant bass thud"
+          ],
+          "ambient": "low-frequency room tone"
+        },
+        "rawText": "{\n  \"visual\": \"A static, extremely low-key shot of dark, rocky ground shrouded in deep shadow. The scene is dimly lit with cool, blue-toned ambient light, revealing rough textures of stones and soil. There is no visible movement or subject action, creating a mysterious and desolate atmosphere.\",\n  \"cinematography\": {\n    \"shot_size\": \"close_up\",\n    \"camera_angle\": \"low_angle\",\n    \"camera_movement_quality\": \"locked_off\",\n    \"lens_characteristic\": \"normal\",\n    \"depth_of_field\": \"shallow\",\n    \"focus_dynamics\": \"locked\",\n    \"composition\": \"centered\",\n    \"lighting_style\": \"low_key\",\n    \"color_palette\": \"deep navy, charcoal, dark slate\",\n    \"special_techniques\": []\n  },\n  \"camera_movement\": \"static\",\n  \"camera_movement_intensity\": \"none\",\n  \"subject_motion\": \"none\",\n  \"subject_motion_direction\": \"stationary\",\n  \"objects\": [\n    \"rocks\",\n    \"ground\",\n    \"soil\"\n  ],\n  \"framing\": \"Close-up\",\n  \"brand\": \"None\",\n  \"emotion\": \"tense\",\n  \"movement\": \"Static\",\n  \"audio\": {\n    \"has_voiceover\": false,\n    \"voiceover_transcript\": null,\n    \"music\": \"low, ominous synth drone, slow tempo, suspenseful mood\",\n    \"sfx\": [\n      \"deep, resonant bass thud\"\n    ],\n    \"ambient\": \"low-frequency room tone\"\n  },\n  \"subject_bbox\": {\n    \"box_2d\": [\n      400,\n      300,\n      700,\n      700\n    ],\n    \"label\": \"textured rocky ground in shadow\"\n  },\n  \"brand_mark_bbox\": null,\n  \"physical_brand_marks\": [],\n  \"graphics\": null,\n  \"cut_type\": \"unknown\",\n  \"tempo_cue\": \"slow\",\n  \"is_end_card\": false\n}",
+        "model": "gemini-3.5-flash"
+      },
+      "videoAnalysis": {
+        "visual": "A static, extremely low-key shot of dark, rocky ground shrouded in deep shadow. The scene is dimly lit with cool, blue-toned ambient light, revealing rough textures of stones and soil. There is no visible movement or subject action, creating a mysterious and desolate atmosphere.",
+        "cinematography": {
+          "shot_size": "close_up",
+          "camera_angle": "low_angle",
+          "camera_movement_quality": "locked_off",
+          "lens_characteristic": "normal",
+          "depth_of_field": "shallow",
+          "focus_dynamics": "locked",
+          "composition": "centered",
+          "lighting_style": "low_key",
+          "color_palette": "deep navy, charcoal, dark slate",
+          "special_techniques": []
+        },
+        "camera_movement": "static",
+        "camera_movement_intensity": "none",
+        "subject_motion": "none",
+        "subject_motion_direction": "stationary",
+        "objects": [
+          "rocks",
+          "ground",
+          "soil"
+        ],
+        "framing": "Close-up",
+        "brand": "None",
+        "emotion": "tense",
+        "movement": "Static",
+        "audio": {
+          "has_voiceover": false,
+          "voiceover_transcript": null,
+          "music": "low, ominous synth drone, slow tempo, suspenseful mood",
+          "sfx": [
+            "deep, resonant bass thud"
+          ],
+          "ambient": "low-frequency room tone"
+        },
+        "graphics": null,
+        "subject_bbox": {
+          "box_2d": [
+            400,
+            300,
+            700,
+            700
+          ],
+          "label": "textured rocky ground in shadow"
+        },
+        "brand_mark_bbox": null,
+        "physical_brand_marks": [],
+        "cut_type": "unknown",
+        "tempo_cue": "slow",
+        "is_end_card": false,
+        "clipPath": "F:/Proyectos/Kissd ReEdit/The Rise of Electric/.reedit/clips/scene-001.mp4",
+        "rawText": "{\n  \"visual\": \"A static, extremely low-key shot of dark, rocky ground shrouded in deep shadow. The scene is dimly lit with cool, blue-toned ambient light, revealing rough textures of stones and soil. There is no visible movement or subject action, creating a mysterious and desolate atmosphere.\",\n  \"cinematography\": {\n    \"shot_size\": \"close_up\",\n    \"camera_angle\": \"low_angle\",\n    \"camera_movement_quality\": \"locked_off\",\n    \"lens_characteristic\": \"normal\",\n    \"depth_of_field\": \"shallow\",\n    \"focus_dynamics\": \"locked\",\n    \"composition\": \"centered\",\n    \"lighting_style\": \"low_key\",\n    \"color_palette\": \"deep navy, charcoal, dark slate\",\n    \"special_techniques\": []\n  },\n  \"camera_movement\": \"static\",\n  \"camera_movement_intensity\": \"none\",\n  \"subject_motion\": \"none\",\n  \"subject_motion_direction\": \"stationary\",\n  \"objects\": [\n    \"rocks\",\n    \"ground\",\n    \"soil\"\n  ],\n  \"framing\": \"Close-up\",\n  \"brand\": \"None\",\n  \"emotion\": \"tense\",\n  \"movement\": \"Static\",\n  \"audio\": {\n    \"has_voiceover\": false,\n    \"voiceover_transcript\": null,\n    \"music\": \"low, ominous synth drone, slow tempo, suspenseful mood\",\n    \"sfx\": [\n      \"deep, resonant bass thud\"\n    ],\n    \"ambient\": \"low-frequency room tone\"\n  },\n  \"subject_bbox\": {\n    \"box_2d\": [\n      400,\n      300,\n      700,\n      700\n    ],\n    \"label\": \"textured rocky ground in shadow\"\n  },\n  \"brand_mark_bbox\": null,\n  \"physical_brand_marks\": [],\n  \"graphics\": null,\n  \"cut_type\": \"unknown\",\n  \"tempo_cue\": \"slow\",\n  \"is_end_card\": false\n}",
+        "model": "gemini-3.5-flash",
+        "usage": {
+          "promptTokenCount": 4711,
+          "candidatesTokenCount": 490,
+          "totalTokenCount": 5201,
+          "promptTokensDetails": [
+            {
+              "modality": "VIDEO",
+              "tokenCount": 90
+            },
+            {
+              "modality": "TEXT",
+              "tokenCount": 4621
+            }
+          ],
+          "serviceTier": "standard"
+        }
+      },
+      "videoAnalysisError": null,
+      "captionError": null
+    },
+    {
+      "index": 2,
+      "id": "scene-002",
+      "tcIn": 0.96,
+      "tcOut": 3.28,
+      "duration": 2.32,
+      "thumbnail": "F:/Proyectos/Kissd ReEdit/The Rise of Electric/.reedit/scenes/scene-002.jpg",
+      "caption": "A low-angle, close-up shot of dark, wet gravel and stones on the ground. The scene is dimly lit with cool, blue-toned ambient light, creating a dramatic and moody atmosphere. Suddenly, a powerful blast of air or an unseen force blows across the ground, violently scattering the small rocks and dust from right to left. The camera remains locked off, capturing the sudden, explosive motion of the debris in sharp focus.",
+      "structured": {
+        "visual": "A low-angle, close-up shot of dark, wet gravel and stones on the ground. The scene is dimly lit with cool, blue-toned ambient light, creating a dramatic and moody atmosphere. Suddenly, a powerful blast of air or an unseen force blows across the ground, violently scattering the small rocks and dust from right to left. The camera remains locked off, capturing the sudden, explosive motion of the debris in sharp focus.",
+        "brand": "Text/logo on-screen",
+        "emotion": "tense",
+        "framing": "Close-up",
+        "movement": "High",
+        "audio": {
+          "has_voiceover": false,
+          "voiceover_transcript": null,
+          "music": null,
+          "sfx": [
+            "low rumble of an engine",
+            "whoosh of wind and scattering rocks"
+          ],
+          "ambient": "low-frequency hum"
+        },
+        "rawText": "{\n  \"visual\": \"A low-angle, close-up shot of dark, wet gravel and stones on the ground. The scene is dimly lit with cool, blue-toned ambient light, creating a dramatic and moody atmosphere. Suddenly, a powerful blast of air or an unseen force blows across the ground, violently scattering the small rocks and dust from right to left. The camera remains locked off, capturing the sudden, explosive motion of the debris in sharp focus.\",\n  \"cinematography\": {\n    \"shot_size\": \"close_up\",\n    \"camera_angle\": \"low_angle\",\n    \"camera_movement_quality\": \"locked_off\",\n    \"lens_characteristic\": \"normal\",\n    \"depth_of_field\": \"medium\",\n    \"focus_dynamics\": \"locked\",\n    \"composition\": \"centered\",\n    \"lighting_style\": \"low_key\",\n    \"color_palette\": \"deep blue, charcoal, cool gray\",\n    \"special_techniques\": [\n      \"slow_motion\"\n    ]\n  },\n  \"camera_movement\": \"static\",\n  \"camera_movement_intensity\": \"none\",\n  \"subject_motion\": \"explosive\",\n  \"subject_motion_direction\": \"right-to-left\",\n  \"objects\": [\n    \"stones\",\n    \"gravel\",\n    \"dust\"\n  ],\n  \"framing\": \"Close-up\",\n  \"brand\": \"Text/logo on-screen\",\n  \"emotion\": \"tense\",\n  \"movement\": \"High\",\n  \"audio\": {\n    \"has_voiceover\": false,\n    \"voiceover_transcript\": null,\n    \"music\": null,\n    \"sfx\": [\n      \"low rumble of an engine\",\n      \"whoosh of wind and scattering rocks\"\n    ],\n    \"ambient\": \"low-frequency hum\"\n  },\n  \"subject_bbox\": {\n    \"box_2d\": [448, 442, 659, 563],\n    \"label\": \"scattering stones\"\n  },\n  \"brand_mark_bbox\": null,\n  \"physical_brand_marks\": [],\n  \"graphics\": {\n    \"has_text_on_screen\": true,\n    \"text_content\": \"THE RISE OF ELECTRIC\",\n    \"text_role\": \"title\",\n    \"has_logo\": false,\n    \"logo_description\": null,\n    \"other_graphics\": null,\n    \"bboxes\": [\n      {\n        \"box_2d\": [475, 261, 524, 738],\n        \"role\": \"title\",\n        \"kind\": \"overlay\",\n        \"label\": \"THE RISE OF ELECTRIC\"\n      }\n    ],\n    \"removal_hint\": {\n      \"mask_strategy\": \"luma_bright\",\n      \"text_color_family\": \"white\",\n      \"text_is_bright\": true,\n      \"luma_threshold_hint\": 210,\n      \"hsv_range_hint\": null,\n      \"coverage_estimate_pct\": 3,\n      \"position\": \"center\",\n      \"animated\": false\n    }\n  },\n  \"cut_type\": \"hard_cut\",\n  \"tempo_cue\": \"fast\",\n  \"is_end_card\": false\n}",
+        "model": "gemini-3.5-flash"
+      },
+      "videoAnalysis": {
+        "visual": "A low-angle, close-up shot of dark, wet gravel and stones on the ground. The scene is dimly lit with cool, blue-toned ambient light, creating a dramatic and moody atmosphere. Suddenly, a powerful blast of air or an unseen force blows across the ground, violently scattering the small rocks and dust from right to left. The camera remains locked off, capturing the sudden, explosive motion of the debris in sharp focus.",
+        "cinematography": {
+          "shot_size": "close_up",
+          "camera_angle": "low_angle",
+          "camera_movement_quality": "locked_off",
+          "lens_characteristic": "normal",
+          "depth_of_field": "medium",
+          "focus_dynamics": "locked",
+          "composition": "centered",
+          "lighting_style": "low_key",
+          "color_palette": "deep blue, charcoal, cool gray",
+          "special_techniques": [
+            "slow_motion"
+          ]
+        },
+        "camera_movement": "static",
+        "camera_movement_intensity": "none",
+        "subject_motion": "explosive",
+        "subject_motion_direction": "right-to-left",
+        "objects": [
+          "stones",
+          "gravel",
+          "dust"
+        ],
+        "framing": "Close-up",
+        "brand": "Text/logo on-screen",
+        "emotion": "tense",
+        "movement": "High",
+        "audio": {
+          "has_voiceover": false,
+          "voiceover_transcript": null,
+          "music": null,
+          "sfx": [
+            "low rumble of an engine",
+            "whoosh of wind and scattering rocks"
+          ],
+          "ambient": "low-frequency hum"
+        },
+        "graphics": {
+          "has_text_on_screen": true,
+          "text_content": "THE RISE OF ELECTRIC",
+          "text_role": "title",
+          "has_logo": false,
+          "logo_description": null,
+          "other_graphics": null,
+          "bboxes": [
+            {
+              "box_2d": [
+                475,
+                261,
+                524,
+                738
+              ],
+              "role": "title",
+              "kind": "overlay",
+              "label": "THE RISE OF ELECTRIC"
+            }
+          ],
+          "removal_hint": {
+            "mask_strategy": "luma_bright",
+            "text_color_family": "white",
+            "text_is_bright": true,
+            "luma_threshold_hint": 210,
+            "hsv_range_hint": null,
+            "coverage_estimate_pct": 3,
+            "position": "center",
+            "animated": false
+          }
+        },
+        "subject_bbox": {
+          "box_2d": [
+            448,
+            442,
+            659,
+            563
+          ],
+          "label": "scattering stones"
+        },
+        "brand_mark_bbox": null,
+        "physical_brand_marks": [],
+        "cut_type": "hard_cut",
+        "tempo_cue": "fast",
+        "is_end_card": false,
+        "clipPath": "F:/Proyectos/Kissd ReEdit/The Rise of Electric/.reedit/clips/scene-002.mp4",
+        "rawText": "{\n  \"visual\": \"A low-angle, close-up shot of dark, wet gravel and stones on the ground. The scene is dimly lit with cool, blue-toned ambient light, creating a dramatic and moody atmosphere. Suddenly, a powerful blast of air or an unseen force blows across the ground, violently scattering the small rocks and dust from right to left. The camera remains locked off, capturing the sudden, explosive motion of the debris in sharp focus.\",\n  \"cinematography\": {\n    \"shot_size\": \"close_up\",\n    \"camera_angle\": \"low_angle\",\n    \"camera_movement_quality\": \"locked_off\",\n    \"lens_characteristic\": \"normal\",\n    \"depth_of_field\": \"medium\",\n    \"focus_dynamics\": \"locked\",\n    \"composition\": \"centered\",\n    \"lighting_style\": \"low_key\",\n    \"color_palette\": \"deep blue, charcoal, cool gray\",\n    \"special_techniques\": [\n      \"slow_motion\"\n    ]\n  },\n  \"camera_movement\": \"static\",\n  \"camera_movement_intensity\": \"none\",\n  \"subject_motion\": \"explosive\",\n  \"subject_motion_direction\": \"right-to-left\",\n  \"objects\": [\n    \"stones\",\n    \"gravel\",\n    \"dust\"\n  ],\n  \"framing\": \"Close-up\",\n  \"brand\": \"Text/logo on-screen\",\n  \"emotion\": \"tense\",\n  \"movement\": \"High\",\n  \"audio\": {\n    \"has_voiceover\": false,\n    \"voiceover_transcript\": null,\n    \"music\": null,\n    \"sfx\": [\n      \"low rumble of an engine\",\n      \"whoosh of wind and scattering rocks\"\n    ],\n    \"ambient\": \"low-frequency hum\"\n  },\n  \"subject_bbox\": {\n    \"box_2d\": [448, 442, 659, 563],\n    \"label\": \"scattering stones\"\n  },\n  \"brand_mark_bbox\": null,\n  \"physical_brand_marks\": [],\n  \"graphics\": {\n    \"has_text_on_screen\": true,\n    \"text_content\": \"THE RISE OF ELECTRIC\",\n    \"text_role\": \"title\",\n    \"has_logo\": false,\n    \"logo_description\": null,\n    \"other_graphics\": null,\n    \"bboxes\": [\n      {\n        \"box_2d\": [475, 261, 524, 738],\n        \"role\": \"title\",\n        \"kind\": \"overlay\",\n        \"label\": \"THE RISE OF ELECTRIC\"\n      }\n    ],\n    \"removal_hint\": {\n      \"mask_strategy\": \"luma_bright\",\n      \"text_color_family\": \"white\",\n      \"text_is_bright\": true,\n      \"luma_threshold_hint\": 210,\n      \"hsv_range_hint\": null,\n      \"coverage_estimate_pct\": 3,\n      \"position\": \"center\",\n      \"animated\": false\n    }\n  },\n  \"cut_type\": \"hard_cut\",\n  \"tempo_cue\": \"fast\",\n  \"is_end_card\": false\n}",
+        "model": "gemini-3.5-flash",
+        "usage": {
+          "promptTokenCount": 4811,
+          "candidatesTokenCount": 766,
+          "totalTokenCount": 5577,
+          "promptTokensDetails": [
+            {
+              "modality": "TEXT",
+              "tokenCount": 4621
+            },
+            {
+              "modality": "VIDEO",
+              "tokenCount": 190
+            }
+          ],
+          "serviceTier": "standard"
+        }
+      },
+      "videoAnalysisError": null,
+      "captionError": null,
+      "optimizations": [
+        {
+          "version": "V01",
+          "path": "F:\\Proyectos\\Kissd ReEdit\\The Rise of Electric\\.reedit\\optimized\\scene-002_V01.mp4",
+          "model": null,
+          "createdAt": "2026-05-27T20:01:04.947Z",
+          "workflowJsonPath": "F:\\Proyectos\\Kissd ReEdit\\The Rise of Electric\\.reedit\\optimized\\scene-002_V01.workflow.json"
+        }
+      ],
+      "activeOptimizationVersion": null
+    },
+    {
+      "index": 3,
+      "id": "scene-003",
+      "tcIn": 3.28,
+      "tcOut": 6.8,
+      "duration": 3.52,
+      "thumbnail": "F:/Proyectos/Kissd ReEdit/The Rise of Electric/.reedit/scenes/scene-003.jpg",
+      "caption": "A blue Mercedes-Benz G-Class SUV drives away from the camera, emerging from a thick bank of fog. The setting is a dramatic mountain pass at dusk, with jagged peaks silhouetted against a soft, twilight sky. The camera tracks backward in a smooth, aerial-like motion, revealing the vast, rugged landscape as the vehicle disappears into the distance.",
+      "structured": {
+        "visual": "A blue Mercedes-Benz G-Class SUV drives away from the camera, emerging from a thick bank of fog. The setting is a dramatic mountain pass at dusk, with jagged peaks silhouetted against a soft, twilight sky. The camera tracks backward in a smooth, aerial-like motion, revealing the vast, rugged landscape as the vehicle disappears into the distance.",
+        "brand": "Product visible",
+        "emotion": "freedom",
+        "framing": "Wide",
+        "movement": "Moderate",
+        "audio": {
+          "has_voiceover": false,
+          "voiceover_transcript": null,
+          "music": "low, atmospheric synth drone with a subtle, rhythmic pulse, creating a sense of mystery and anticipation",
+          "sfx": [
+            "deep, muffled engine hum",
+            "whoosh of wind through the mountains"
+          ],
+          "ambient": "soft wind and distant mountain atmosphere"
+        },
+        "rawText": "{\n  \"visual\": \"A blue Mercedes-Benz G-Class SUV drives away from the camera, emerging from a thick bank of fog. The setting is a dramatic mountain pass at dusk, with jagged peaks silhouetted against a soft, twilight sky. The camera tracks backward in a smooth, aerial-like motion, revealing the vast, rugged landscape as the vehicle disappears into the distance.\",\n  \"cinematography\": {\n    \"shot_size\": \"long\",\n    \"camera_angle\": \"eye_level\",\n    \"camera_movement_quality\": \"steadicam\",\n    \"lens_characteristic\": \"normal\",\n    \"depth_of_field\": \"deep\",\n    \"focus_dynamics\": \"locked\",\n    \"composition\": \"centered\",\n    \"lighting_style\": \"blue_hour\",\n    \"color_palette\": \"cool blue, slate gray, soft pink highlights\",\n    \"special_techniques\": []\n  },\n  \"camera_movement\": \"pull_out\",\n  \"camera_movement_intensity\": \"moderate\",\n  \"subject_motion\": \"moderate\",\n  \"subject_motion_direction\": \"away from camera\",\n  \"objects\": [\n    \"SUV\",\n    \"mountains\",\n    \"fog\",\n    \"clouds\"\n  ],\n  \"framing\": \"Wide\",\n  \"brand\": \"Product visible\",\n  \"emotion\": \"freedom\",\n  \"movement\": \"Moderate\",\n  \"audio\": {\n    \"has_voiceover\": false,\n    \"voiceover_transcript\": null,\n    \"music\": \"low, atmospheric synth drone with a subtle, rhythmic pulse, creating a sense of mystery and anticipation\",\n    \"sfx\": [\n      \"deep, muffled engine hum\",\n      \"whoosh of wind through the mountains\"\n    ],\n    \"ambient\": \"soft wind and distant mountain atmosphere\"\n  },\n  \"subject_bbox\": {\n    \"box_2d\": [347, 497, 650, 715],\n    \"label\": \"Mercedes-Benz G-Class SUV driving away\"\n  },\n  \"brand_mark_bbox\": null,\n  \"physical_brand_marks\": [],\n  \"graphics\": {\n    \"has_text_on_screen\": true,\n    \"text_content\": \"Mercedes-Benz G 580 mit EQ-Technologie | Energieverbrauch kombiniert:\\n30,3-27,7 kWh/100 km | CO₂-Emissionen kombiniert: 0 g/km | CO₂-Klasse: A\",\n    \"text_role\": \"legal_disclaimer\",\n    \"has_logo\": false,\n    \"logo_description\": null,\n    \"other_graphics\": null,\n    \"bboxes\": [\n      {\n        \"box_2d\": [837, 183, 912, 817],\n        \"role\": \"legal_disclaimer\",\n        \"kind\": \"overlay\",\n        \"label\": \"Mercedes-Benz G 580 legal disclaimer text\"\n      }\n    ],\n    \"removal_hint\": {\n      \"mask_strategy\": \"luma_bright\",\n      \"text_color_family\": \"white\",\n      \"text_is_bright\": true,\n      \"luma_threshold_hint\": 200,\n      \"hsv_range_hint\": null,\n      \"coverage_estimate_pct\": 5,\n      \"position\": \"bottom\",\n      \"animated\": false\n    }\n  },\n  \"cut_type\": \"hard_cut\",\n  \"tempo_cue\": \"slow\",\n  \"is_end_card\": false\n}",
+        "model": "gemini-3.5-flash"
+      },
+      "videoAnalysis": {
+        "visual": "A blue Mercedes-Benz G-Class SUV drives away from the camera, emerging from a thick bank of fog. The setting is a dramatic mountain pass at dusk, with jagged peaks silhouetted against a soft, twilight sky. The camera tracks backward in a smooth, aerial-like motion, revealing the vast, rugged landscape as the vehicle disappears into the distance.",
+        "cinematography": {
+          "shot_size": "long",
+          "camera_angle": "eye_level",
+          "camera_movement_quality": "steadicam",
+          "lens_characteristic": "normal",
+          "depth_of_field": "deep",
+          "focus_dynamics": "locked",
+          "composition": "centered",
+          "lighting_style": "blue_hour",
+          "color_palette": "cool blue, slate gray, soft pink highlights",
+          "special_techniques": []
+        },
+        "camera_movement": "pull_out",
+        "camera_movement_intensity": "moderate",
+        "subject_motion": "moderate",
+        "subject_motion_direction": "away from camera",
+        "objects": [
+          "SUV",
+          "mountains",
+          "fog",
+          "clouds"
+        ],
+        "framing": "Wide",
+        "brand": "Product visible",
+        "emotion": "freedom",
+        "movement": "Moderate",
+        "audio": {
+          "has_voiceover": false,
+          "voiceover_transcript": null,
+          "music": "low, atmospheric synth drone with a subtle, rhythmic pulse, creating a sense of mystery and anticipation",
+          "sfx": [
+            "deep, muffled engine hum",
+            "whoosh of wind through the mountains"
+          ],
+          "ambient": "soft wind and distant mountain atmosphere"
+        },
+        "graphics": {
+          "has_text_on_screen": true,
+          "text_content": "Mercedes-Benz G 580 mit EQ-Technologie | Energieverbrauch kombiniert:\n30,3-27,7 kWh/100 km | CO₂-Emissionen kombiniert: 0 g/km | CO₂-Klasse: A",
+          "text_role": "legal_disclaimer",
+          "has_logo": false,
+          "logo_description": null,
+          "other_graphics": null,
+          "bboxes": [
+            {
+              "box_2d": [
+                837,
+                183,
+                912,
+                817
+              ],
+              "role": "legal_disclaimer",
+              "kind": "overlay",
+              "label": "Mercedes-Benz G 580 legal disclaimer text"
+            }
+          ],
+          "removal_hint": {
+            "mask_strategy": "luma_bright",
+            "text_color_family": "white",
+            "text_is_bright": true,
+            "luma_threshold_hint": 200,
+            "hsv_range_hint": null,
+            "coverage_estimate_pct": 5,
+            "position": "bottom",
+            "animated": false
+          }
+        },
+        "subject_bbox": {
+          "box_2d": [
+            347,
+            497,
+            650,
+            715
+          ],
+          "label": "Mercedes-Benz G-Class SUV driving away"
+        },
+        "brand_mark_bbox": null,
+        "physical_brand_marks": [],
+        "cut_type": "hard_cut",
+        "tempo_cue": "slow",
+        "is_end_card": false,
+        "clipPath": "F:/Proyectos/Kissd ReEdit/The Rise of Electric/.reedit/clips/scene-003.mp4",
+        "rawText": "{\n  \"visual\": \"A blue Mercedes-Benz G-Class SUV drives away from the camera, emerging from a thick bank of fog. The setting is a dramatic mountain pass at dusk, with jagged peaks silhouetted against a soft, twilight sky. The camera tracks backward in a smooth, aerial-like motion, revealing the vast, rugged landscape as the vehicle disappears into the distance.\",\n  \"cinematography\": {\n    \"shot_size\": \"long\",\n    \"camera_angle\": \"eye_level\",\n    \"camera_movement_quality\": \"steadicam\",\n    \"lens_characteristic\": \"normal\",\n    \"depth_of_field\": \"deep\",\n    \"focus_dynamics\": \"locked\",\n    \"composition\": \"centered\",\n    \"lighting_style\": \"blue_hour\",\n    \"color_palette\": \"cool blue, slate gray, soft pink highlights\",\n    \"special_techniques\": []\n  },\n  \"camera_movement\": \"pull_out\",\n  \"camera_movement_intensity\": \"moderate\",\n  \"subject_motion\": \"moderate\",\n  \"subject_motion_direction\": \"away from camera\",\n  \"objects\": [\n    \"SUV\",\n    \"mountains\",\n    \"fog\",\n    \"clouds\"\n  ],\n  \"framing\": \"Wide\",\n  \"brand\": \"Product visible\",\n  \"emotion\": \"freedom\",\n  \"movement\": \"Moderate\",\n  \"audio\": {\n    \"has_voiceover\": false,\n    \"voiceover_transcript\": null,\n    \"music\": \"low, atmospheric synth drone with a subtle, rhythmic pulse, creating a sense of mystery and anticipation\",\n    \"sfx\": [\n      \"deep, muffled engine hum\",\n      \"whoosh of wind through the mountains\"\n    ],\n    \"ambient\": \"soft wind and distant mountain atmosphere\"\n  },\n  \"subject_bbox\": {\n    \"box_2d\": [347, 497, 650, 715],\n    \"label\": \"Mercedes-Benz G-Class SUV driving away\"\n  },\n  \"brand_mark_bbox\": null,\n  \"physical_brand_marks\": [],\n  \"graphics\": {\n    \"has_text_on_screen\": true,\n    \"text_content\": \"Mercedes-Benz G 580 mit EQ-Technologie | Energieverbrauch kombiniert:\\n30,3-27,7 kWh/100 km | CO₂-Emissionen kombiniert: 0 g/km | CO₂-Klasse: A\",\n    \"text_role\": \"legal_disclaimer\",\n    \"has_logo\": false,\n    \"logo_description\": null,\n    \"other_graphics\": null,\n    \"bboxes\": [\n      {\n        \"box_2d\": [837, 183, 912, 817],\n        \"role\": \"legal_disclaimer\",\n        \"kind\": \"overlay\",\n        \"label\": \"Mercedes-Benz G 580 legal disclaimer text\"\n      }\n    ],\n    \"removal_hint\": {\n      \"mask_strategy\": \"luma_bright\",\n      \"text_color_family\": \"white\",\n      \"text_is_bright\": true,\n      \"luma_threshold_hint\": 200,\n      \"hsv_range_hint\": null,\n      \"coverage_estimate_pct\": 5,\n      \"position\": \"bottom\",\n      \"animated\": false\n    }\n  },\n  \"cut_type\": \"hard_cut\",\n  \"tempo_cue\": \"slow\",\n  \"is_end_card\": false\n}",
+        "model": "gemini-3.5-flash",
+        "usage": {
+          "promptTokenCount": 4973,
+          "candidatesTokenCount": 833,
+          "totalTokenCount": 5806,
+          "promptTokensDetails": [
+            {
+              "modality": "TEXT",
+              "tokenCount": 4621
+            },
+            {
+              "modality": "VIDEO",
+              "tokenCount": 352
+            }
+          ],
+          "serviceTier": "standard"
+        }
+      },
+      "videoAnalysisError": null,
+      "captionError": null,
+      "optimizations": [
+        {
+          "version": "V01",
+          "path": "F:\\Proyectos\\Kissd ReEdit\\The Rise of Electric\\.reedit\\optimized\\scene-003_V01.mp4",
+          "model": null,
+          "createdAt": "2026-05-27T20:03:06.778Z",
+          "workflowJsonPath": "F:\\Proyectos\\Kissd ReEdit\\The Rise of Electric\\.reedit\\optimized\\scene-003_V01.workflow.json"
+        }
+      ],
+      "activeOptimizationVersion": "V01"
+    },
+    {
+      "index": 4,
+      "id": "scene-004",
+      "tcIn": 6.8,
+      "tcOut": 7.92,
+      "duration": 1.12,
+      "thumbnail": "F:/Proyectos/Kissd ReEdit/The Rise of Electric/.reedit/scenes/scene-004.jpg",
+      "caption": "An overhead, high-angle shot captures two climbers in dark, hooded jackets ascending a steep, textured rock face. The scene is dimly lit with cool, blue-toned light, casting deep shadows across the craggy stone. The camera remains static as the climbers slowly scale the vertical wall using ropes.",
+      "structured": {
+        "visual": "An overhead, high-angle shot captures two climbers in dark, hooded jackets ascending a steep, textured rock face. The scene is dimly lit with cool, blue-toned light, casting deep shadows across the craggy stone. The camera remains static as the climbers slowly scale the vertical wall using ropes.",
+        "brand": "Text/logo on-screen",
+        "emotion": "focused",
+        "framing": "Wide",
+        "movement": "Slow",
+        "audio": {
+          "has_voiceover": false,
+          "voiceover_transcript": null,
+          "music": "low, atmospheric ambient drone, slow tempo, tense mood",
+          "sfx": [],
+          "ambient": "subtle wind and rope tension hum"
+        },
+        "rawText": "{\n  \"visual\": \"An overhead, high-angle shot captures two climbers in dark, hooded jackets ascending a steep, textured rock face. The scene is dimly lit with cool, blue-toned light, casting deep shadows across the craggy stone. The camera remains static as the climbers slowly scale the vertical wall using ropes.\",\n  \"cinematography\": {\n    \"shot_size\": \"long\",\n    \"camera_angle\": \"overhead\",\n    \"camera_movement_quality\": \"locked_off\",\n    \"lens_characteristic\": \"normal\",\n    \"depth_of_field\": \"deep\",\n    \"focus_dynamics\": \"locked\",\n    \"composition\": \"diagonal\",\n    \"lighting_style\": \"low_key\",\n    \"color_palette\": \"deep slate, cool blue, dark charcoal\",\n    \"special_techniques\": []\n  },\n  \"camera_movement\": \"static\",\n  \"camera_movement_intensity\": \"none\",\n  \"subject_motion\": \"slow\",\n  \"subject_motion_direction\": \"upward\",\n  \"objects\": [\n    \"climbers\",\n    \"ropes\",\n    \"rock face\"\n  ],\n  \"framing\": \"Wide\",\n  \"brand\": \"Text/logo on-screen\",\n  \"emotion\": \"focused\",\n  \"movement\": \"Slow\",\n  \"audio\": {\n    \"has_voiceover\": false,\n    \"voiceover_transcript\": null,\n    \"music\": \"low, atmospheric ambient drone, slow tempo, tense mood\",\n    \"sfx\": [],\n    \"ambient\": \"subtle wind and rope tension hum\"\n  },\n  \"subject_bbox\": {\n    \"box_2d\": [218, 513, 551, 648],\n    \"label\": \"climber ascending rock face\"\n  },\n  \"brand_mark_bbox\": null,\n  \"physical_brand_marks\": [],\n  \"graphics\": {\n    \"has_text_on_screen\": true,\n    \"text_content\": \"Mercedes-Benz G 580 mit EQ-Technologie | Energieverbrauch kombiniert:\\n30,3-27,7 kWh/100 km | CO2-Emissionen kombiniert: 0 g/km | CO2-Klasse: A\",\n    \"text_role\": \"legal_disclaimer\",\n    \"has_logo\": false,\n    \"logo_description\": null,\n    \"other_graphics\": null,\n    \"bboxes\": [\n      {\n        \"box_2d\": [834, 183, 912, 818],\n        \"role\": \"legal_disclaimer\",\n        \"kind\": \"overlay\",\n        \"label\": \"Mercedes-Benz G 580 legal disclaimer text\"\n      }\n    ],\n    \"removal_hint\": {\n      \"mask_strategy\": \"luma_bright\",\n      \"text_color_family\": \"white\",\n      \"text_is_bright\": true,\n      \"luma_threshold_hint\": 200,\n      \"hsv_range_hint\": null,\n      \"coverage_estimate_pct\": 5,\n      \"position\": \"bottom\",\n      \"animated\": false\n    }\n  },\n  \"cut_type\": \"unknown\",\n  \"tempo_cue\": \"slow\",\n  \"is_end_card\": false\n}",
+        "model": "gemini-3.5-flash"
+      },
+      "videoAnalysis": {
+        "visual": "An overhead, high-angle shot captures two climbers in dark, hooded jackets ascending a steep, textured rock face. The scene is dimly lit with cool, blue-toned light, casting deep shadows across the craggy stone. The camera remains static as the climbers slowly scale the vertical wall using ropes.",
+        "cinematography": {
+          "shot_size": "long",
+          "camera_angle": "overhead",
+          "camera_movement_quality": "locked_off",
+          "lens_characteristic": "normal",
+          "depth_of_field": "deep",
+          "focus_dynamics": "locked",
+          "composition": "diagonal",
+          "lighting_style": "low_key",
+          "color_palette": "deep slate, cool blue, dark charcoal",
+          "special_techniques": []
+        },
+        "camera_movement": "static",
+        "camera_movement_intensity": "none",
+        "subject_motion": "slow",
+        "subject_motion_direction": "upward",
+        "objects": [
+          "climbers",
+          "ropes",
+          "rock face"
+        ],
+        "framing": "Wide",
+        "brand": "Text/logo on-screen",
+        "emotion": "focused",
+        "movement": "Slow",
+        "audio": {
+          "has_voiceover": false,
+          "voiceover_transcript": null,
+          "music": "low, atmospheric ambient drone, slow tempo, tense mood",
+          "sfx": [],
+          "ambient": "subtle wind and rope tension hum"
+        },
+        "graphics": {
+          "has_text_on_screen": true,
+          "text_content": "Mercedes-Benz G 580 mit EQ-Technologie | Energieverbrauch kombiniert:\n30,3-27,7 kWh/100 km | CO2-Emissionen kombiniert: 0 g/km | CO2-Klasse: A",
+          "text_role": "legal_disclaimer",
+          "has_logo": false,
+          "logo_description": null,
+          "other_graphics": null,
+          "bboxes": [
+            {
+              "box_2d": [
+                834,
+                183,
+                912,
+                818
+              ],
+              "role": "legal_disclaimer",
+              "kind": "overlay",
+              "label": "Mercedes-Benz G 580 legal disclaimer text"
+            }
+          ],
+          "removal_hint": {
+            "mask_strategy": "luma_bright",
+            "text_color_family": "white",
+            "text_is_bright": true,
+            "luma_threshold_hint": 200,
+            "hsv_range_hint": null,
+            "coverage_estimate_pct": 5,
+            "position": "bottom",
+            "animated": false
+          }
+        },
+        "subject_bbox": {
+          "box_2d": [
+            218,
+            513,
+            551,
+            648
+          ],
+          "label": "climber ascending rock face"
+        },
+        "brand_mark_bbox": null,
+        "physical_brand_marks": [],
+        "cut_type": "unknown",
+        "tempo_cue": "slow",
+        "is_end_card": false,
+        "clipPath": "F:/Proyectos/Kissd ReEdit/The Rise of Electric/.reedit/clips/scene-004.mp4",
+        "rawText": "{\n  \"visual\": \"An overhead, high-angle shot captures two climbers in dark, hooded jackets ascending a steep, textured rock face. The scene is dimly lit with cool, blue-toned light, casting deep shadows across the craggy stone. The camera remains static as the climbers slowly scale the vertical wall using ropes.\",\n  \"cinematography\": {\n    \"shot_size\": \"long\",\n    \"camera_angle\": \"overhead\",\n    \"camera_movement_quality\": \"locked_off\",\n    \"lens_characteristic\": \"normal\",\n    \"depth_of_field\": \"deep\",\n    \"focus_dynamics\": \"locked\",\n    \"composition\": \"diagonal\",\n    \"lighting_style\": \"low_key\",\n    \"color_palette\": \"deep slate, cool blue, dark charcoal\",\n    \"special_techniques\": []\n  },\n  \"camera_movement\": \"static\",\n  \"camera_movement_intensity\": \"none\",\n  \"subject_motion\": \"slow\",\n  \"subject_motion_direction\": \"upward\",\n  \"objects\": [\n    \"climbers\",\n    \"ropes\",\n    \"rock face\"\n  ],\n  \"framing\": \"Wide\",\n  \"brand\": \"Text/logo on-screen\",\n  \"emotion\": \"focused\",\n  \"movement\": \"Slow\",\n  \"audio\": {\n    \"has_voiceover\": false,\n    \"voiceover_transcript\": null,\n    \"music\": \"low, atmospheric ambient drone, slow tempo, tense mood\",\n    \"sfx\": [],\n    \"ambient\": \"subtle wind and rope tension hum\"\n  },\n  \"subject_bbox\": {\n    \"box_2d\": [218, 513, 551, 648],\n    \"label\": \"climber ascending rock face\"\n  },\n  \"brand_mark_bbox\": null,\n  \"physical_brand_marks\": [],\n  \"graphics\": {\n    \"has_text_on_screen\": true,\n    \"text_content\": \"Mercedes-Benz G 580 mit EQ-Technologie | Energieverbrauch kombiniert:\\n30,3-27,7 kWh/100 km | CO2-Emissionen kombiniert: 0 g/km | CO2-Klasse: A\",\n    \"text_role\": \"legal_disclaimer\",\n    \"has_logo\": false,\n    \"logo_description\": null,\n    \"other_graphics\": null,\n    \"bboxes\": [\n      {\n        \"box_2d\": [834, 183, 912, 818],\n        \"role\": \"legal_disclaimer\",\n        \"kind\": \"overlay\",\n        \"label\": \"Mercedes-Benz G 580 legal disclaimer text\"\n      }\n    ],\n    \"removal_hint\": {\n      \"mask_strategy\": \"luma_bright\",\n      \"text_color_family\": \"white\",\n      \"text_is_bright\": true,\n      \"luma_threshold_hint\": 200,\n      \"hsv_range_hint\": null,\n      \"coverage_estimate_pct\": 5,\n      \"position\": \"bottom\",\n      \"animated\": false\n    }\n  },\n  \"cut_type\": \"unknown\",\n  \"tempo_cue\": \"slow\",\n  \"is_end_card\": false\n}",
+        "model": "gemini-3.5-flash",
+        "usage": {
+          "promptTokenCount": 4716,
+          "candidatesTokenCount": 779,
+          "totalTokenCount": 5495,
+          "cachedContentTokenCount": 3918,
+          "promptTokensDetails": [
+            {
+              "modality": "VIDEO",
+              "tokenCount": 95
+            },
+            {
+              "modality": "TEXT",
+              "tokenCount": 4621
+            }
+          ],
+          "cacheTokensDetails": [
+            {
+              "modality": "VIDEO",
+              "tokenCount": 78
+            },
+            {
+              "modality": "TEXT",
+              "tokenCount": 3840
+            }
+          ],
+          "serviceTier": "standard"
+        }
+      },
+      "videoAnalysisError": null,
+      "captionError": null,
+      "optimizations": [
+        {
+          "version": "V01",
+          "path": "F:\\Proyectos\\Kissd ReEdit\\The Rise of Electric\\.reedit\\optimized\\scene-004_V01.mp4",
+          "model": null,
+          "createdAt": "2026-05-27T20:04:22.674Z",
+          "workflowJsonPath": "F:\\Proyectos\\Kissd ReEdit\\The Rise of Electric\\.reedit\\optimized\\scene-004_V01.workflow.json"
+        }
+      ],
+      "activeOptimizationVersion": "V01"
+    },
+    {
+      "index": 5,
+      "id": "scene-005",
+      "tcIn": 7.92,
+      "tcOut": 8.48,
+      "duration": 0.5600000000000005,
+      "thumbnail": "F:/Proyectos/Kissd ReEdit/The Rise of Electric/.reedit/scenes/scene-005.jpg",
+      "caption": "A close-up shot of a blue Mercedes-Benz G-Class wheel and front fender navigating a dark, rocky terrain. The vehicle's metallic blue paint contrasts with the black multi-spoke wheel and the dark, textured ground. The camera is locked off, capturing the wheel's rotation and suspension movement as it rolls over the uneven surface under low-key, dramatic lighting.",
+      "structured": {
+        "visual": "A close-up shot of a blue Mercedes-Benz G-Class wheel and front fender navigating a dark, rocky terrain. The vehicle's metallic blue paint contrasts with the black multi-spoke wheel and the dark, textured ground. The camera is locked off, capturing the wheel's rotation and suspension movement as it rolls over the uneven surface under low-key, dramatic lighting.",
+        "brand": "Product visible",
+        "emotion": "technical",
+        "framing": "Close-up",
+        "movement": "Slow",
+        "audio": {
+          "has_voiceover": false,
+          "voiceover_transcript": null,
+          "music": null,
+          "sfx": [
+            "low rumble of a vehicle engine",
+            "crunching sound of tires on gravel"
+          ],
+          "ambient": "low mechanical hum"
+        },
+        "rawText": "{\n  \"visual\": \"A close-up shot of a blue Mercedes-Benz G-Class wheel and front fender navigating a dark, rocky terrain. The vehicle's metallic blue paint contrasts with the black multi-spoke wheel and the dark, textured ground. The camera is locked off, capturing the wheel's rotation and suspension movement as it rolls over the uneven surface under low-key, dramatic lighting.\",\n  \"cinematography\": {\n    \"shot_size\": \"close_up\",\n    \"camera_angle\": \"low_angle\",\n    \"camera_movement_quality\": \"locked_off\",\n    \"lens_characteristic\": \"normal\",\n    \"depth_of_field\": \"medium\",\n    \"focus_dynamics\": \"locked\",\n    \"composition\": \"diagonal\",\n    \"lighting_style\": \"low_key\",\n    \"color_palette\": \"deep blue, dark charcoal, metallic black\",\n    \"special_techniques\": []\n  },\n  \"camera_movement\": \"static\",\n  \"camera_movement_intensity\": \"none\",\n  \"subject_motion\": \"slow\",\n  \"subject_motion_direction\": \"stationary\",\n  \"objects\": [\n    \"car wheel\",\n    \"car fender\",\n    \"rocks\"\n  ],\n  \"framing\": \"Close-up\",\n  \"brand\": \"Product visible\",\n  \"emotion\": \"technical\",\n  \"movement\": \"Slow\",\n  \"audio\": {\n    \"has_voiceover\": false,\n    \"voiceover_transcript\": null,\n    \"music\": null,\n    \"sfx\": [\n      \"low rumble of a vehicle engine\",\n      \"crunching sound of tires on gravel\"\n    ],\n    \"ambient\": \"low mechanical hum\"\n  },\n  \"subject_bbox\": {\n    \"box_2d\": [203, 225, 848, 654],\n    \"label\": \"rotating black wheel of the blue vehicle\"\n  },\n  \"brand_mark_bbox\": {\n    \"box_2d\": [553, 395, 629, 437],\n    \"label\": \"Mercedes-Benz star logo on the wheel hub\"\n  },\n  \"physical_brand_marks\": [\n    {\n      \"box_2d\": [553, 395, 629, 437],\n      \"label\": \"Mercedes-Benz star logo on the wheel hub\"\n    }\n  ],\n  \"graphics\": {\n    \"has_text_on_screen\": true,\n    \"text_content\": \"Mercedes-Benz G 580 mit EQ-Technologie | Energieverbrauch kombiniert:\\n30,3-27,7 kWh/100 km | CO2-Emissionen kombiniert: 0 g/km | CO2-Klasse: A\",\n    \"text_role\": \"legal_disclaimer\",\n    \"has_logo\": false,\n    \"logo_description\": null,\n    \"other_graphics\": null,\n    \"bboxes\": [\n      {\n        \"box_2d\": [839, 183, 912, 816],\n        \"role\": \"legal_disclaimer\",\n        \"kind\": \"overlay\",\n        \"label\": \"Mercedes-Benz G 580 legal disclaimer text\"\n      }\n    ],\n    \"removal_hint\": {\n      \"mask_strategy\": \"luma_bright\",\n      \"text_color_family\": \"white\",\n      \"text_is_bright\": true,\n      \"luma_threshold_hint\": 195,\n      \"hsv_range_hint\": null,\n      \"coverage_estimate_pct\": 5,\n      \"position\": \"bottom\",\n      \"animated\": false\n    }\n  },\n  \"cut_type\": \"unknown\",\n  \"tempo_cue\": \"slow\",\n  \"is_end_card\": false\n}",
+        "model": "gemini-3.5-flash"
+      },
+      "videoAnalysis": {
+        "visual": "A close-up shot of a blue Mercedes-Benz G-Class wheel and front fender navigating a dark, rocky terrain. The vehicle's metallic blue paint contrasts with the black multi-spoke wheel and the dark, textured ground. The camera is locked off, capturing the wheel's rotation and suspension movement as it rolls over the uneven surface under low-key, dramatic lighting.",
+        "cinematography": {
+          "shot_size": "close_up",
+          "camera_angle": "low_angle",
+          "camera_movement_quality": "locked_off",
+          "lens_characteristic": "normal",
+          "depth_of_field": "medium",
+          "focus_dynamics": "locked",
+          "composition": "diagonal",
+          "lighting_style": "low_key",
+          "color_palette": "deep blue, dark charcoal, metallic black",
+          "special_techniques": []
+        },
+        "camera_movement": "static",
+        "camera_movement_intensity": "none",
+        "subject_motion": "slow",
+        "subject_motion_direction": "stationary",
+        "objects": [
+          "car wheel",
+          "car fender",
+          "rocks"
+        ],
+        "framing": "Close-up",
+        "brand": "Product visible",
+        "emotion": "technical",
+        "movement": "Slow",
+        "audio": {
+          "has_voiceover": false,
+          "voiceover_transcript": null,
+          "music": null,
+          "sfx": [
+            "low rumble of a vehicle engine",
+            "crunching sound of tires on gravel"
+          ],
+          "ambient": "low mechanical hum"
+        },
+        "graphics": {
+          "has_text_on_screen": true,
+          "text_content": "Mercedes-Benz G 580 mit EQ-Technologie | Energieverbrauch kombiniert:\n30,3-27,7 kWh/100 km | CO2-Emissionen kombiniert: 0 g/km | CO2-Klasse: A",
+          "text_role": "legal_disclaimer",
+          "has_logo": false,
+          "logo_description": null,
+          "other_graphics": null,
+          "bboxes": [
+            {
+              "box_2d": [
+                839,
+                183,
+                912,
+                816
+              ],
+              "role": "legal_disclaimer",
+              "kind": "overlay",
+              "label": "Mercedes-Benz G 580 legal disclaimer text"
+            }
+          ],
+          "removal_hint": {
+            "mask_strategy": "luma_bright",
+            "text_color_family": "white",
+            "text_is_bright": true,
+            "luma_threshold_hint": 195,
+            "hsv_range_hint": null,
+            "coverage_estimate_pct": 5,
+            "position": "bottom",
+            "animated": false
+          }
+        },
+        "subject_bbox": {
+          "box_2d": [
+            203,
+            225,
+            848,
+            654
+          ],
+          "label": "rotating black wheel of the blue vehicle"
+        },
+        "brand_mark_bbox": {
+          "box_2d": [
+            553,
+            395,
+            629,
+            437
+          ],
+          "label": "Mercedes-Benz star logo on the wheel hub"
+        },
+        "physical_brand_marks": [
+          {
+            "box_2d": [
+              553,
+              395,
+              629,
+              437
+            ],
+            "label": "Mercedes-Benz star logo on the wheel hub"
+          }
+        ],
+        "cut_type": "unknown",
+        "tempo_cue": "slow",
+        "is_end_card": false,
+        "clipPath": "F:/Proyectos/Kissd ReEdit/The Rise of Electric/.reedit/clips/scene-005.mp4",
+        "rawText": "{\n  \"visual\": \"A close-up shot of a blue Mercedes-Benz G-Class wheel and front fender navigating a dark, rocky terrain. The vehicle's metallic blue paint contrasts with the black multi-spoke wheel and the dark, textured ground. The camera is locked off, capturing the wheel's rotation and suspension movement as it rolls over the uneven surface under low-key, dramatic lighting.\",\n  \"cinematography\": {\n    \"shot_size\": \"close_up\",\n    \"camera_angle\": \"low_angle\",\n    \"camera_movement_quality\": \"locked_off\",\n    \"lens_characteristic\": \"normal\",\n    \"depth_of_field\": \"medium\",\n    \"focus_dynamics\": \"locked\",\n    \"composition\": \"diagonal\",\n    \"lighting_style\": \"low_key\",\n    \"color_palette\": \"deep blue, dark charcoal, metallic black\",\n    \"special_techniques\": []\n  },\n  \"camera_movement\": \"static\",\n  \"camera_movement_intensity\": \"none\",\n  \"subject_motion\": \"slow\",\n  \"subject_motion_direction\": \"stationary\",\n  \"objects\": [\n    \"car wheel\",\n    \"car fender\",\n    \"rocks\"\n  ],\n  \"framing\": \"Close-up\",\n  \"brand\": \"Product visible\",\n  \"emotion\": \"technical\",\n  \"movement\": \"Slow\",\n  \"audio\": {\n    \"has_voiceover\": false,\n    \"voiceover_transcript\": null,\n    \"music\": null,\n    \"sfx\": [\n      \"low rumble of a vehicle engine\",\n      \"crunching sound of tires on gravel\"\n    ],\n    \"ambient\": \"low mechanical hum\"\n  },\n  \"subject_bbox\": {\n    \"box_2d\": [203, 225, 848, 654],\n    \"label\": \"rotating black wheel of the blue vehicle\"\n  },\n  \"brand_mark_bbox\": {\n    \"box_2d\": [553, 395, 629, 437],\n    \"label\": \"Mercedes-Benz star logo on the wheel hub\"\n  },\n  \"physical_brand_marks\": [\n    {\n      \"box_2d\": [553, 395, 629, 437],\n      \"label\": \"Mercedes-Benz star logo on the wheel hub\"\n    }\n  ],\n  \"graphics\": {\n    \"has_text_on_screen\": true,\n    \"text_content\": \"Mercedes-Benz G 580 mit EQ-Technologie | Energieverbrauch kombiniert:\\n30,3-27,7 kWh/100 km | CO2-Emissionen kombiniert: 0 g/km | CO2-Klasse: A\",\n    \"text_role\": \"legal_disclaimer\",\n    \"has_logo\": false,\n    \"logo_description\": null,\n    \"other_graphics\": null,\n    \"bboxes\": [\n      {\n        \"box_2d\": [839, 183, 912, 816],\n        \"role\": \"legal_disclaimer\",\n        \"kind\": \"overlay\",\n        \"label\": \"Mercedes-Benz G 580 legal disclaimer text\"\n      }\n    ],\n    \"removal_hint\": {\n      \"mask_strategy\": \"luma_bright\",\n      \"text_color_family\": \"white\",\n      \"text_is_bright\": true,\n      \"luma_threshold_hint\": 195,\n      \"hsv_range_hint\": null,\n      \"coverage_estimate_pct\": 5,\n      \"position\": \"bottom\",\n      \"animated\": false\n    }\n  },\n  \"cut_type\": \"unknown\",\n  \"tempo_cue\": \"slow\",\n  \"is_end_card\": false\n}",
+        "model": "gemini-3.5-flash",
+        "usage": {
+          "promptTokenCount": 4702,
+          "candidatesTokenCount": 907,
+          "totalTokenCount": 5609,
+          "cachedContentTokenCount": 3924,
+          "promptTokensDetails": [
+            {
+              "modality": "VIDEO",
+              "tokenCount": 81
+            },
+            {
+              "modality": "TEXT",
+              "tokenCount": 4621
+            }
+          ],
+          "cacheTokensDetails": [
+            {
+              "modality": "VIDEO",
+              "tokenCount": 67
+            },
+            {
+              "modality": "TEXT",
+              "tokenCount": 3857
+            }
+          ],
+          "serviceTier": "standard"
+        }
+      },
+      "videoAnalysisError": null,
+      "captionError": null,
+      "optimizations": [
+        {
+          "version": "V01",
+          "path": "F:\\Proyectos\\Kissd ReEdit\\The Rise of Electric\\.reedit\\optimized\\scene-005_V01.mp4",
+          "model": null,
+          "createdAt": "2026-05-27T20:05:02.662Z",
+          "workflowJsonPath": "F:\\Proyectos\\Kissd ReEdit\\The Rise of Electric\\.reedit\\optimized\\scene-005_V01.workflow.json"
+        }
+      ],
+      "activeOptimizationVersion": "V01"
+    },
+    {
+      "index": 6,
+      "id": "scene-006",
+      "tcIn": 8.48,
+      "tcOut": 9.36,
+      "duration": 0.879999999999999,
+      "thumbnail": "F:/Proyectos/Kissd ReEdit/The Rise of Electric/.reedit/scenes/scene-006.jpg",
+      "caption": "A low-angle, dynamic tracking shot of a blue Mercedes-Benz G-Class climbing a steep, rocky mountain path at dusk. The vehicle is angled sharply, navigating rugged terrain under a dramatic, cloudy sky with soft, cool twilight. The camera tracks alongside the vehicle, emphasizing its off-road capability with a shallow depth of field that keeps the car sharp against the soft mountain backdrop.",
+      "structured": {
+        "visual": "A low-angle, dynamic tracking shot of a blue Mercedes-Benz G-Class climbing a steep, rocky mountain path at dusk. The vehicle is angled sharply, navigating rugged terrain under a dramatic, cloudy sky with soft, cool twilight. The camera tracks alongside the vehicle, emphasizing its off-road capability with a shallow depth of field that keeps the car sharp against the soft mountain backdrop.",
+        "brand": "Product visible",
+        "emotion": "freedom",
+        "framing": "Wide",
+        "movement": "High",
+        "audio": null,
+        "rawText": "{\n  \"visual\": \"A low-angle, dynamic tracking shot of a blue Mercedes-Benz G-Class climbing a steep, rocky mountain path at dusk. The vehicle is angled sharply, navigating rugged terrain under a dramatic, cloudy sky with soft, cool twilight. The camera tracks alongside the vehicle, emphasizing its off-road capability with a shallow depth of field that keeps the car sharp against the soft mountain backdrop.\",\n  \"cinematography\": {\n    \"shot_size\": \"medium_long\",\n    \"camera_angle\": \"low_angle\",\n    \"camera_movement_quality\": \"vehicle_mount\",\n    \"lens_characteristic\": \"wide\",\n    \"depth_of_field\": \"shallow\",\n    \"focus_dynamics\": \"focus_pull\",\n    \"composition\": \"diagonal\",\n    \"lighting_style\": \"blue_hour\",\n    \"color_palette\": \"deep blue, slate gray, warm twilight orange\",\n    \"special_techniques\": []\n  },\n  \"camera_movement\": \"vehicle_tracking\",\n  \"camera_movement_intensity\": \"moderate\",\n  \"subject_motion\": \"moderate\",\n  \"subject_motion_direction\": \"toward camera\",\n  \"objects\": [\n    \"SUV\",\n    \"rocks\",\n    \"mountains\"\n  ],\n  \"framing\": \"Wide\",\n  \"brand\": \"Product visible\",\n  \"emotion\": \"freedom\",\n  \"movement\": \"High\",\n  \"audio\": null,\n  \"subject_bbox\": {\n    \"box_2d\": [238, 320, 665, 669],\n    \"label\": \"Mercedes-Benz G-Class climbing rocky terrain\"\n  },\n  \"brand_mark_bbox\": {\n    \"box_2d\": [257, 413, 319, 451],\n    \"label\": \"Mercedes-Benz star logo on grille\"\n  },\n  \"physical_brand_marks\": [\n    {\n      \"box_2d\": [257, 413, 319, 451],\n      \"label\": \"Mercedes-Benz star logo on grille\"\n    }\n  ],\n  \"graphics\": {\n    \"has_text_on_screen\": true,\n    \"text_content\": \"Mercedes-Benz G 580 mit EQ-Technologie | Energieverbrauch kombiniert:\\n30,3-27,7 kWh/100 km | CO₂-Emissionen kombiniert: 0 g/km | CO₂-Klasse: A\",\n    \"text_role\": \"legal_disclaimer\",\n    \"has_logo\": false,\n    \"logo_description\": null,\n    \"other_graphics\": null,\n    \"bboxes\": [\n      {\n        \"box_2d\": [833, 180, 915, 818],\n        \"role\": \"legal_disclaimer\",\n        \"kind\": \"overlay\",\n        \"label\": \"Mercedes-Benz G 580 legal disclaimer text\"\n      }\n    ],\n    \"removal_hint\": {\n      \"mask_strategy\": \"luma_bright\",\n      \"text_color_family\": \"white\",\n      \"text_is_bright\": true,\n      \"luma_threshold_hint\": 200,\n      \"hsv_range_hint\": null,\n      \"coverage_estimate_pct\": 5,\n      \"position\": \"bottom\",\n      \"animated\": false\n    }\n  },\n  \"cut_type\": \"unknown\",\n  \"tempo_cue\": \"mid\",\n  \"is_end_card\": false\n}",
+        "model": "gemini-3.5-flash"
+      },
+      "videoAnalysis": {
+        "visual": "A low-angle, dynamic tracking shot of a blue Mercedes-Benz G-Class climbing a steep, rocky mountain path at dusk. The vehicle is angled sharply, navigating rugged terrain under a dramatic, cloudy sky with soft, cool twilight. The camera tracks alongside the vehicle, emphasizing its off-road capability with a shallow depth of field that keeps the car sharp against the soft mountain backdrop.",
+        "cinematography": {
+          "shot_size": "medium_long",
+          "camera_angle": "low_angle",
+          "camera_movement_quality": "vehicle_mount",
+          "lens_characteristic": "wide",
+          "depth_of_field": "shallow",
+          "focus_dynamics": "focus_pull",
+          "composition": "diagonal",
+          "lighting_style": "blue_hour",
+          "color_palette": "deep blue, slate gray, warm twilight orange",
+          "special_techniques": []
+        },
+        "camera_movement": "vehicle_tracking",
+        "camera_movement_intensity": "moderate",
+        "subject_motion": "moderate",
+        "subject_motion_direction": "toward camera",
+        "objects": [
+          "SUV",
+          "rocks",
+          "mountains"
+        ],
+        "framing": "Wide",
+        "brand": "Product visible",
+        "emotion": "freedom",
+        "movement": "High",
+        "audio": null,
+        "graphics": {
+          "has_text_on_screen": true,
+          "text_content": "Mercedes-Benz G 580 mit EQ-Technologie | Energieverbrauch kombiniert:\n30,3-27,7 kWh/100 km | CO₂-Emissionen kombiniert: 0 g/km | CO₂-Klasse: A",
+          "text_role": "legal_disclaimer",
+          "has_logo": false,
+          "logo_description": null,
+          "other_graphics": null,
+          "bboxes": [
+            {
+              "box_2d": [
+                833,
+                180,
+                915,
+                818
+              ],
+              "role": "legal_disclaimer",
+              "kind": "overlay",
+              "label": "Mercedes-Benz G 580 legal disclaimer text"
+            }
+          ],
+          "removal_hint": {
+            "mask_strategy": "luma_bright",
+            "text_color_family": "white",
+            "text_is_bright": true,
+            "luma_threshold_hint": 200,
+            "hsv_range_hint": null,
+            "coverage_estimate_pct": 5,
+            "position": "bottom",
+            "animated": false
+          }
+        },
+        "subject_bbox": {
+          "box_2d": [
+            238,
+            320,
+            665,
+            669
+          ],
+          "label": "Mercedes-Benz G-Class climbing rocky terrain"
+        },
+        "brand_mark_bbox": {
+          "box_2d": [
+            257,
+            413,
+            319,
+            451
+          ],
+          "label": "Mercedes-Benz star logo on grille"
+        },
+        "physical_brand_marks": [
+          {
+            "box_2d": [
+              257,
+              413,
+              319,
+              451
+            ],
+            "label": "Mercedes-Benz star logo on grille"
+          }
+        ],
+        "cut_type": "unknown",
+        "tempo_cue": "mid",
+        "is_end_card": false,
+        "clipPath": "F:/Proyectos/Kissd ReEdit/The Rise of Electric/.reedit/clips/scene-006.mp4",
+        "rawText": "{\n  \"visual\": \"A low-angle, dynamic tracking shot of a blue Mercedes-Benz G-Class climbing a steep, rocky mountain path at dusk. The vehicle is angled sharply, navigating rugged terrain under a dramatic, cloudy sky with soft, cool twilight. The camera tracks alongside the vehicle, emphasizing its off-road capability with a shallow depth of field that keeps the car sharp against the soft mountain backdrop.\",\n  \"cinematography\": {\n    \"shot_size\": \"medium_long\",\n    \"camera_angle\": \"low_angle\",\n    \"camera_movement_quality\": \"vehicle_mount\",\n    \"lens_characteristic\": \"wide\",\n    \"depth_of_field\": \"shallow\",\n    \"focus_dynamics\": \"focus_pull\",\n    \"composition\": \"diagonal\",\n    \"lighting_style\": \"blue_hour\",\n    \"color_palette\": \"deep blue, slate gray, warm twilight orange\",\n    \"special_techniques\": []\n  },\n  \"camera_movement\": \"vehicle_tracking\",\n  \"camera_movement_intensity\": \"moderate\",\n  \"subject_motion\": \"moderate\",\n  \"subject_motion_direction\": \"toward camera\",\n  \"objects\": [\n    \"SUV\",\n    \"rocks\",\n    \"mountains\"\n  ],\n  \"framing\": \"Wide\",\n  \"brand\": \"Product visible\",\n  \"emotion\": \"freedom\",\n  \"movement\": \"High\",\n  \"audio\": null,\n  \"subject_bbox\": {\n    \"box_2d\": [238, 320, 665, 669],\n    \"label\": \"Mercedes-Benz G-Class climbing rocky terrain\"\n  },\n  \"brand_mark_bbox\": {\n    \"box_2d\": [257, 413, 319, 451],\n    \"label\": \"Mercedes-Benz star logo on grille\"\n  },\n  \"physical_brand_marks\": [\n    {\n      \"box_2d\": [257, 413, 319, 451],\n      \"label\": \"Mercedes-Benz star logo on grille\"\n    }\n  ],\n  \"graphics\": {\n    \"has_text_on_screen\": true,\n    \"text_content\": \"Mercedes-Benz G 580 mit EQ-Technologie | Energieverbrauch kombiniert:\\n30,3-27,7 kWh/100 km | CO₂-Emissionen kombiniert: 0 g/km | CO₂-Klasse: A\",\n    \"text_role\": \"legal_disclaimer\",\n    \"has_logo\": false,\n    \"logo_description\": null,\n    \"other_graphics\": null,\n    \"bboxes\": [\n      {\n        \"box_2d\": [833, 180, 915, 818],\n        \"role\": \"legal_disclaimer\",\n        \"kind\": \"overlay\",\n        \"label\": \"Mercedes-Benz G 580 legal disclaimer text\"\n      }\n    ],\n    \"removal_hint\": {\n      \"mask_strategy\": \"luma_bright\",\n      \"text_color_family\": \"white\",\n      \"text_is_bright\": true,\n      \"luma_threshold_hint\": 200,\n      \"hsv_range_hint\": null,\n      \"coverage_estimate_pct\": 5,\n      \"position\": \"bottom\",\n      \"animated\": false\n    }\n  },\n  \"cut_type\": \"unknown\",\n  \"tempo_cue\": \"mid\",\n  \"is_end_card\": false\n}",
+        "model": "gemini-3.5-flash",
+        "usage": {
+          "promptTokenCount": 4709,
+          "candidatesTokenCount": 840,
+          "totalTokenCount": 5549,
+          "cachedContentTokenCount": 3923,
+          "promptTokensDetails": [
+            {
+              "modality": "TEXT",
+              "tokenCount": 4621
+            },
+            {
+              "modality": "VIDEO",
+              "tokenCount": 88
+            }
+          ],
+          "cacheTokensDetails": [
+            {
+              "modality": "TEXT",
+              "tokenCount": 3850
+            },
+            {
+              "modality": "VIDEO",
+              "tokenCount": 73
+            }
+          ],
+          "serviceTier": "standard"
+        }
+      },
+      "videoAnalysisError": null,
+      "captionError": null,
+      "optimizations": [
+        {
+          "version": "V01",
+          "path": "F:\\Proyectos\\Kissd ReEdit\\The Rise of Electric\\.reedit\\optimized\\scene-006_V01.mp4",
+          "model": null,
+          "createdAt": "2026-05-27T20:05:38.375Z",
+          "workflowJsonPath": "F:\\Proyectos\\Kissd ReEdit\\The Rise of Electric\\.reedit\\optimized\\scene-006_V01.workflow.json"
+        }
+      ],
+      "activeOptimizationVersion": "V01"
+    },
+    {
+      "index": 7,
+      "id": "scene-007",
+      "tcIn": 9.36,
+      "tcOut": 11.2,
+      "duration": 1.8399999999999999,
+      "thumbnail": "F:/Proyectos/Kissd ReEdit/The Rise of Electric/.reedit/scenes/scene-007.jpg",
+      "caption": "A blue Mercedes-Benz G-Class SUV climbs a steep, rocky incline inside a dark, cavernous environment. The vehicle's headlights illuminate the rugged terrain ahead, casting dramatic shadows against the textured rock face. The camera tracks the vehicle's upward progress with a smooth, low-angle tracking shot, emphasizing the steepness of the slope and the car's off-road capability.",
+      "structured": {
+        "visual": "A blue Mercedes-Benz G-Class SUV climbs a steep, rocky incline inside a dark, cavernous environment. The vehicle's headlights illuminate the rugged terrain ahead, casting dramatic shadows against the textured rock face. The camera tracks the vehicle's upward progress with a smooth, low-angle tracking shot, emphasizing the steepness of the slope and the car's off-road capability.",
+        "brand": "Product visible",
+        "emotion": "focused",
+        "framing": "Medium",
+        "movement": "Moderate",
+        "audio": {
+          "has_voiceover": false,
+          "voiceover_transcript": null,
+          "music": "low, atmospheric synth drone, slow tempo, mysterious mood",
+          "sfx": [
+            "low rumble of an engine",
+            "tires crunching on loose gravel"
+          ],
+          "ambient": "subtle cave echo and low-frequency hum"
+        },
+        "rawText": "{\n  \"visual\": \"A blue Mercedes-Benz G-Class SUV climbs a steep, rocky incline inside a dark, cavernous environment. The vehicle's headlights illuminate the rugged terrain ahead, casting dramatic shadows against the textured rock face. The camera tracks the vehicle's upward progress with a smooth, low-angle tracking shot, emphasizing the steepness of the slope and the car's off-road capability.\",\n  \"cinematography\": {\n    \"shot_size\": \"medium_long\",\n    \"camera_angle\": \"low_angle\",\n    \"camera_movement_quality\": \"gimbal\",\n    \"lens_characteristic\": \"normal\",\n    \"depth_of_field\": \"medium\",\n    \"focus_dynamics\": \"focus_pull\",\n    \"composition\": \"diagonal\",\n    \"lighting_style\": \"low_key\",\n    \"color_palette\": \"deep blue, slate gray, warm headlight glow\",\n    \"special_techniques\": []\n  },\n  \"camera_movement\": \"truck_right\",\n  \"camera_movement_intensity\": \"moderate\",\n  \"subject_motion\": \"moderate\",\n  \"subject_motion_direction\": \"left-to-right\",\n  \"objects\": [\n    \"SUV\",\n    \"rocks\",\n    \"cave\"\n  ],\n  \"framing\": \"Medium\",\n  \"brand\": \"Product visible\",\n  \"emotion\": \"focused\",\n  \"movement\": \"Moderate\",\n  \"audio\": {\n    \"has_voiceover\": false,\n    \"voiceover_transcript\": null,\n    \"music\": \"low, atmospheric synth drone, slow tempo, mysterious mood\",\n    \"sfx\": [\n      \"low rumble of an engine\",\n      \"tires crunching on loose gravel\"\n    ],\n    \"ambient\": \"subtle cave echo and low-frequency hum\"\n  },\n  \"subject_bbox\": {\n    \"box_2d\": [354, 310, 646, 603],\n    \"label\": \"blue Mercedes-Benz G-Class SUV climbing steep rocks\"\n  },\n  \"brand_mark_bbox\": null,\n  \"physical_brand_marks\": [],\n  \"graphics\": null,\n  \"cut_type\": \"hard_cut\",\n  \"tempo_cue\": \"slow\",\n  \"is_end_card\": false\n}",
+        "model": "gemini-3.5-flash"
+      },
+      "videoAnalysis": {
+        "visual": "A blue Mercedes-Benz G-Class SUV climbs a steep, rocky incline inside a dark, cavernous environment. The vehicle's headlights illuminate the rugged terrain ahead, casting dramatic shadows against the textured rock face. The camera tracks the vehicle's upward progress with a smooth, low-angle tracking shot, emphasizing the steepness of the slope and the car's off-road capability.",
+        "cinematography": {
+          "shot_size": "medium_long",
+          "camera_angle": "low_angle",
+          "camera_movement_quality": "gimbal",
+          "lens_characteristic": "normal",
+          "depth_of_field": "medium",
+          "focus_dynamics": "focus_pull",
+          "composition": "diagonal",
+          "lighting_style": "low_key",
+          "color_palette": "deep blue, slate gray, warm headlight glow",
+          "special_techniques": []
+        },
+        "camera_movement": "truck_right",
+        "camera_movement_intensity": "moderate",
+        "subject_motion": "moderate",
+        "subject_motion_direction": "left-to-right",
+        "objects": [
+          "SUV",
+          "rocks",
+          "cave"
+        ],
+        "framing": "Medium",
+        "brand": "Product visible",
+        "emotion": "focused",
+        "movement": "Moderate",
+        "audio": {
+          "has_voiceover": false,
+          "voiceover_transcript": null,
+          "music": "low, atmospheric synth drone, slow tempo, mysterious mood",
+          "sfx": [
+            "low rumble of an engine",
+            "tires crunching on loose gravel"
+          ],
+          "ambient": "subtle cave echo and low-frequency hum"
+        },
+        "graphics": null,
+        "subject_bbox": {
+          "box_2d": [
+            354,
+            310,
+            646,
+            603
+          ],
+          "label": "blue Mercedes-Benz G-Class SUV climbing steep rocks"
+        },
+        "brand_mark_bbox": null,
+        "physical_brand_marks": [],
+        "cut_type": "hard_cut",
+        "tempo_cue": "slow",
+        "is_end_card": false,
+        "clipPath": "F:/Proyectos/Kissd ReEdit/The Rise of Electric/.reedit/clips/scene-007.mp4",
+        "rawText": "{\n  \"visual\": \"A blue Mercedes-Benz G-Class SUV climbs a steep, rocky incline inside a dark, cavernous environment. The vehicle's headlights illuminate the rugged terrain ahead, casting dramatic shadows against the textured rock face. The camera tracks the vehicle's upward progress with a smooth, low-angle tracking shot, emphasizing the steepness of the slope and the car's off-road capability.\",\n  \"cinematography\": {\n    \"shot_size\": \"medium_long\",\n    \"camera_angle\": \"low_angle\",\n    \"camera_movement_quality\": \"gimbal\",\n    \"lens_characteristic\": \"normal\",\n    \"depth_of_field\": \"medium\",\n    \"focus_dynamics\": \"focus_pull\",\n    \"composition\": \"diagonal\",\n    \"lighting_style\": \"low_key\",\n    \"color_palette\": \"deep blue, slate gray, warm headlight glow\",\n    \"special_techniques\": []\n  },\n  \"camera_movement\": \"truck_right\",\n  \"camera_movement_intensity\": \"moderate\",\n  \"subject_motion\": \"moderate\",\n  \"subject_motion_direction\": \"left-to-right\",\n  \"objects\": [\n    \"SUV\",\n    \"rocks\",\n    \"cave\"\n  ],\n  \"framing\": \"Medium\",\n  \"brand\": \"Product visible\",\n  \"emotion\": \"focused\",\n  \"movement\": \"Moderate\",\n  \"audio\": {\n    \"has_voiceover\": false,\n    \"voiceover_transcript\": null,\n    \"music\": \"low, atmospheric synth drone, slow tempo, mysterious mood\",\n    \"sfx\": [\n      \"low rumble of an engine\",\n      \"tires crunching on loose gravel\"\n    ],\n    \"ambient\": \"subtle cave echo and low-frequency hum\"\n  },\n  \"subject_bbox\": {\n    \"box_2d\": [354, 310, 646, 603],\n    \"label\": \"blue Mercedes-Benz G-Class SUV climbing steep rocks\"\n  },\n  \"brand_mark_bbox\": null,\n  \"physical_brand_marks\": [],\n  \"graphics\": null,\n  \"cut_type\": \"hard_cut\",\n  \"tempo_cue\": \"slow\",\n  \"is_end_card\": false\n}",
+        "model": "gemini-3.5-flash",
+        "usage": {
+          "promptTokenCount": 4799,
+          "candidatesTokenCount": 535,
+          "totalTokenCount": 5334,
+          "cachedContentTokenCount": 3916,
+          "promptTokensDetails": [
+            {
+              "modality": "TEXT",
+              "tokenCount": 4621
+            },
+            {
+              "modality": "VIDEO",
+              "tokenCount": 178
+            }
+          ],
+          "cacheTokensDetails": [
+            {
+              "modality": "VIDEO",
+              "tokenCount": 145
+            },
+            {
+              "modality": "TEXT",
+              "tokenCount": 3771
+            }
+          ],
+          "serviceTier": "standard"
+        }
+      },
+      "videoAnalysisError": null,
+      "captionError": null
+    },
+    {
+      "index": 8,
+      "id": "scene-008",
+      "tcIn": 11.2,
+      "tcOut": 12.12,
+      "duration": 0.9199999999999999,
+      "thumbnail": "F:/Proyectos/Kissd ReEdit/The Rise of Electric/.reedit/scenes/scene-008.jpg",
+      "caption": "A medium close-up shot captures a person in dark blue overalls climbing a wet, dark rock face. The scene is dimly lit with a cool, blue-toned key light that accentuates the texture of the glistening rock and the fabric of the clothing. The camera remains static, focusing on the climber's effort as they ascend.",
+      "structured": {
+        "visual": "A medium close-up shot captures a person in dark blue overalls climbing a wet, dark rock face. The scene is dimly lit with a cool, blue-toned key light that accentuates the texture of the glistening rock and the fabric of the clothing. The camera remains static, focusing on the climber's effort as they ascend.",
+        "brand": "None",
+        "emotion": "focused",
+        "framing": "Medium",
+        "movement": "Slow",
+        "audio": {
+          "has_voiceover": false,
+          "voiceover_transcript": null,
+          "music": "low-frequency ambient drone, tense and atmospheric",
+          "sfx": [
+            "squelch of wet fabric and movement"
+          ],
+          "ambient": "subtle dripping water"
+        },
+        "rawText": "{\n  \"visual\": \"A medium close-up shot captures a person in dark blue overalls climbing a wet, dark rock face. The scene is dimly lit with a cool, blue-toned key light that accentuates the texture of the glistening rock and the fabric of the clothing. The camera remains static, focusing on the climber's effort as they ascend.\",\n  \"cinematography\": {\n    \"shot_size\": \"medium_close_up\",\n    \"camera_angle\": \"eye_level\",\n    \"camera_movement_quality\": \"locked_off\",\n    \"lens_characteristic\": \"normal\",\n    \"depth_of_field\": \"medium\",\n    \"focus_dynamics\": \"locked\",\n    \"composition\": \"diagonal\",\n    \"lighting_style\": \"low_key\",\n    \"color_palette\": \"deep blue, dark charcoal, cool white highlights\",\n    \"special_techniques\": []\n  },\n  \"camera_movement\": \"static\",\n  \"camera_movement_intensity\": \"none\",\n  \"subject_motion\": \"slow\",\n  \"subject_motion_direction\": \"upward\",\n  \"objects\": [\n    \"climber\",\n    \"rock face\"\n  ],\n  \"framing\": \"Medium\",\n  \"brand\": \"None\",\n  \"emotion\": \"focused\",\n  \"movement\": \"Slow\",\n  \"audio\": {\n    \"has_voiceover\": false,\n    \"voiceover_transcript\": null,\n    \"music\": \"low-frequency ambient drone, tense and atmospheric\",\n    \"sfx\": [\n      \"squelch of wet fabric and movement\"\n    ],\n    \"ambient\": \"subtle dripping water\"\n  },\n  \"subject_bbox\": {\n    \"box_2d\": [0, 0, 994, 680],\n    \"label\": \"climber in blue overalls\"\n  },\n  \"brand_mark_bbox\": null,\n  \"physical_brand_marks\": [],\n  \"graphics\": null,\n  \"cut_type\": \"unknown\",\n  \"tempo_cue\": \"slow\",\n  \"is_end_card\": false\n}",
+        "model": "gemini-3.5-flash"
+      },
+      "videoAnalysis": {
+        "visual": "A medium close-up shot captures a person in dark blue overalls climbing a wet, dark rock face. The scene is dimly lit with a cool, blue-toned key light that accentuates the texture of the glistening rock and the fabric of the clothing. The camera remains static, focusing on the climber's effort as they ascend.",
+        "cinematography": {
+          "shot_size": "medium_close_up",
+          "camera_angle": "eye_level",
+          "camera_movement_quality": "locked_off",
+          "lens_characteristic": "normal",
+          "depth_of_field": "medium",
+          "focus_dynamics": "locked",
+          "composition": "diagonal",
+          "lighting_style": "low_key",
+          "color_palette": "deep blue, dark charcoal, cool white highlights",
+          "special_techniques": []
+        },
+        "camera_movement": "static",
+        "camera_movement_intensity": "none",
+        "subject_motion": "slow",
+        "subject_motion_direction": "upward",
+        "objects": [
+          "climber",
+          "rock face"
+        ],
+        "framing": "Medium",
+        "brand": "None",
+        "emotion": "focused",
+        "movement": "Slow",
+        "audio": {
+          "has_voiceover": false,
+          "voiceover_transcript": null,
+          "music": "low-frequency ambient drone, tense and atmospheric",
+          "sfx": [
+            "squelch of wet fabric and movement"
+          ],
+          "ambient": "subtle dripping water"
+        },
+        "graphics": null,
+        "subject_bbox": {
+          "box_2d": [
+            0,
+            0,
+            994,
+            680
+          ],
+          "label": "climber in blue overalls"
+        },
+        "brand_mark_bbox": null,
+        "physical_brand_marks": [],
+        "cut_type": "unknown",
+        "tempo_cue": "slow",
+        "is_end_card": false,
+        "clipPath": "F:/Proyectos/Kissd ReEdit/The Rise of Electric/.reedit/clips/scene-008.mp4",
+        "rawText": "{\n  \"visual\": \"A medium close-up shot captures a person in dark blue overalls climbing a wet, dark rock face. The scene is dimly lit with a cool, blue-toned key light that accentuates the texture of the glistening rock and the fabric of the clothing. The camera remains static, focusing on the climber's effort as they ascend.\",\n  \"cinematography\": {\n    \"shot_size\": \"medium_close_up\",\n    \"camera_angle\": \"eye_level\",\n    \"camera_movement_quality\": \"locked_off\",\n    \"lens_characteristic\": \"normal\",\n    \"depth_of_field\": \"medium\",\n    \"focus_dynamics\": \"locked\",\n    \"composition\": \"diagonal\",\n    \"lighting_style\": \"low_key\",\n    \"color_palette\": \"deep blue, dark charcoal, cool white highlights\",\n    \"special_techniques\": []\n  },\n  \"camera_movement\": \"static\",\n  \"camera_movement_intensity\": \"none\",\n  \"subject_motion\": \"slow\",\n  \"subject_motion_direction\": \"upward\",\n  \"objects\": [\n    \"climber\",\n    \"rock face\"\n  ],\n  \"framing\": \"Medium\",\n  \"brand\": \"None\",\n  \"emotion\": \"focused\",\n  \"movement\": \"Slow\",\n  \"audio\": {\n    \"has_voiceover\": false,\n    \"voiceover_transcript\": null,\n    \"music\": \"low-frequency ambient drone, tense and atmospheric\",\n    \"sfx\": [\n      \"squelch of wet fabric and movement\"\n    ],\n    \"ambient\": \"subtle dripping water\"\n  },\n  \"subject_bbox\": {\n    \"box_2d\": [0, 0, 994, 680],\n    \"label\": \"climber in blue overalls\"\n  },\n  \"brand_mark_bbox\": null,\n  \"physical_brand_marks\": [],\n  \"graphics\": null,\n  \"cut_type\": \"unknown\",\n  \"tempo_cue\": \"slow\",\n  \"is_end_card\": false\n}",
+        "model": "gemini-3.5-flash",
+        "usage": {
+          "promptTokenCount": 4710,
+          "candidatesTokenCount": 487,
+          "totalTokenCount": 5197,
+          "cachedContentTokenCount": 3924,
+          "promptTokensDetails": [
+            {
+              "modality": "VIDEO",
+              "tokenCount": 89
+            },
+            {
+              "modality": "TEXT",
+              "tokenCount": 4621
+            }
+          ],
+          "cacheTokensDetails": [
+            {
+              "modality": "VIDEO",
+              "tokenCount": 74
+            },
+            {
+              "modality": "TEXT",
+              "tokenCount": 3850
+            }
+          ],
+          "serviceTier": "standard"
+        }
+      },
+      "videoAnalysisError": null,
+      "captionError": null
+    },
+    {
+      "index": 9,
+      "id": "scene-009",
+      "tcIn": 12.12,
+      "tcOut": 12.64,
+      "duration": 0.5200000000000014,
+      "thumbnail": "F:/Proyectos/Kissd ReEdit/The Rise of Electric/.reedit/scenes/scene-009.jpg",
+      "caption": "An extreme close-up shot captures a dark, textured, rocky surface sliding diagonally across the frame. The lighting is low-key and dramatic, casting deep shadows and highlighting the rough, craggy texture of the material. The camera remains locked-off as the dark mass moves rapidly from the top right toward the bottom left, kicking up fine dust and debris.",
+      "structured": {
+        "visual": "An extreme close-up shot captures a dark, textured, rocky surface sliding diagonally across the frame. The lighting is low-key and dramatic, casting deep shadows and highlighting the rough, craggy texture of the material. The camera remains locked-off as the dark mass moves rapidly from the top right toward the bottom left, kicking up fine dust and debris.",
+        "brand": "None",
+        "emotion": "tense",
+        "framing": "ECU",
+        "movement": "High",
+        "audio": {
+          "has_voiceover": false,
+          "voiceover_transcript": null,
+          "music": "low, ominous ambient drone",
+          "sfx": [
+            "scraping and grinding of heavy stone"
+          ],
+          "ambient": "low-frequency rumble"
+        },
+        "rawText": "{\n  \"visual\": \"An extreme close-up shot captures a dark, textured, rocky surface sliding diagonally across the frame. The lighting is low-key and dramatic, casting deep shadows and highlighting the rough, craggy texture of the material. The camera remains locked-off as the dark mass moves rapidly from the top right toward the bottom left, kicking up fine dust and debris.\",\n  \"cinematography\": {\n    \"shot_size\": \"extreme_close_up\",\n    \"camera_angle\": \"high_angle\",\n    \"camera_movement_quality\": \"locked_off\",\n    \"lens_characteristic\": \"macro\",\n    \"depth_of_field\": \"shallow\",\n    \"focus_dynamics\": \"locked\",\n    \"composition\": \"diagonal\",\n    \"lighting_style\": \"low_key\",\n    \"color_palette\": \"charcoal, dark slate, cool gray\",\n    \"special_techniques\": []\n  },\n  \"camera_movement\": \"static\",\n  \"camera_movement_intensity\": \"none\",\n  \"subject_motion\": \"fast\",\n  \"subject_motion_direction\": \"top-right to bottom-left\",\n  \"objects\": [\n    \"rock\",\n    \"debris\",\n    \"dust\"\n  ],\n  \"framing\": \"ECU\",\n  \"brand\": \"None\",\n  \"emotion\": \"tense\",\n  \"movement\": \"High\",\n  \"audio\": {\n    \"has_voiceover\": false,\n    \"voiceover_transcript\": null,\n    \"music\": \"low, ominous ambient drone\",\n    \"sfx\": [\n      \"scraping and grinding of heavy stone\"\n    ],\n    \"ambient\": \"low-frequency rumble\"\n  },\n  \"subject_bbox\": {\n    \"box_2d\": [\n      0,\n      400,\n      310,\n      640\n    ],\n    \"label\": \"textured rock surface\"\n  },\n  \"brand_mark_bbox\": null,\n  \"physical_brand_marks\": [],\n  \"graphics\": null,\n  \"cut_type\": \"unknown\",\n  \"tempo_cue\": \"mid\",\n  \"is_end_card\": false\n}",
+        "model": "gemini-3.5-flash"
+      },
+      "videoAnalysis": {
+        "visual": "An extreme close-up shot captures a dark, textured, rocky surface sliding diagonally across the frame. The lighting is low-key and dramatic, casting deep shadows and highlighting the rough, craggy texture of the material. The camera remains locked-off as the dark mass moves rapidly from the top right toward the bottom left, kicking up fine dust and debris.",
+        "cinematography": {
+          "shot_size": "extreme_close_up",
+          "camera_angle": "high_angle",
+          "camera_movement_quality": "locked_off",
+          "lens_characteristic": "macro",
+          "depth_of_field": "shallow",
+          "focus_dynamics": "locked",
+          "composition": "diagonal",
+          "lighting_style": "low_key",
+          "color_palette": "charcoal, dark slate, cool gray",
+          "special_techniques": []
+        },
+        "camera_movement": "static",
+        "camera_movement_intensity": "none",
+        "subject_motion": "fast",
+        "subject_motion_direction": "top-right to bottom-left",
+        "objects": [
+          "rock",
+          "debris",
+          "dust"
+        ],
+        "framing": "ECU",
+        "brand": "None",
+        "emotion": "tense",
+        "movement": "High",
+        "audio": {
+          "has_voiceover": false,
+          "voiceover_transcript": null,
+          "music": "low, ominous ambient drone",
+          "sfx": [
+            "scraping and grinding of heavy stone"
+          ],
+          "ambient": "low-frequency rumble"
+        },
+        "graphics": null,
+        "subject_bbox": {
+          "box_2d": [
+            0,
+            400,
+            310,
+            640
+          ],
+          "label": "textured rock surface"
+        },
+        "brand_mark_bbox": null,
+        "physical_brand_marks": [],
+        "cut_type": "unknown",
+        "tempo_cue": "mid",
+        "is_end_card": false,
+        "clipPath": "F:/Proyectos/Kissd ReEdit/The Rise of Electric/.reedit/clips/scene-009.mp4",
+        "rawText": "{\n  \"visual\": \"An extreme close-up shot captures a dark, textured, rocky surface sliding diagonally across the frame. The lighting is low-key and dramatic, casting deep shadows and highlighting the rough, craggy texture of the material. The camera remains locked-off as the dark mass moves rapidly from the top right toward the bottom left, kicking up fine dust and debris.\",\n  \"cinematography\": {\n    \"shot_size\": \"extreme_close_up\",\n    \"camera_angle\": \"high_angle\",\n    \"camera_movement_quality\": \"locked_off\",\n    \"lens_characteristic\": \"macro\",\n    \"depth_of_field\": \"shallow\",\n    \"focus_dynamics\": \"locked\",\n    \"composition\": \"diagonal\",\n    \"lighting_style\": \"low_key\",\n    \"color_palette\": \"charcoal, dark slate, cool gray\",\n    \"special_techniques\": []\n  },\n  \"camera_movement\": \"static\",\n  \"camera_movement_intensity\": \"none\",\n  \"subject_motion\": \"fast\",\n  \"subject_motion_direction\": \"top-right to bottom-left\",\n  \"objects\": [\n    \"rock\",\n    \"debris\",\n    \"dust\"\n  ],\n  \"framing\": \"ECU\",\n  \"brand\": \"None\",\n  \"emotion\": \"tense\",\n  \"movement\": \"High\",\n  \"audio\": {\n    \"has_voiceover\": false,\n    \"voiceover_transcript\": null,\n    \"music\": \"low, ominous ambient drone\",\n    \"sfx\": [\n      \"scraping and grinding of heavy stone\"\n    ],\n    \"ambient\": \"low-frequency rumble\"\n  },\n  \"subject_bbox\": {\n    \"box_2d\": [\n      0,\n      400,\n      310,\n      640\n    ],\n    \"label\": \"textured rock surface\"\n  },\n  \"brand_mark_bbox\": null,\n  \"physical_brand_marks\": [],\n  \"graphics\": null,\n  \"cut_type\": \"unknown\",\n  \"tempo_cue\": \"mid\",\n  \"is_end_card\": false\n}",
+        "model": "gemini-3.5-flash",
+        "usage": {
+          "promptTokenCount": 4700,
+          "candidatesTokenCount": 502,
+          "totalTokenCount": 5202,
+          "cachedContentTokenCount": 3923,
+          "promptTokensDetails": [
+            {
+              "modality": "TEXT",
+              "tokenCount": 4621
+            },
+            {
+              "modality": "VIDEO",
+              "tokenCount": 79
+            }
+          ],
+          "cacheTokensDetails": [
+            {
+              "modality": "VIDEO",
+              "tokenCount": 65
+            },
+            {
+              "modality": "TEXT",
+              "tokenCount": 3858
+            }
+          ],
+          "serviceTier": "standard"
+        }
+      },
+      "videoAnalysisError": null,
+      "captionError": null
+    },
+    {
+      "index": 10,
+      "id": "scene-010",
+      "tcIn": 12.64,
+      "tcOut": 13.44,
+      "duration": 0.7999999999999989,
+      "thumbnail": "F:/Proyectos/Kissd ReEdit/The Rise of Electric/.reedit/scenes/scene-010.jpg",
+      "caption": "A shallow-DOF medium close-up captures two figures in heavy winter gear on a rocky, dark terrain at night. One figure in the foreground, wearing a light-colored jacket with orange straps, leans forward while another hooded figure in the background reaches out to assist. The scene is lit with a cool, blue-toned key light, creating a dramatic, low-key atmosphere.",
+      "structured": {
+        "visual": "A shallow-DOF medium close-up captures two figures in heavy winter gear on a rocky, dark terrain at night. One figure in the foreground, wearing a light-colored jacket with orange straps, leans forward while another hooded figure in the background reaches out to assist. The scene is lit with a cool, blue-toned key light, creating a dramatic, low-key atmosphere.",
+        "brand": "None",
+        "emotion": "tense",
+        "framing": "Medium",
+        "movement": "Slow",
+        "audio": {
+          "has_voiceover": false,
+          "voiceover_transcript": null,
+          "music": "low-frequency ambient drone, tense, slow tempo",
+          "sfx": [],
+          "ambient": "subtle wind howl"
+        },
+        "rawText": "{\n  \"visual\": \"A shallow-DOF medium close-up captures two figures in heavy winter gear on a rocky, dark terrain at night. One figure in the foreground, wearing a light-colored jacket with orange straps, leans forward while another hooded figure in the background reaches out to assist. The scene is lit with a cool, blue-toned key light, creating a dramatic, low-key atmosphere.\",\n  \"cinematography\": {\n    \"shot_size\": \"medium_close_up\",\n    \"camera_angle\": \"eye_level\",\n    \"camera_movement_quality\": \"locked_off\",\n    \"lens_characteristic\": \"normal\",\n    \"depth_of_field\": \"shallow\",\n    \"focus_dynamics\": \"locked\",\n    \"composition\": \"diagonal\",\n    \"lighting_style\": \"low_key\",\n    \"color_palette\": \"cool blue, slate gray, muted orange\",\n    \"special_techniques\": []\n  },\n  \"camera_movement\": \"static\",\n  \"camera_movement_intensity\": \"none\",\n  \"subject_motion\": \"slow\",\n  \"subject_motion_direction\": \"stationary\",\n  \"objects\": [\n    \"winter jacket\",\n    \"hood\",\n    \"straps\",\n    \"rocks\"\n  ],\n  \"framing\": \"Medium\",\n  \"brand\": \"None\",\n  \"emotion\": \"tense\",\n  \"movement\": \"Slow\",\n  \"audio\": {\n    \"has_voiceover\": false,\n    \"voiceover_transcript\": null,\n    \"music\": \"low-frequency ambient drone, tense, slow tempo\",\n    \"sfx\": [],\n    \"ambient\": \"subtle wind howl\"\n  },\n  \"subject_bbox\": {\n    \"box_2d\": [168, 559, 902, 998],\n    \"label\": \"hooded figure reaching out\"\n  },\n  \"brand_mark_bbox\": null,\n  \"physical_brand_marks\": [],\n  \"graphics\": null,\n  \"cut_type\": \"unknown\",\n  \"tempo_cue\": \"slow\",\n  \"is_end_card\": false\n}",
+        "model": "gemini-3.5-flash"
+      },
+      "videoAnalysis": {
+        "visual": "A shallow-DOF medium close-up captures two figures in heavy winter gear on a rocky, dark terrain at night. One figure in the foreground, wearing a light-colored jacket with orange straps, leans forward while another hooded figure in the background reaches out to assist. The scene is lit with a cool, blue-toned key light, creating a dramatic, low-key atmosphere.",
+        "cinematography": {
+          "shot_size": "medium_close_up",
+          "camera_angle": "eye_level",
+          "camera_movement_quality": "locked_off",
+          "lens_characteristic": "normal",
+          "depth_of_field": "shallow",
+          "focus_dynamics": "locked",
+          "composition": "diagonal",
+          "lighting_style": "low_key",
+          "color_palette": "cool blue, slate gray, muted orange",
+          "special_techniques": []
+        },
+        "camera_movement": "static",
+        "camera_movement_intensity": "none",
+        "subject_motion": "slow",
+        "subject_motion_direction": "stationary",
+        "objects": [
+          "winter jacket",
+          "hood",
+          "straps",
+          "rocks"
+        ],
+        "framing": "Medium",
+        "brand": "None",
+        "emotion": "tense",
+        "movement": "Slow",
+        "audio": {
+          "has_voiceover": false,
+          "voiceover_transcript": null,
+          "music": "low-frequency ambient drone, tense, slow tempo",
+          "sfx": [],
+          "ambient": "subtle wind howl"
+        },
+        "graphics": null,
+        "subject_bbox": {
+          "box_2d": [
+            168,
+            559,
+            902,
+            998
+          ],
+          "label": "hooded figure reaching out"
+        },
+        "brand_mark_bbox": null,
+        "physical_brand_marks": [],
+        "cut_type": "unknown",
+        "tempo_cue": "slow",
+        "is_end_card": false,
+        "clipPath": "F:/Proyectos/Kissd ReEdit/The Rise of Electric/.reedit/clips/scene-010.mp4",
+        "rawText": "{\n  \"visual\": \"A shallow-DOF medium close-up captures two figures in heavy winter gear on a rocky, dark terrain at night. One figure in the foreground, wearing a light-colored jacket with orange straps, leans forward while another hooded figure in the background reaches out to assist. The scene is lit with a cool, blue-toned key light, creating a dramatic, low-key atmosphere.\",\n  \"cinematography\": {\n    \"shot_size\": \"medium_close_up\",\n    \"camera_angle\": \"eye_level\",\n    \"camera_movement_quality\": \"locked_off\",\n    \"lens_characteristic\": \"normal\",\n    \"depth_of_field\": \"shallow\",\n    \"focus_dynamics\": \"locked\",\n    \"composition\": \"diagonal\",\n    \"lighting_style\": \"low_key\",\n    \"color_palette\": \"cool blue, slate gray, muted orange\",\n    \"special_techniques\": []\n  },\n  \"camera_movement\": \"static\",\n  \"camera_movement_intensity\": \"none\",\n  \"subject_motion\": \"slow\",\n  \"subject_motion_direction\": \"stationary\",\n  \"objects\": [\n    \"winter jacket\",\n    \"hood\",\n    \"straps\",\n    \"rocks\"\n  ],\n  \"framing\": \"Medium\",\n  \"brand\": \"None\",\n  \"emotion\": \"tense\",\n  \"movement\": \"Slow\",\n  \"audio\": {\n    \"has_voiceover\": false,\n    \"voiceover_transcript\": null,\n    \"music\": \"low-frequency ambient drone, tense, slow tempo\",\n    \"sfx\": [],\n    \"ambient\": \"subtle wind howl\"\n  },\n  \"subject_bbox\": {\n    \"box_2d\": [168, 559, 902, 998],\n    \"label\": \"hooded figure reaching out\"\n  },\n  \"brand_mark_bbox\": null,\n  \"physical_brand_marks\": [],\n  \"graphics\": null,\n  \"cut_type\": \"unknown\",\n  \"tempo_cue\": \"slow\",\n  \"is_end_card\": false\n}",
+        "model": "gemini-3.5-flash",
+        "usage": {
+          "promptTokenCount": 4707,
+          "candidatesTokenCount": 495,
+          "totalTokenCount": 5202,
+          "cachedContentTokenCount": 3923,
+          "promptTokensDetails": [
+            {
+              "modality": "TEXT",
+              "tokenCount": 4621
+            },
+            {
+              "modality": "VIDEO",
+              "tokenCount": 86
+            }
+          ],
+          "cacheTokensDetails": [
+            {
+              "modality": "TEXT",
+              "tokenCount": 3852
+            },
+            {
+              "modality": "VIDEO",
+              "tokenCount": 71
+            }
+          ],
+          "serviceTier": "standard"
+        }
+      },
+      "videoAnalysisError": null,
+      "captionError": null
+    },
+    {
+      "index": 11,
+      "id": "scene-011",
+      "tcIn": 13.44,
+      "tcOut": 14.84,
+      "duration": 1.4000000000000004,
+      "thumbnail": "F:/Proyectos/Kissd ReEdit/The Rise of Electric/.reedit/scenes/scene-011.jpg",
+      "caption": "A blue Mercedes-Benz G-Class SUV drives dynamically across a dark, rocky terrain under a twilight sky. The camera is positioned at a low, canted Dutch angle, tracking the vehicle's movement from left to right with a shallow depth of field. The lighting is cool and atmospheric, suggesting the blue hour, with soft ambient light reflecting off the car's metallic body.",
+      "structured": {
+        "visual": "A blue Mercedes-Benz G-Class SUV drives dynamically across a dark, rocky terrain under a twilight sky. The camera is positioned at a low, canted Dutch angle, tracking the vehicle's movement from left to right with a shallow depth of field. The lighting is cool and atmospheric, suggesting the blue hour, with soft ambient light reflecting off the car's metallic body.",
+        "brand": "Product visible",
+        "emotion": "adventure",
+        "framing": "Medium",
+        "movement": "High",
+        "audio": {
+          "has_voiceover": false,
+          "voiceover_transcript": null,
+          "music": null,
+          "sfx": [
+            "deep engine rumble"
+          ],
+          "ambient": "wind and outdoor atmosphere"
+        },
+        "rawText": "{\n  \"visual\": \"A blue Mercedes-Benz G-Class SUV drives dynamically across a dark, rocky terrain under a twilight sky. The camera is positioned at a low, canted Dutch angle, tracking the vehicle's movement from left to right with a shallow depth of field. The lighting is cool and atmospheric, suggesting the blue hour, with soft ambient light reflecting off the car's metallic body.\",\n  \"cinematography\": {\n    \"shot_size\": \"medium_long\",\n    \"camera_angle\": \"dutch_angle\",\n    \"camera_movement_quality\": \"vehicle_mount\",\n    \"lens_characteristic\": \"normal\",\n    \"depth_of_field\": \"shallow\",\n    \"focus_dynamics\": \"focus_pull\",\n    \"composition\": \"diagonal\",\n    \"lighting_style\": \"blue_hour\",\n    \"color_palette\": \"deep blue, slate gray, dark charcoal\",\n    \"special_techniques\": []\n  },\n  \"camera_movement\": \"vehicle_tracking\",\n  \"camera_movement_intensity\": \"moderate\",\n  \"subject_motion\": \"moderate\",\n  \"subject_motion_direction\": \"left-to-right\",\n  \"objects\": [\n    \"SUV\",\n    \"rocks\",\n    \"sky\"\n  ],\n  \"framing\": \"Medium\",\n  \"brand\": \"Product visible\",\n  \"emotion\": \"adventure\",\n  \"movement\": \"High\",\n  \"audio\": {\n    \"has_voiceover\": false,\n    \"voiceover_transcript\": null,\n    \"music\": null,\n    \"sfx\": [\n      \"deep engine rumble\"\n    ],\n    \"ambient\": \"wind and outdoor atmosphere\"\n  },\n  \"subject_bbox\": {\n    \"box_2d\": [104, 0, 994, 960],\n    \"label\": \"blue Mercedes-Benz G-Class SUV\"\n  },\n  \"brand_mark_bbox\": null,\n  \"physical_brand_marks\": [],\n  \"graphics\": null,\n  \"cut_type\": \"unknown\",\n  \"tempo_cue\": \"mid\",\n  \"is_end_card\": false\n}",
+        "model": "gemini-3.5-flash"
+      },
+      "videoAnalysis": {
+        "visual": "A blue Mercedes-Benz G-Class SUV drives dynamically across a dark, rocky terrain under a twilight sky. The camera is positioned at a low, canted Dutch angle, tracking the vehicle's movement from left to right with a shallow depth of field. The lighting is cool and atmospheric, suggesting the blue hour, with soft ambient light reflecting off the car's metallic body.",
+        "cinematography": {
+          "shot_size": "medium_long",
+          "camera_angle": "dutch_angle",
+          "camera_movement_quality": "vehicle_mount",
+          "lens_characteristic": "normal",
+          "depth_of_field": "shallow",
+          "focus_dynamics": "focus_pull",
+          "composition": "diagonal",
+          "lighting_style": "blue_hour",
+          "color_palette": "deep blue, slate gray, dark charcoal",
+          "special_techniques": []
+        },
+        "camera_movement": "vehicle_tracking",
+        "camera_movement_intensity": "moderate",
+        "subject_motion": "moderate",
+        "subject_motion_direction": "left-to-right",
+        "objects": [
+          "SUV",
+          "rocks",
+          "sky"
+        ],
+        "framing": "Medium",
+        "brand": "Product visible",
+        "emotion": "adventure",
+        "movement": "High",
+        "audio": {
+          "has_voiceover": false,
+          "voiceover_transcript": null,
+          "music": null,
+          "sfx": [
+            "deep engine rumble"
+          ],
+          "ambient": "wind and outdoor atmosphere"
+        },
+        "graphics": null,
+        "subject_bbox": {
+          "box_2d": [
+            104,
+            0,
+            994,
+            960
+          ],
+          "label": "blue Mercedes-Benz G-Class SUV"
+        },
+        "brand_mark_bbox": null,
+        "physical_brand_marks": [],
+        "cut_type": "unknown",
+        "tempo_cue": "mid",
+        "is_end_card": false,
+        "clipPath": "F:/Proyectos/Kissd ReEdit/The Rise of Electric/.reedit/clips/scene-011.mp4",
+        "rawText": "{\n  \"visual\": \"A blue Mercedes-Benz G-Class SUV drives dynamically across a dark, rocky terrain under a twilight sky. The camera is positioned at a low, canted Dutch angle, tracking the vehicle's movement from left to right with a shallow depth of field. The lighting is cool and atmospheric, suggesting the blue hour, with soft ambient light reflecting off the car's metallic body.\",\n  \"cinematography\": {\n    \"shot_size\": \"medium_long\",\n    \"camera_angle\": \"dutch_angle\",\n    \"camera_movement_quality\": \"vehicle_mount\",\n    \"lens_characteristic\": \"normal\",\n    \"depth_of_field\": \"shallow\",\n    \"focus_dynamics\": \"focus_pull\",\n    \"composition\": \"diagonal\",\n    \"lighting_style\": \"blue_hour\",\n    \"color_palette\": \"deep blue, slate gray, dark charcoal\",\n    \"special_techniques\": []\n  },\n  \"camera_movement\": \"vehicle_tracking\",\n  \"camera_movement_intensity\": \"moderate\",\n  \"subject_motion\": \"moderate\",\n  \"subject_motion_direction\": \"left-to-right\",\n  \"objects\": [\n    \"SUV\",\n    \"rocks\",\n    \"sky\"\n  ],\n  \"framing\": \"Medium\",\n  \"brand\": \"Product visible\",\n  \"emotion\": \"adventure\",\n  \"movement\": \"High\",\n  \"audio\": {\n    \"has_voiceover\": false,\n    \"voiceover_transcript\": null,\n    \"music\": null,\n    \"sfx\": [\n      \"deep engine rumble\"\n    ],\n    \"ambient\": \"wind and outdoor atmosphere\"\n  },\n  \"subject_bbox\": {\n    \"box_2d\": [104, 0, 994, 960],\n    \"label\": \"blue Mercedes-Benz G-Class SUV\"\n  },\n  \"brand_mark_bbox\": null,\n  \"physical_brand_marks\": [],\n  \"graphics\": null,\n  \"cut_type\": \"unknown\",\n  \"tempo_cue\": \"mid\",\n  \"is_end_card\": false\n}",
+        "model": "gemini-3.5-flash",
+        "usage": {
+          "promptTokenCount": 4722,
+          "candidatesTokenCount": 498,
+          "totalTokenCount": 5220,
+          "cachedContentTokenCount": 3918,
+          "promptTokensDetails": [
+            {
+              "modality": "VIDEO",
+              "tokenCount": 101
+            },
+            {
+              "modality": "TEXT",
+              "tokenCount": 4621
+            }
+          ],
+          "cacheTokensDetails": [
+            {
+              "modality": "VIDEO",
+              "tokenCount": 83
+            },
+            {
+              "modality": "TEXT",
+              "tokenCount": 3835
+            }
+          ],
+          "serviceTier": "standard"
+        }
+      },
+      "videoAnalysisError": null,
+      "captionError": null
+    },
+    {
+      "index": 12,
+      "id": "scene-012",
+      "tcIn": 14.84,
+      "tcOut": 16.24,
+      "duration": 1.3999999999999986,
+      "thumbnail": "F:/Proyectos/Kissd ReEdit/The Rise of Electric/.reedit/scenes/scene-012.jpg",
+      "caption": "An aerial drone shot flies rapidly through a dramatic mountain pass. The towering, snow-dusted peaks are shrouded in thick, moving clouds under an overcast sky. The camera sweeps forward and downward, creating a sense of high-speed flight through the rugged, cold landscape.",
+      "structured": {
+        "visual": "An aerial drone shot flies rapidly through a dramatic mountain pass. The towering, snow-dusted peaks are shrouded in thick, moving clouds under an overcast sky. The camera sweeps forward and downward, creating a sense of high-speed flight through the rugged, cold landscape.",
+        "brand": "None",
+        "emotion": "awe",
+        "framing": "Aerial",
+        "movement": "High",
+        "audio": {
+          "has_voiceover": false,
+          "voiceover_transcript": null,
+          "music": "low, atmospheric drone with a subtle, tense rumble",
+          "sfx": [
+            "deep wind rush sound effect"
+          ],
+          "ambient": "wind howling"
+        },
+        "rawText": "{\n  \"visual\": \"An aerial drone shot flies rapidly through a dramatic mountain pass. The towering, snow-dusted peaks are shrouded in thick, moving clouds under an overcast sky. The camera sweeps forward and downward, creating a sense of high-speed flight through the rugged, cold landscape.\",\n  \"cinematography\": {\n    \"shot_size\": \"extreme_long\",\n    \"camera_angle\": \"high_angle\",\n    \"camera_movement_quality\": \"aerial_drone\",\n    \"lens_characteristic\": \"wide\",\n    \"depth_of_field\": \"deep\",\n    \"focus_dynamics\": \"locked\",\n    \"composition\": \"leading_lines\",\n    \"lighting_style\": \"overcast\",\n    \"color_palette\": \"slate gray, icy white, muted blue\",\n    \"special_techniques\": []\n  },\n  \"camera_movement\": \"aerial\",\n  \"camera_movement_intensity\": \"aggressive\",\n  \"subject_motion\": \"slow\",\n  \"subject_motion_direction\": \"stationary\",\n  \"objects\": [\n    \"mountains\",\n    \"clouds\",\n    \"snow\"\n  ],\n  \"framing\": \"Aerial\",\n  \"brand\": \"None\",\n  \"emotion\": \"awe\",\n  \"movement\": \"High\",\n  \"audio\": {\n    \"has_voiceover\": false,\n    \"voiceover_transcript\": null,\n    \"music\": \"low, atmospheric drone with a subtle, tense rumble\",\n    \"sfx\": [\n      \"deep wind rush sound effect\"\n    ],\n    \"ambient\": \"wind howling\"\n  },\n  \"subject_bbox\": {\n    \"box_2d\": [\n      29,\n      545,\n      441,\n      879\n    ],\n    \"label\": \"snow-dusted mountain peak\"\n  },\n  \"brand_mark_bbox\": null,\n  \"physical_brand_marks\": [],\n  \"graphics\": null,\n  \"cut_type\": \"unknown\",\n  \"tempo_cue\": \"fast\",\n  \"is_end_card\": false\n}",
+        "model": "gemini-3.5-flash"
+      },
+      "videoAnalysis": {
+        "visual": "An aerial drone shot flies rapidly through a dramatic mountain pass. The towering, snow-dusted peaks are shrouded in thick, moving clouds under an overcast sky. The camera sweeps forward and downward, creating a sense of high-speed flight through the rugged, cold landscape.",
+        "cinematography": {
+          "shot_size": "extreme_long",
+          "camera_angle": "high_angle",
+          "camera_movement_quality": "aerial_drone",
+          "lens_characteristic": "wide",
+          "depth_of_field": "deep",
+          "focus_dynamics": "locked",
+          "composition": "leading_lines",
+          "lighting_style": "overcast",
+          "color_palette": "slate gray, icy white, muted blue",
+          "special_techniques": []
+        },
+        "camera_movement": "aerial",
+        "camera_movement_intensity": "aggressive",
+        "subject_motion": "slow",
+        "subject_motion_direction": "stationary",
+        "objects": [
+          "mountains",
+          "clouds",
+          "snow"
+        ],
+        "framing": "Aerial",
+        "brand": "None",
+        "emotion": "awe",
+        "movement": "High",
+        "audio": {
+          "has_voiceover": false,
+          "voiceover_transcript": null,
+          "music": "low, atmospheric drone with a subtle, tense rumble",
+          "sfx": [
+            "deep wind rush sound effect"
+          ],
+          "ambient": "wind howling"
+        },
+        "graphics": null,
+        "subject_bbox": {
+          "box_2d": [
+            29,
+            545,
+            441,
+            879
+          ],
+          "label": "snow-dusted mountain peak"
+        },
+        "brand_mark_bbox": null,
+        "physical_brand_marks": [],
+        "cut_type": "unknown",
+        "tempo_cue": "fast",
+        "is_end_card": false,
+        "clipPath": "F:/Proyectos/Kissd ReEdit/The Rise of Electric/.reedit/clips/scene-012.mp4",
+        "rawText": "{\n  \"visual\": \"An aerial drone shot flies rapidly through a dramatic mountain pass. The towering, snow-dusted peaks are shrouded in thick, moving clouds under an overcast sky. The camera sweeps forward and downward, creating a sense of high-speed flight through the rugged, cold landscape.\",\n  \"cinematography\": {\n    \"shot_size\": \"extreme_long\",\n    \"camera_angle\": \"high_angle\",\n    \"camera_movement_quality\": \"aerial_drone\",\n    \"lens_characteristic\": \"wide\",\n    \"depth_of_field\": \"deep\",\n    \"focus_dynamics\": \"locked\",\n    \"composition\": \"leading_lines\",\n    \"lighting_style\": \"overcast\",\n    \"color_palette\": \"slate gray, icy white, muted blue\",\n    \"special_techniques\": []\n  },\n  \"camera_movement\": \"aerial\",\n  \"camera_movement_intensity\": \"aggressive\",\n  \"subject_motion\": \"slow\",\n  \"subject_motion_direction\": \"stationary\",\n  \"objects\": [\n    \"mountains\",\n    \"clouds\",\n    \"snow\"\n  ],\n  \"framing\": \"Aerial\",\n  \"brand\": \"None\",\n  \"emotion\": \"awe\",\n  \"movement\": \"High\",\n  \"audio\": {\n    \"has_voiceover\": false,\n    \"voiceover_transcript\": null,\n    \"music\": \"low, atmospheric drone with a subtle, tense rumble\",\n    \"sfx\": [\n      \"deep wind rush sound effect\"\n    ],\n    \"ambient\": \"wind howling\"\n  },\n  \"subject_bbox\": {\n    \"box_2d\": [\n      29,\n      545,\n      441,\n      879\n    ],\n    \"label\": \"snow-dusted mountain peak\"\n  },\n  \"brand_mark_bbox\": null,\n  \"physical_brand_marks\": [],\n  \"graphics\": null,\n  \"cut_type\": \"unknown\",\n  \"tempo_cue\": \"fast\",\n  \"is_end_card\": false\n}",
+        "model": "gemini-3.5-flash",
+        "usage": {
+          "promptTokenCount": 4722,
+          "candidatesTokenCount": 483,
+          "totalTokenCount": 5205,
+          "cachedContentTokenCount": 3918,
+          "promptTokensDetails": [
+            {
+              "modality": "TEXT",
+              "tokenCount": 4621
+            },
+            {
+              "modality": "VIDEO",
+              "tokenCount": 101
+            }
+          ],
+          "cacheTokensDetails": [
+            {
+              "modality": "TEXT",
+              "tokenCount": 3835
+            },
+            {
+              "modality": "VIDEO",
+              "tokenCount": 83
+            }
+          ],
+          "serviceTier": "standard"
+        }
+      },
+      "videoAnalysisError": null,
+      "captionError": null
+    },
+    {
+      "index": 13,
+      "id": "scene-013",
+      "tcIn": 16.24,
+      "tcOut": 17.12,
+      "duration": 0.8800000000000026,
+      "thumbnail": "F:/Proyectos/Kissd ReEdit/The Rise of Electric/.reedit/scenes/scene-013.jpg",
+      "caption": "A low-angle, close-up tracking shot captures the front left wheel of a blue Mercedes-Benz G-Class as it navigates a rugged, rocky terrain. The dark, multi-spoke wheel spins rapidly, kicking up loose gravel and dust against a dramatic, overcast mountain backdrop. The camera is mounted low and close to the tire, creating a dynamic sense of speed and power with a shallow depth of field.",
+      "structured": {
+        "visual": "A low-angle, close-up tracking shot captures the front left wheel of a blue Mercedes-Benz G-Class as it navigates a rugged, rocky terrain. The dark, multi-spoke wheel spins rapidly, kicking up loose gravel and dust against a dramatic, overcast mountain backdrop. The camera is mounted low and close to the tire, creating a dynamic sense of speed and power with a shallow depth of field.",
+        "brand": "Product visible",
+        "emotion": "powerful",
+        "framing": "Close-up",
+        "movement": "High",
+        "audio": {
+          "has_voiceover": false,
+          "voiceover_transcript": null,
+          "music": null,
+          "sfx": [
+            "low rumble of a car engine",
+            "crunching of gravel and rocks under tires"
+          ],
+          "ambient": "wind and outdoor atmosphere"
+        },
+        "rawText": "{\n  \"visual\": \"A low-angle, close-up tracking shot captures the front left wheel of a blue Mercedes-Benz G-Class as it navigates a rugged, rocky terrain. The dark, multi-spoke wheel spins rapidly, kicking up loose gravel and dust against a dramatic, overcast mountain backdrop. The camera is mounted low and close to the tire, creating a dynamic sense of speed and power with a shallow depth of field.\",\n  \"cinematography\": {\n    \"shot_size\": \"close_up\",\n    \"camera_angle\": \"low_angle\",\n    \"camera_movement_quality\": \"vehicle_mount\",\n    \"lens_characteristic\": \"wide\",\n    \"depth_of_field\": \"shallow\",\n    \"focus_dynamics\": \"locked\",\n    \"composition\": \"diagonal\",\n    \"lighting_style\": \"overcast\",\n    \"color_palette\": \"deep blue, dark charcoal, slate gray\",\n    \"special_techniques\": []\n  },\n  \"camera_movement\": \"vehicle_tracking\",\n  \"camera_movement_intensity\": \"moderate\",\n  \"subject_motion\": \"fast\",\n  \"subject_motion_direction\": \"toward camera\",\n  \"objects\": [\n    \"wheel\",\n    \"tire\",\n    \"car\",\n    \"rocks\",\n    \"mountains\"\n  ],\n  \"framing\": \"Close-up\",\n  \"brand\": \"Product visible\",\n  \"emotion\": \"powerful\",\n  \"movement\": \"High\",\n  \"audio\": {\n    \"has_voiceover\": false,\n    \"voiceover_transcript\": null,\n    \"music\": null,\n    \"sfx\": [\n      \"low rumble of a car engine\",\n      \"crunching of gravel and rocks under tires\"\n    ],\n    \"ambient\": \"wind and outdoor atmosphere\"\n  },\n  \"subject_bbox\": {\n    \"box_2d\": [148, 239, 898, 597],\n    \"label\": \"spinning front wheel of the blue SUV\"\n  },\n  \"brand_mark_bbox\": {\n    \"box_2d\": [488, 464, 568, 496],\n    \"label\": \"Mercedes-Benz star logo on the wheel hub\"\n  },\n  \"physical_brand_marks\": [\n    {\n      \"box_2d\": [488, 464, 568, 496],\n      \"label\": \"Mercedes-Benz star logo on the wheel hub\"\n    }\n  ],\n  \"graphics\": null,\n  \"cut_type\": \"unknown\",\n  \"tempo_cue\": \"fast\",\n  \"is_end_card\": false\n}",
+        "model": "gemini-3.5-flash"
+      },
+      "videoAnalysis": {
+        "visual": "A low-angle, close-up tracking shot captures the front left wheel of a blue Mercedes-Benz G-Class as it navigates a rugged, rocky terrain. The dark, multi-spoke wheel spins rapidly, kicking up loose gravel and dust against a dramatic, overcast mountain backdrop. The camera is mounted low and close to the tire, creating a dynamic sense of speed and power with a shallow depth of field.",
+        "cinematography": {
+          "shot_size": "close_up",
+          "camera_angle": "low_angle",
+          "camera_movement_quality": "vehicle_mount",
+          "lens_characteristic": "wide",
+          "depth_of_field": "shallow",
+          "focus_dynamics": "locked",
+          "composition": "diagonal",
+          "lighting_style": "overcast",
+          "color_palette": "deep blue, dark charcoal, slate gray",
+          "special_techniques": []
+        },
+        "camera_movement": "vehicle_tracking",
+        "camera_movement_intensity": "moderate",
+        "subject_motion": "fast",
+        "subject_motion_direction": "toward camera",
+        "objects": [
+          "wheel",
+          "tire",
+          "car",
+          "rocks",
+          "mountains"
+        ],
+        "framing": "Close-up",
+        "brand": "Product visible",
+        "emotion": "powerful",
+        "movement": "High",
+        "audio": {
+          "has_voiceover": false,
+          "voiceover_transcript": null,
+          "music": null,
+          "sfx": [
+            "low rumble of a car engine",
+            "crunching of gravel and rocks under tires"
+          ],
+          "ambient": "wind and outdoor atmosphere"
+        },
+        "graphics": null,
+        "subject_bbox": {
+          "box_2d": [
+            148,
+            239,
+            898,
+            597
+          ],
+          "label": "spinning front wheel of the blue SUV"
+        },
+        "brand_mark_bbox": {
+          "box_2d": [
+            488,
+            464,
+            568,
+            496
+          ],
+          "label": "Mercedes-Benz star logo on the wheel hub"
+        },
+        "physical_brand_marks": [
+          {
+            "box_2d": [
+              488,
+              464,
+              568,
+              496
+            ],
+            "label": "Mercedes-Benz star logo on the wheel hub"
+          }
+        ],
+        "cut_type": "unknown",
+        "tempo_cue": "fast",
+        "is_end_card": false,
+        "clipPath": "F:/Proyectos/Kissd ReEdit/The Rise of Electric/.reedit/clips/scene-013.mp4",
+        "rawText": "{\n  \"visual\": \"A low-angle, close-up tracking shot captures the front left wheel of a blue Mercedes-Benz G-Class as it navigates a rugged, rocky terrain. The dark, multi-spoke wheel spins rapidly, kicking up loose gravel and dust against a dramatic, overcast mountain backdrop. The camera is mounted low and close to the tire, creating a dynamic sense of speed and power with a shallow depth of field.\",\n  \"cinematography\": {\n    \"shot_size\": \"close_up\",\n    \"camera_angle\": \"low_angle\",\n    \"camera_movement_quality\": \"vehicle_mount\",\n    \"lens_characteristic\": \"wide\",\n    \"depth_of_field\": \"shallow\",\n    \"focus_dynamics\": \"locked\",\n    \"composition\": \"diagonal\",\n    \"lighting_style\": \"overcast\",\n    \"color_palette\": \"deep blue, dark charcoal, slate gray\",\n    \"special_techniques\": []\n  },\n  \"camera_movement\": \"vehicle_tracking\",\n  \"camera_movement_intensity\": \"moderate\",\n  \"subject_motion\": \"fast\",\n  \"subject_motion_direction\": \"toward camera\",\n  \"objects\": [\n    \"wheel\",\n    \"tire\",\n    \"car\",\n    \"rocks\",\n    \"mountains\"\n  ],\n  \"framing\": \"Close-up\",\n  \"brand\": \"Product visible\",\n  \"emotion\": \"powerful\",\n  \"movement\": \"High\",\n  \"audio\": {\n    \"has_voiceover\": false,\n    \"voiceover_transcript\": null,\n    \"music\": null,\n    \"sfx\": [\n      \"low rumble of a car engine\",\n      \"crunching of gravel and rocks under tires\"\n    ],\n    \"ambient\": \"wind and outdoor atmosphere\"\n  },\n  \"subject_bbox\": {\n    \"box_2d\": [148, 239, 898, 597],\n    \"label\": \"spinning front wheel of the blue SUV\"\n  },\n  \"brand_mark_bbox\": {\n    \"box_2d\": [488, 464, 568, 496],\n    \"label\": \"Mercedes-Benz star logo on the wheel hub\"\n  },\n  \"physical_brand_marks\": [\n    {\n      \"box_2d\": [488, 464, 568, 496],\n      \"label\": \"Mercedes-Benz star logo on the wheel hub\"\n    }\n  ],\n  \"graphics\": null,\n  \"cut_type\": \"unknown\",\n  \"tempo_cue\": \"fast\",\n  \"is_end_card\": false\n}",
+        "model": "gemini-3.5-flash",
+        "usage": {
+          "promptTokenCount": 4709,
+          "candidatesTokenCount": 627,
+          "totalTokenCount": 5336,
+          "cachedContentTokenCount": 3923,
+          "promptTokensDetails": [
+            {
+              "modality": "TEXT",
+              "tokenCount": 4621
+            },
+            {
+              "modality": "VIDEO",
+              "tokenCount": 88
+            }
+          ],
+          "cacheTokensDetails": [
+            {
+              "modality": "TEXT",
+              "tokenCount": 3850
+            },
+            {
+              "modality": "VIDEO",
+              "tokenCount": 73
+            }
+          ],
+          "serviceTier": "standard"
+        }
+      },
+      "videoAnalysisError": null,
+      "captionError": null
+    },
+    {
+      "index": 14,
+      "id": "scene-014",
+      "tcIn": 17.12,
+      "tcOut": 19.72,
+      "duration": 2.599999999999998,
+      "thumbnail": "F:/Proyectos/Kissd ReEdit/The Rise of Electric/.reedit/scenes/scene-014.jpg",
+      "caption": "A low-angle, dynamic tracking shot captures a dark Mercedes-Benz G-Class driving through dense fog and rocky terrain. The scene transitions from a thick cloud cover to reveal the vehicle emerging onto a rugged mountain path at dusk. The camera tracks backward, maintaining a low perspective that emphasizes the vehicle's powerful stance and bright headlights.",
+      "structured": {
+        "visual": "A low-angle, dynamic tracking shot captures a dark Mercedes-Benz G-Class driving through dense fog and rocky terrain. The scene transitions from a thick cloud cover to reveal the vehicle emerging onto a rugged mountain path at dusk. The camera tracks backward, maintaining a low perspective that emphasizes the vehicle's powerful stance and bright headlights.",
+        "brand": "Driver/face visible",
+        "emotion": "focused",
+        "framing": "Medium",
+        "movement": "Moderate",
+        "audio": {
+          "has_voiceover": false,
+          "voiceover_transcript": null,
+          "music": "low, dramatic ambient drone with mechanical whirring",
+          "sfx": [
+            "low engine hum",
+            "gravel crunching under tires"
+          ],
+          "ambient": "wind and distant mountain atmosphere"
+        },
+        "rawText": "{\n  \"visual\": \"A low-angle, dynamic tracking shot captures a dark Mercedes-Benz G-Class driving through dense fog and rocky terrain. The scene transitions from a thick cloud cover to reveal the vehicle emerging onto a rugged mountain path at dusk. The camera tracks backward, maintaining a low perspective that emphasizes the vehicle's powerful stance and bright headlights.\",\n  \"cinematography\": {\n    \"shot_size\": \"medium_long\",\n    \"camera_angle\": \"low_angle\",\n    \"camera_movement_quality\": \"vehicle_mount\",\n    \"lens_characteristic\": \"wide\",\n    \"depth_of_field\": \"medium\",\n    \"focus_dynamics\": \"locked\",\n    \"composition\": \"centered\",\n    \"lighting_style\": \"blue_hour\",\n    \"color_palette\": \"cool blue, slate gray, bright white headlights\",\n    \"special_techniques\": []\n  },\n  \"camera_movement\": \"pull_out\",\n  \"camera_movement_intensity\": \"moderate\",\n  \"subject_motion\": \"moderate\",\n  \"subject_motion_direction\": \"toward camera\",\n  \"objects\": [\n    \"SUV\",\n    \"rocks\",\n    \"fog\"\n  ],\n  \"framing\": \"Medium\",\n  \"brand\": \"Driver/face visible\",\n  \"emotion\": \"focused\",\n  \"movement\": \"Moderate\",\n  \"audio\": {\n    \"has_voiceover\": false,\n    \"voiceover_transcript\": null,\n    \"music\": \"low, dramatic ambient drone with mechanical whirring\",\n    \"sfx\": [\n      \"low engine hum\",\n      \"gravel crunching under tires\"\n    ],\n    \"ambient\": \"wind and distant mountain atmosphere\"\n  },\n  \"subject_bbox\": {\n    \"box_2d\": [262, 178, 834, 693],\n    \"label\": \"Mercedes-Benz G-Class\"\n  },\n  \"brand_mark_bbox\": {\n    \"box_2d\": [480, 488, 532, 513],\n    \"label\": \"Mercedes-Benz star logo\"\n  },\n  \"physical_brand_marks\": [\n    {\n      \"box_2d\": [480, 488, 532, 513],\n      \"label\": \"Mercedes-Benz star logo\"\n    },\n    {\n      \"box_2d\": [788, 488, 834, 595], \"label\": \"license plate\"\n    }\n  ],\n  \"graphics\": null,\n  \"cut_type\": \"hard_cut\",\n  \"tempo_cue\": \"mid\",\n  \"is_end_card\": false\n}",
+        "model": "gemini-3.5-flash"
+      },
+      "videoAnalysis": {
+        "visual": "A low-angle, dynamic tracking shot captures a dark Mercedes-Benz G-Class driving through dense fog and rocky terrain. The scene transitions from a thick cloud cover to reveal the vehicle emerging onto a rugged mountain path at dusk. The camera tracks backward, maintaining a low perspective that emphasizes the vehicle's powerful stance and bright headlights.",
+        "cinematography": {
+          "shot_size": "medium_long",
+          "camera_angle": "low_angle",
+          "camera_movement_quality": "vehicle_mount",
+          "lens_characteristic": "wide",
+          "depth_of_field": "medium",
+          "focus_dynamics": "locked",
+          "composition": "centered",
+          "lighting_style": "blue_hour",
+          "color_palette": "cool blue, slate gray, bright white headlights",
+          "special_techniques": []
+        },
+        "camera_movement": "pull_out",
+        "camera_movement_intensity": "moderate",
+        "subject_motion": "moderate",
+        "subject_motion_direction": "toward camera",
+        "objects": [
+          "SUV",
+          "rocks",
+          "fog"
+        ],
+        "framing": "Medium",
+        "brand": "Driver/face visible",
+        "emotion": "focused",
+        "movement": "Moderate",
+        "audio": {
+          "has_voiceover": false,
+          "voiceover_transcript": null,
+          "music": "low, dramatic ambient drone with mechanical whirring",
+          "sfx": [
+            "low engine hum",
+            "gravel crunching under tires"
+          ],
+          "ambient": "wind and distant mountain atmosphere"
+        },
+        "graphics": null,
+        "subject_bbox": {
+          "box_2d": [
+            262,
+            178,
+            834,
+            693
+          ],
+          "label": "Mercedes-Benz G-Class"
+        },
+        "brand_mark_bbox": {
+          "box_2d": [
+            480,
+            488,
+            532,
+            513
+          ],
+          "label": "Mercedes-Benz star logo"
+        },
+        "physical_brand_marks": [
+          {
+            "box_2d": [
+              480,
+              488,
+              532,
+              513
+            ],
+            "label": "Mercedes-Benz star logo"
+          },
+          {
+            "box_2d": [
+              788,
+              488,
+              834,
+              595
+            ],
+            "label": "license plate"
+          }
+        ],
+        "cut_type": "hard_cut",
+        "tempo_cue": "mid",
+        "is_end_card": false,
+        "clipPath": "F:/Proyectos/Kissd ReEdit/The Rise of Electric/.reedit/clips/scene-014.mp4",
+        "rawText": "{\n  \"visual\": \"A low-angle, dynamic tracking shot captures a dark Mercedes-Benz G-Class driving through dense fog and rocky terrain. The scene transitions from a thick cloud cover to reveal the vehicle emerging onto a rugged mountain path at dusk. The camera tracks backward, maintaining a low perspective that emphasizes the vehicle's powerful stance and bright headlights.\",\n  \"cinematography\": {\n    \"shot_size\": \"medium_long\",\n    \"camera_angle\": \"low_angle\",\n    \"camera_movement_quality\": \"vehicle_mount\",\n    \"lens_characteristic\": \"wide\",\n    \"depth_of_field\": \"medium\",\n    \"focus_dynamics\": \"locked\",\n    \"composition\": \"centered\",\n    \"lighting_style\": \"blue_hour\",\n    \"color_palette\": \"cool blue, slate gray, bright white headlights\",\n    \"special_techniques\": []\n  },\n  \"camera_movement\": \"pull_out\",\n  \"camera_movement_intensity\": \"moderate\",\n  \"subject_motion\": \"moderate\",\n  \"subject_motion_direction\": \"toward camera\",\n  \"objects\": [\n    \"SUV\",\n    \"rocks\",\n    \"fog\"\n  ],\n  \"framing\": \"Medium\",\n  \"brand\": \"Driver/face visible\",\n  \"emotion\": \"focused\",\n  \"movement\": \"Moderate\",\n  \"audio\": {\n    \"has_voiceover\": false,\n    \"voiceover_transcript\": null,\n    \"music\": \"low, dramatic ambient drone with mechanical whirring\",\n    \"sfx\": [\n      \"low engine hum\",\n      \"gravel crunching under tires\"\n    ],\n    \"ambient\": \"wind and distant mountain atmosphere\"\n  },\n  \"subject_bbox\": {\n    \"box_2d\": [262, 178, 834, 693],\n    \"label\": \"Mercedes-Benz G-Class\"\n  },\n  \"brand_mark_bbox\": {\n    \"box_2d\": [480, 488, 532, 513],\n    \"label\": \"Mercedes-Benz star logo\"\n  },\n  \"physical_brand_marks\": [\n    {\n      \"box_2d\": [480, 488, 532, 513],\n      \"label\": \"Mercedes-Benz star logo\"\n    },\n    {\n      \"box_2d\": [788, 488, 834, 595], \"label\": \"license plate\"\n    }\n  ],\n  \"graphics\": null,\n  \"cut_type\": \"hard_cut\",\n  \"tempo_cue\": \"mid\",\n  \"is_end_card\": false\n}",
+        "model": "gemini-3.5-flash",
+        "usage": {
+          "promptTokenCount": 4884,
+          "candidatesTokenCount": 640,
+          "totalTokenCount": 5524,
+          "cachedContentTokenCount": 3908,
+          "promptTokensDetails": [
+            {
+              "modality": "TEXT",
+              "tokenCount": 4621
+            },
+            {
+              "modality": "VIDEO",
+              "tokenCount": 263
+            }
+          ],
+          "cacheTokensDetails": [
+            {
+              "modality": "TEXT",
+              "tokenCount": 3698
+            },
+            {
+              "modality": "VIDEO",
+              "tokenCount": 210
+            }
+          ],
+          "serviceTier": "standard"
+        }
+      },
+      "videoAnalysisError": null,
+      "captionError": null
+    },
+    {
+      "index": 15,
+      "id": "scene-015",
+      "tcIn": 19.72,
+      "tcOut": 35.8,
+      "duration": 16.08,
+      "thumbnail": "F:/Proyectos/Kissd ReEdit/The Rise of Electric/.reedit/scenes/scene-015.jpg",
+      "caption": "An extreme long shot captures a dramatic, snow-dusted mountain peak piercing a cloudy sky. The camera pulls back slowly in a smooth aerial drone movement, revealing a bright sun low on the horizon casting a warm, golden flare. Post-production text overlays appear on the right side of the frame, followed by a call-to-action on the left.",
+      "structured": {
+        "visual": "An extreme long shot captures a dramatic, snow-dusted mountain peak piercing a cloudy sky. The camera pulls back slowly in a smooth aerial drone movement, revealing a bright sun low on the horizon casting a warm, golden flare. Post-production text overlays appear on the right side of the frame, followed by a call-to-action on the left.",
+        "brand": "Text/logo on-screen",
+        "emotion": "awe",
+        "framing": "Aerial",
+        "movement": "Slow",
+        "audio": {
+          "has_voiceover": false,
+          "voiceover_transcript": null,
+          "music": "atmospheric synth pad with a low, resonant drone, slow tempo, mysterious and grand mood",
+          "sfx": [
+            "low rumble of wind or engine",
+            "subtle digital chime"
+          ],
+          "ambient": "low-frequency wind hum"
+        },
+        "rawText": "{\n  \"visual\": \"An extreme long shot captures a dramatic, snow-dusted mountain peak piercing a cloudy sky. The camera pulls back slowly in a smooth aerial drone movement, revealing a bright sun low on the horizon casting a warm, golden flare. Post-production text overlays appear on the right side of the frame, followed by a call-to-action on the left.\",\n  \"cinematography\": {\n    \"shot_size\": \"extreme_long\",\n    \"camera_angle\": \"eye_level\",\n    \"camera_movement_quality\": \"aerial_drone\",\n    \"lens_characteristic\": \"wide\",\n    \"depth_of_field\": \"deep\",\n    \"focus_dynamics\": \"locked\",\n    \"composition\": \"rule_of_thirds\",\n    \"lighting_style\": \"golden_hour\",\n    \"color_palette\": \"cool blue, slate gray, warm gold, white\",\n    \"special_techniques\": []\n  },\n  \"camera_movement\": \"pull_out\",\n  \"camera_movement_intensity\": \"subtle\",\n  \"subject_motion\": \"none\",\n  \"subject_motion_direction\": \"stationary\",\n  \"objects\": [\"mountain\", \"clouds\", \"sun\"],\n  \"framing\": \"Aerial\",\n  \"brand\": \"Text/logo on-screen\",\n  \"emotion\": \"awe\",\n  \"movement\": \"Slow\",\n  \"audio\": {\n    \"has_voiceover\": false,\n    \"voiceover_transcript\": null,\n    \"music\": \"atmospheric synth pad with a low, resonant drone, slow tempo, mysterious and grand mood\",\n    \"sfx\": [\"low rumble of wind or engine\", \"subtle digital chime\"],\n    \"ambient\": \"low-frequency wind hum\"\n  },\n  \"subject_bbox\": {\n    \"box_2d\": [278, 335, 650, 551],\n    \"label\": \"mountain peak\"\n  },\n  \"brand_mark_bbox\": null,\n  \"physical_brand_marks\": [],\n  \"graphics\": {\n    \"has_text_on_screen\": true,\n    \"text_content\": \"The Geländewagen. Electrified.\\nSubscribe\",\n    \"text_role\": \"tagline\",\n    \"has_logo\": false,\n    \"logo_description\": null,\n    \"other_graphics\": \"A blue chevron pointing right, acting as an icon next to the 'Subscribe' text.\",\n    \"bboxes\": [\n      {\n        \"box_2d\": [471, 551, 503, 792],\n        \"role\": \"tagline\",\n        \"kind\": \"overlay\",\n        \"label\": \"The Geländewagen. Electrified.\"\n      },\n      {\n        \"box_2d\": [753, 115, 803, 255],\n        \"role\": \"caption\",\n        \"kind\": \"overlay\",\n        \"label\": \"Subscribe\"\n      },\n      {\n        \"box_2d\": [638, 115, 715, 160],\n        \"role\": \"icon\",\n        \"kind\": \"overlay\",\n        \"label\": \"Blue chevron icon\"\n      }\n    ],\n    \"removal_hint\": {\n      \"mask_strategy\": \"luma_bright\",\n      \"text_color_family\": \"white\",\n      \"text_is_bright\": true,\n      \"luma_threshold_hint\": 200,\n      \"hsv_range_hint\": null,\n      \"coverage_estimate_pct\": 3,\n      \"position\": \"scattered\",\n      \"animated\": true\n    }\n  },\n  \"cut_type\": \"hard_cut\",\n  \"tempo_cue\": \"slow\",\n  \"is_end_card\": true\n}",
+        "model": "gemini-3.5-flash"
+      },
+      "videoAnalysis": {
+        "visual": "An extreme long shot captures a dramatic, snow-dusted mountain peak piercing a cloudy sky. The camera pulls back slowly in a smooth aerial drone movement, revealing a bright sun low on the horizon casting a warm, golden flare. Post-production text overlays appear on the right side of the frame, followed by a call-to-action on the left.",
+        "cinematography": {
+          "shot_size": "extreme_long",
+          "camera_angle": "eye_level",
+          "camera_movement_quality": "aerial_drone",
+          "lens_characteristic": "wide",
+          "depth_of_field": "deep",
+          "focus_dynamics": "locked",
+          "composition": "rule_of_thirds",
+          "lighting_style": "golden_hour",
+          "color_palette": "cool blue, slate gray, warm gold, white",
+          "special_techniques": []
+        },
+        "camera_movement": "pull_out",
+        "camera_movement_intensity": "subtle",
+        "subject_motion": "none",
+        "subject_motion_direction": "stationary",
+        "objects": [
+          "mountain",
+          "clouds",
+          "sun"
+        ],
+        "framing": "Aerial",
+        "brand": "Text/logo on-screen",
+        "emotion": "awe",
+        "movement": "Slow",
+        "audio": {
+          "has_voiceover": false,
+          "voiceover_transcript": null,
+          "music": "atmospheric synth pad with a low, resonant drone, slow tempo, mysterious and grand mood",
+          "sfx": [
+            "low rumble of wind or engine",
+            "subtle digital chime"
+          ],
+          "ambient": "low-frequency wind hum"
+        },
+        "graphics": {
+          "has_text_on_screen": true,
+          "text_content": "The Geländewagen. Electrified.\nSubscribe",
+          "text_role": "tagline",
+          "has_logo": false,
+          "logo_description": null,
+          "other_graphics": "A blue chevron pointing right, acting as an icon next to the 'Subscribe' text.",
+          "bboxes": [
+            {
+              "box_2d": [
+                471,
+                551,
+                503,
+                792
+              ],
+              "role": "tagline",
+              "kind": "overlay",
+              "label": "The Geländewagen. Electrified."
+            },
+            {
+              "box_2d": [
+                753,
+                115,
+                803,
+                255
+              ],
+              "role": "caption",
+              "kind": "overlay",
+              "label": "Subscribe"
+            },
+            {
+              "box_2d": [
+                638,
+                115,
+                715,
+                160
+              ],
+              "role": "icon",
+              "kind": "overlay",
+              "label": "Blue chevron icon"
+            }
+          ],
+          "removal_hint": {
+            "mask_strategy": "luma_bright",
+            "text_color_family": "white",
+            "text_is_bright": true,
+            "luma_threshold_hint": 200,
+            "hsv_range_hint": null,
+            "coverage_estimate_pct": 3,
+            "position": "scattered",
+            "animated": true
+          }
+        },
+        "subject_bbox": {
+          "box_2d": [
+            278,
+            335,
+            650,
+            551
+          ],
+          "label": "mountain peak"
+        },
+        "brand_mark_bbox": null,
+        "physical_brand_marks": [],
+        "cut_type": "hard_cut",
+        "tempo_cue": "slow",
+        "is_end_card": true,
+        "clipPath": "F:/Proyectos/Kissd ReEdit/The Rise of Electric/.reedit/clips/scene-015.mp4",
+        "rawText": "{\n  \"visual\": \"An extreme long shot captures a dramatic, snow-dusted mountain peak piercing a cloudy sky. The camera pulls back slowly in a smooth aerial drone movement, revealing a bright sun low on the horizon casting a warm, golden flare. Post-production text overlays appear on the right side of the frame, followed by a call-to-action on the left.\",\n  \"cinematography\": {\n    \"shot_size\": \"extreme_long\",\n    \"camera_angle\": \"eye_level\",\n    \"camera_movement_quality\": \"aerial_drone\",\n    \"lens_characteristic\": \"wide\",\n    \"depth_of_field\": \"deep\",\n    \"focus_dynamics\": \"locked\",\n    \"composition\": \"rule_of_thirds\",\n    \"lighting_style\": \"golden_hour\",\n    \"color_palette\": \"cool blue, slate gray, warm gold, white\",\n    \"special_techniques\": []\n  },\n  \"camera_movement\": \"pull_out\",\n  \"camera_movement_intensity\": \"subtle\",\n  \"subject_motion\": \"none\",\n  \"subject_motion_direction\": \"stationary\",\n  \"objects\": [\"mountain\", \"clouds\", \"sun\"],\n  \"framing\": \"Aerial\",\n  \"brand\": \"Text/logo on-screen\",\n  \"emotion\": \"awe\",\n  \"movement\": \"Slow\",\n  \"audio\": {\n    \"has_voiceover\": false,\n    \"voiceover_transcript\": null,\n    \"music\": \"atmospheric synth pad with a low, resonant drone, slow tempo, mysterious and grand mood\",\n    \"sfx\": [\"low rumble of wind or engine\", \"subtle digital chime\"],\n    \"ambient\": \"low-frequency wind hum\"\n  },\n  \"subject_bbox\": {\n    \"box_2d\": [278, 335, 650, 551],\n    \"label\": \"mountain peak\"\n  },\n  \"brand_mark_bbox\": null,\n  \"physical_brand_marks\": [],\n  \"graphics\": {\n    \"has_text_on_screen\": true,\n    \"text_content\": \"The Geländewagen. Electrified.\\nSubscribe\",\n    \"text_role\": \"tagline\",\n    \"has_logo\": false,\n    \"logo_description\": null,\n    \"other_graphics\": \"A blue chevron pointing right, acting as an icon next to the 'Subscribe' text.\",\n    \"bboxes\": [\n      {\n        \"box_2d\": [471, 551, 503, 792],\n        \"role\": \"tagline\",\n        \"kind\": \"overlay\",\n        \"label\": \"The Geländewagen. Electrified.\"\n      },\n      {\n        \"box_2d\": [753, 115, 803, 255],\n        \"role\": \"caption\",\n        \"kind\": \"overlay\",\n        \"label\": \"Subscribe\"\n      },\n      {\n        \"box_2d\": [638, 115, 715, 160],\n        \"role\": \"icon\",\n        \"kind\": \"overlay\",\n        \"label\": \"Blue chevron icon\"\n      }\n    ],\n    \"removal_hint\": {\n      \"mask_strategy\": \"luma_bright\",\n      \"text_color_family\": \"white\",\n      \"text_is_bright\": true,\n      \"luma_threshold_hint\": 200,\n      \"hsv_range_hint\": null,\n      \"coverage_estimate_pct\": 3,\n      \"position\": \"scattered\",\n      \"animated\": true\n    }\n  },\n  \"cut_type\": \"hard_cut\",\n  \"tempo_cue\": \"slow\",\n  \"is_end_card\": true\n}",
+        "model": "gemini-3.5-flash",
+        "usage": {
+          "promptTokenCount": 6079,
+          "candidatesTokenCount": 890,
+          "totalTokenCount": 6969,
+          "cachedContentTokenCount": 3829,
+          "promptTokensDetails": [
+            {
+              "modality": "VIDEO",
+              "tokenCount": 1458
+            },
+            {
+              "modality": "TEXT",
+              "tokenCount": 4621
+            }
+          ],
+          "cacheTokensDetails": [
+            {
+              "modality": "TEXT",
+              "tokenCount": 2911
+            },
+            {
+              "modality": "VIDEO",
+              "tokenCount": 918
+            }
+          ],
+          "serviceTier": "standard"
+        }
+      },
+      "videoAnalysisError": null,
+      "captionError": null
+    }
+  ],
+  "voSegments": [],
+  "rawText": "{\n  \"rationale\": \"To maximize first-seconds retention and improve the Attention score, we open immediately with high-energy action: the G-Class climbing steep terrain, bypassing the slow, dark intro shots. We establish a fast-paced rhythm in the first 5 seconds with rapid cuts of the vehicle and climbers, utilizing a newly generated high-intensity placeholder to bridge the action. The narrative maintains its epic, cinematic climb, building tension through dynamic mountain visuals and concluding with the grand, slow-paced aerial summit shot to deliver the brand's message with maximum impact.\",\n  \"edl\": [\n    {\n      \"index\": 1,\n      \"kind\": \"original\",\n      \"sourceSceneId\": \"scene-006\",\n      \"newTcIn\": 0.00,\n      \"newTcOut\": 0.88,\n      \"note\": \"Open immediately with a dynamic, low-angle tracking shot of the G-Class climbing to capture attention instantly.\"\n    },\n    {\n      \"index\": 2,\n      \"kind\": \"original\",\n      \"sourceSceneId\": \"scene-013\",\n      \"newTcIn\": 0.88,\n      \"newTcOut\": 1.76,\n      \"note\": \"Cut to a fast-spinning wheel shot to maintain high visual motion and reinforce the vehicle's rugged power.\"\n    },\n    {\n      \"index\": 3,\n      \"kind\": \"original\",\n      \"sourceSceneId\": \"scene-002\",\n      \"newTcIn\": 1.76,\n      \"newTcOut\": 4.08,\n      \"note\": \"Introduce a pattern interrupt with the explosive scattering of stones, creating a strong sensory hook.\"\n    },\n    {\n      \"index\": 4,\n      \"kind\": \"placeholder\",\n      \"sourceSceneId\": null,\n      \"newTcIn\": 4.08,\n      \"newTcOut\": 5.58,\n      \"note\": \"Realistic, cinematic close-up of a climber's hand in a dark blue glove reaching up and firmly grasping a cold, wet, textured rock ledge; subtle camera shake; low-key cool blue twilight lighting with deep shadows; shallow depth of field.\",\n      \"referenceFrame\": {\n        \"sourceSceneId\": \"scene-008\",\n        \"framePosition\": \"middle\"\n      }\n    },\n    {\n      \"index\": 5,\n      \"kind\": \"original\",\n      \"sourceSceneId\": \"scene-008\",\n      \"newTcIn\": 5.58,\n      \"newTcOut\": 6.50,\n      \"note\": \"Cut to the climber ascending the wet rock face, establishing the parallel struggle between human and machine.\"\n    },\n    {\n      \"index\": 6,\n      \"kind\": \"original\",\n      \"sourceSceneId\": \"scene-005\",\n      \"newTcIn\": 6.50,\n      \"newTcOut\": 7.06,\n      \"note\": \"Show a close-up of the G-Class wheel navigating rocky terrain, mirroring the climber's physical ascent.\"\n    },\n    {\n      \"index\": 7,\n      \"kind\": \"original\",\n      \"sourceSceneId\": \"scene-007\",\n      \"newTcIn\": 7.06,\n      \"newTcOut\": 8.90,\n      \"note\": \"Track the vehicle climbing a steep incline inside the dark cavern, intensifying the epic off-road narrative.\"\n    },\n    {\n      \"index\": 8,\n      \"kind\": \"original\",\n      \"sourceSceneId\": \"scene-004\",\n      \"newTcIn\": 8.90,\n      \"newTcOut\": 10.02,\n      \"note\": \"Cut to the overhead shot of climbers scaling the rock face, emphasizing the extreme vertical environment.\"\n    },\n    {\n      \"index\": 9,\n      \"kind\": \"original\",\n      \"sourceSceneId\": \"scene-009\",\n      \"newTcIn\": 10.02,\n      \"newTcOut\": 10.54,\n      \"note\": \"Insert a rapid, high-motion shot of sliding rock texture to heighten the tension and environmental danger.\"\n    },\n    {\n      \"index\": 10,\n      \"kind\": \"original\",\n      \"sourceSceneId\": \"scene-010\",\n      \"newTcIn\": 10.54,\n      \"newTcOut\": 11.34,\n      \"note\": \"Show the climbers assisting each other, adding human drama and emotional stakes to the journey.\"\n    },\n    {\n      \"index\": 11,\n      \"kind\": \"original\",\n      \"sourceSceneId\": \"scene-011\",\n      \"newTcIn\": 11.34,\n      \"newTcOut\": 12.74,\n      \"note\": \"Transition to the dynamic Dutch-angle tracking shot of the G-Class driving across rocky terrain.\"\n    },\n    {\n      \"index\": 12,\n      \"kind\": \"original\",\n      \"sourceSceneId\": \"scene-012\",\n      \"newTcIn\": 12.74,\n      \"newTcOut\": 14.14,\n      \"note\": \"Use the aggressive aerial drone sweep through the mountain pass to expand the scale of the landscape.\"\n    },\n    {\n      \"index\": 13,\n      \"kind\": \"original\",\n      \"sourceSceneId\": \"scene-014\",\n      \"newTcIn\": 14.14,\n      \"newTcOut\": 16.74,\n      \"note\": \"Show the G-Class emerging from dense fog, symbolizing triumph over the harsh elements.\"\n    },\n    {\n      \"index\": 14,\n      \"kind\": \"original\",\n      \"sourceSceneId\": \"scene-003\",\n      \"newTcIn\": 16.74,\n      \"newTcOut\": 20.26,\n      \"note\": \"Track the vehicle driving away into the mountain pass at dusk, transitioning toward the final resolution.\"\n    },\n    {\n      \"index\": 15,\n      \"kind\": \"original\",\n      \"sourceSceneId\": \"scene-015\",\n      \"newTcIn\": 20.26,\n      \"newTcOut\": 36.34,\n      \"note\": \"End on the majestic, slow-paced aerial summit shot with the brand's final electrified message.\"\n    }\n  ]\n}",
+  "expectedEdl": [
+    {
+      "index": 1,
+      "kind": "original",
+      "sourceSceneId": "scene-006",
+      "newTcIn": 0,
+      "newTcOut": 0.88,
+      "note": "Open immediately with a dynamic, low-angle tracking shot of the G-Class climbing to capture attention instantly.",
+      "reframe": null,
+      "colorAdjustments": null,
+      "extend": null,
+      "referenceFrame": null
+    },
+    {
+      "index": 2,
+      "kind": "original",
+      "sourceSceneId": "scene-013",
+      "newTcIn": 0.88,
+      "newTcOut": 1.76,
+      "note": "Cut to a fast-spinning wheel shot to maintain high visual motion and reinforce the vehicle's rugged power.",
+      "reframe": null,
+      "colorAdjustments": null,
+      "extend": null,
+      "referenceFrame": null
+    },
+    {
+      "index": 3,
+      "kind": "original",
+      "sourceSceneId": "scene-002",
+      "newTcIn": 1.76,
+      "newTcOut": 4.08,
+      "note": "Introduce a pattern interrupt with the explosive scattering of stones, creating a strong sensory hook.",
+      "reframe": null,
+      "colorAdjustments": null,
+      "extend": null,
+      "referenceFrame": null
+    },
+    {
+      "index": 4,
+      "kind": "placeholder",
+      "sourceSceneId": null,
+      "newTcIn": 4.08,
+      "newTcOut": 5.58,
+      "note": "Realistic, cinematic close-up of a climber's hand in a dark blue glove reaching up and firmly grasping a cold, wet, textured rock ledge; subtle camera shake; low-key cool blue twilight lighting with deep shadows; shallow depth of field.",
+      "reframe": null,
+      "colorAdjustments": null,
+      "extend": null,
+      "referenceFrame": {
+        "sourceSceneId": "scene-008",
+        "framePosition": "middle"
+      },
+      "genSpec": {
+        "frameCandidates": [
+          {
+            "id": "frame-4-1779987246208",
+            "path": "F:/Proyectos/Kissd ReEdit/The Rise of Electric/.reedit/frames/frame-4-1779987246208.png",
+            "prompt": "Realistic, cinematic close-up of a climber's hand in a dark blue glove reaching up and firmly grasping a cold, wet, textured rock ledge; subtle camera shake; low-key cool blue twilight lighting with deep shadows; shallow depth of field.",
+            "seed": 884062016245,
+            "width": 1920,
+            "height": 1080,
+            "model": "z-image-turbo",
+            "promptId": "36b3932e-0372-4202-852b-c4b19ba70386",
+            "createdAt": "2026-05-28T16:54:06.214Z"
+          }
+        ],
+        "selectedFrameId": "frame-4-1779987246208",
+        "prompt": "extreme close-up of a dark gloved hand on a cold wet rock wall, cinematic shallow depth of field, blue winter color grade, realistic texture, moisture and chalk on the stone. The shot begins with the empty rock surface in frame, tense and quiet. Suddenly, the climber’s hand enters fast from the bottom of the frame and grabs the rock aggressively, fingers slamming into a narrow crack and locking hard onto the hold. The glove compresses against the stone, small dust and moisture particles shake loose, the wrist and sleeve pull upward with force, showing strain and urgency. Handheld macro camera, slight impact shake when the hand catches the hold, dramatic natural light, realistic motion blur, high-detail cinematic realism, no text, no logo, no slow motion.",
+        "videoVersions": [
+          {
+            "id": "v-mppqhzg2-clo4fp",
+            "generatedPath": "F:/Proyectos/Kissd ReEdit/The Rise of Electric/.reedit/generated/row-004-1779987332012.mp4",
+            "prompt": "Realistic, cinematic close-up of a climber's hand in a dark blue glove reaching up and firmly grasping a cold, wet, textured rock ledge; subtle camera shake; low-key cool blue twilight lighting with deep shadows; shallow depth of field.",
+            "model": "ltx-2.3-22b-dev-fp8 + distilled lora",
+            "generatedAt": "2026-05-28T16:55:32.018Z",
+            "durationSec": 2,
+            "frames": 50,
+            "fps": 25,
+            "width": 1920,
+            "height": 1080,
+            "refSceneId": null,
+            "frameId": "frame-4-1779987246208"
+          },
+          {
+            "id": "v-mpq1mlxi-nvv0so",
+            "generatedPath": "F:/Proyectos/Kissd ReEdit/The Rise of Electric/.reedit/generated/row-004-1780006023550.mp4",
+            "prompt": "Realistic, cinematic close-up of a climber's hand in a dark blue glove reaching up and firmly grasping a cold, wet, textured rock ledge; subtle camera shake; low-key cool blue twilight lighting with deep shadows; shallow depth of field.",
+            "model": "seedance-2.0-r2v",
+            "generatedAt": "2026-05-28T22:07:03.558Z",
+            "durationSec": 4,
+            "frames": 96,
+            "fps": 24,
+            "width": 1920,
+            "height": 1080,
+            "refSceneId": null,
+            "frameId": "frame-4-1779987246208"
+          },
+          {
+            "id": "v-mpq1zgu8-lwztwa",
+            "generatedPath": "F:/Proyectos/Kissd ReEdit/The Rise of Electric/.reedit/generated/row-004-1780006623466.mp4",
+            "prompt": "extreme close-up of a dark gloved hand on a cold wet rock wall, cinematic shallow depth of field, blue winter color grade, realistic texture, moisture and chalk on the stone. The shot begins with the empty rock surface in frame, tense and quiet. Suddenly, the climber’s hand enters fast from the bottom of the frame and grabs the rock aggressively, fingers slamming into a narrow crack and locking hard onto the hold. The glove compresses against the stone, small dust and moisture particles shake loose, the wrist and sleeve pull upward with force, showing strain and urgency. Handheld macro camera, slight impact shake when the hand catches the hold, dramatic natural light, realistic motion blur, high-detail cinematic realism, no text, no logo, no slow motion.",
+            "model": "seedance-2.0-r2v",
+            "generatedAt": "2026-05-28T22:17:03.488Z",
+            "durationSec": 4,
+            "frames": 96,
+            "fps": 24,
+            "width": 1920,
+            "height": 1080,
+            "refSceneId": null,
+            "frameId": "frame-4-1779987246208"
+          }
+        ],
+        "activeVideoVersionId": "v-mpq1zgu8-lwztwa",
+        "generatedPath": "F:/Proyectos/Kissd ReEdit/The Rise of Electric/.reedit/generated/row-004-1780006623466.mp4",
+        "model": "seedance-2.0-r2v",
+        "generatedAt": "2026-05-28T22:17:03.488Z",
+        "durationSec": 4,
+        "frames": 96,
+        "fps": 24,
+        "width": 1920,
+        "height": 1080,
+        "refSceneId": null,
+        "frameId": "frame-4-1779987246208",
+        "preferredModelId": "seedance-2"
+      }
+    },
+    {
+      "index": 5,
+      "kind": "original",
+      "sourceSceneId": "scene-008",
+      "newTcIn": 5.58,
+      "newTcOut": 6.5,
+      "note": "Cut to the climber ascending the wet rock face, establishing the parallel struggle between human and machine.",
+      "reframe": null,
+      "colorAdjustments": null,
+      "extend": null,
+      "referenceFrame": null
+    },
+    {
+      "index": 6,
+      "kind": "original",
+      "sourceSceneId": "scene-005",
+      "newTcIn": 6.5,
+      "newTcOut": 7.06,
+      "note": "Show a close-up of the G-Class wheel navigating rocky terrain, mirroring the climber's physical ascent.",
+      "reframe": null,
+      "colorAdjustments": null,
+      "extend": null,
+      "referenceFrame": null
+    },
+    {
+      "index": 7,
+      "kind": "original",
+      "sourceSceneId": "scene-007",
+      "newTcIn": 7.06,
+      "newTcOut": 8.9,
+      "note": "Track the vehicle climbing a steep incline inside the dark cavern, intensifying the epic off-road narrative.",
+      "reframe": null,
+      "colorAdjustments": null,
+      "extend": null,
+      "referenceFrame": null
+    },
+    {
+      "index": 8,
+      "kind": "original",
+      "sourceSceneId": "scene-004",
+      "newTcIn": 8.9,
+      "newTcOut": 10.02,
+      "note": "Cut to the overhead shot of climbers scaling the rock face, emphasizing the extreme vertical environment.",
+      "reframe": null,
+      "colorAdjustments": null,
+      "extend": null,
+      "referenceFrame": null
+    },
+    {
+      "index": 9,
+      "kind": "original",
+      "sourceSceneId": "scene-009",
+      "newTcIn": 10.02,
+      "newTcOut": 10.54,
+      "note": "Insert a rapid, high-motion shot of sliding rock texture to heighten the tension and environmental danger.",
+      "reframe": null,
+      "colorAdjustments": null,
+      "extend": null,
+      "referenceFrame": null
+    },
+    {
+      "index": 10,
+      "kind": "original",
+      "sourceSceneId": "scene-010",
+      "newTcIn": 10.54,
+      "newTcOut": 11.34,
+      "note": "Show the climbers assisting each other, adding human drama and emotional stakes to the journey.",
+      "reframe": null,
+      "colorAdjustments": null,
+      "extend": null,
+      "referenceFrame": null
+    },
+    {
+      "index": 11,
+      "kind": "original",
+      "sourceSceneId": "scene-011",
+      "newTcIn": 11.34,
+      "newTcOut": 12.74,
+      "note": "Transition to the dynamic Dutch-angle tracking shot of the G-Class driving across rocky terrain.",
+      "reframe": null,
+      "colorAdjustments": null,
+      "extend": null,
+      "referenceFrame": null
+    },
+    {
+      "index": 12,
+      "kind": "original",
+      "sourceSceneId": "scene-012",
+      "newTcIn": 12.74,
+      "newTcOut": 14.14,
+      "note": "Use the aggressive aerial drone sweep through the mountain pass to expand the scale of the landscape.",
+      "reframe": null,
+      "colorAdjustments": null,
+      "extend": null,
+      "referenceFrame": null
+    },
+    {
+      "index": 13,
+      "kind": "original",
+      "sourceSceneId": "scene-014",
+      "newTcIn": 14.14,
+      "newTcOut": 16.74,
+      "note": "Show the G-Class emerging from dense fog, symbolizing triumph over the harsh elements.",
+      "reframe": null,
+      "colorAdjustments": null,
+      "extend": null,
+      "referenceFrame": null
+    },
+    {
+      "index": 14,
+      "kind": "original",
+      "sourceSceneId": "scene-003",
+      "newTcIn": 16.74,
+      "newTcOut": 20.26,
+      "note": "Track the vehicle driving away into the mountain pass at dusk, transitioning toward the final resolution.",
+      "reframe": null,
+      "colorAdjustments": null,
+      "extend": null,
+      "referenceFrame": null
+    },
+    {
+      "index": 15,
+      "kind": "original",
+      "sourceSceneId": "scene-015",
+      "newTcIn": 20.26,
+      "newTcOut": 36.34,
+      "note": "End on the majestic, slow-paced aerial summit shot with the brand's final electrified message.",
+      "reframe": null,
+      "colorAdjustments": null,
+      "extend": null,
+      "referenceFrame": null
+    }
+  ],
+  "expectedRationale": "To maximize first-seconds retention and improve the Attention score, we open immediately with high-energy action: the G-Class climbing steep terrain, bypassing the slow, dark intro shots. We establish a fast-paced rhythm in the first 5 seconds with rapid cuts of the vehicle and climbers, utilizing a newly generated high-intensity placeholder to bridge the action. The narrative maintains its epic, cinematic climb, building tension through dynamic mountain visuals and concluding with the grand, slow-paced aerial summit shot to deliver the brand's message with maximum impact.",
+  "capabilities": {
+    "footageGeneration": true,
+    "footageExtend": false,
+    "footageReframe": true,
+    "colorCorrection": true,
+    "useOriginalMusic": true,
+    "useOriginalVoiceover": false,
+    "generateVoiceover": true,
+    "generateMusic": false,
+    "useAdditionalAssets": false
+  },
+  "metric": "Attention",
+  "targetDurationSec": 35.821,
+  "brandBrief": ""
+}

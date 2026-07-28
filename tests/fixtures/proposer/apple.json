@@ -1,0 +1,2613 @@
+{
+  "source": "project.comfystudio",
+  "scenes": [
+    {
+      "index": 1,
+      "id": "scene-001",
+      "tcIn": 0,
+      "tcOut": 1.626625,
+      "duration": 1.626625,
+      "thumbnail": "F:/Proyectos/Kissd ReEdit/Apple/.reedit/scenes/scene-001.jpg",
+      "caption": "A medium shot of an Irish Terrier sitting upright in a yellow armchair against a textured blue studio backdrop. The dog wears a silver chain collar with a leash attached, looking directly at the camera with alert ears. The lighting is soft and directional, creating a gentle key light on the dog's face and casting subtle shadows to the right.",
+      "structured": {
+        "visual": "A medium shot of an Irish Terrier sitting upright in a yellow armchair against a textured blue studio backdrop. The dog wears a silver chain collar with a leash attached, looking directly at the camera with alert ears. The lighting is soft and directional, creating a gentle key light on the dog's face and casting subtle shadows to the right.",
+        "brand": "None",
+        "emotion": "calm",
+        "framing": "Medium",
+        "movement": "Slow",
+        "audio": {
+          "has_voiceover": false,
+          "voiceover_transcript": null,
+          "music": "gentle, ambient synth pad, slow tempo, calm mood",
+          "sfx": [],
+          "ambient": "quiet room tone"
+        },
+        "rawText": "{\n  \"visual\": \"A medium shot of an Irish Terrier sitting upright in a yellow armchair against a textured blue studio backdrop. The dog wears a silver chain collar with a leash attached, looking directly at the camera with alert ears. The lighting is soft and directional, creating a gentle key light on the dog's face and casting subtle shadows to the right.\",\n  \"cinematography\": {\n    \"shot_size\": \"medium\",\n    \"camera_angle\": \"eye_level\",\n    \"camera_movement_quality\": \"locked_off\",\n    \"lens_characteristic\": \"normal\",\n    \"depth_of_field\": \"medium\",\n    \"focus_dynamics\": \"locked\",\n    \"composition\": \"centered\",\n    \"lighting_style\": \"three_point\",\n    \"color_palette\": \"mustard yellow, deep teal, warm brown, slate blue\",\n    \"special_techniques\": []\n  },\n  \"camera_movement\": \"static\",\n  \"camera_movement_intensity\": \"none\",\n  \"subject_motion\": \"slow\",\n  \"subject_motion_direction\": \"stationary\",\n  \"objects\": [\n    \"dog\",\n    \"armchair\",\n    \"pillow\",\n    \"leash\"\n  ],\n  \"framing\": \"Medium\",\n  \"brand\": \"None\",\n  \"emotion\": \"calm\",\n  \"movement\": \"Slow\",\n  \"audio\": {\n    \"has_voiceover\": false,\n    \"voiceover_transcript\": null,\n    \"music\": \"gentle, ambient synth pad, slow tempo, calm mood\",\n    \"sfx\": [],\n    \"ambient\": \"quiet room tone\"\n  },\n  \"subject_bbox\": {\n    \"box_2d\": [223, 362, 1000, 589],\n    \"label\": \"Irish Terrier sitting in armchair\"\n  },\n  \"brand_mark_bbox\": null,\n  \"physical_brand_marks\": [],\n  \"graphics\": null,\n  \"cut_type\": \"unknown\",\n  \"tempo_cue\": \"slow\",\n  \"is_end_card\": false\n}",
+        "model": "gemini-3.5-flash"
+      },
+      "videoAnalysis": {
+        "visual": "A medium shot of an Irish Terrier sitting upright in a yellow armchair against a textured blue studio backdrop. The dog wears a silver chain collar with a leash attached, looking directly at the camera with alert ears. The lighting is soft and directional, creating a gentle key light on the dog's face and casting subtle shadows to the right.",
+        "cinematography": {
+          "shot_size": "medium",
+          "camera_angle": "eye_level",
+          "camera_movement_quality": "locked_off",
+          "lens_characteristic": "normal",
+          "depth_of_field": "medium",
+          "focus_dynamics": "locked",
+          "composition": "centered",
+          "lighting_style": "three_point",
+          "color_palette": "mustard yellow, deep teal, warm brown, slate blue",
+          "special_techniques": []
+        },
+        "camera_movement": "static",
+        "camera_movement_intensity": "none",
+        "subject_motion": "slow",
+        "subject_motion_direction": "stationary",
+        "objects": [
+          "dog",
+          "armchair",
+          "pillow",
+          "leash"
+        ],
+        "framing": "Medium",
+        "brand": "None",
+        "emotion": "calm",
+        "movement": "Slow",
+        "audio": {
+          "has_voiceover": false,
+          "voiceover_transcript": null,
+          "music": "gentle, ambient synth pad, slow tempo, calm mood",
+          "sfx": [],
+          "ambient": "quiet room tone"
+        },
+        "graphics": null,
+        "subject_bbox": {
+          "box_2d": [
+            223,
+            362,
+            1000,
+            589
+          ],
+          "label": "Irish Terrier sitting in armchair"
+        },
+        "brand_mark_bbox": null,
+        "physical_brand_marks": [],
+        "cut_type": "unknown",
+        "tempo_cue": "slow",
+        "is_end_card": false,
+        "clipPath": "F:/Proyectos/Kissd ReEdit/Apple/.reedit/clips/scene-001.mp4",
+        "rawText": "{\n  \"visual\": \"A medium shot of an Irish Terrier sitting upright in a yellow armchair against a textured blue studio backdrop. The dog wears a silver chain collar with a leash attached, looking directly at the camera with alert ears. The lighting is soft and directional, creating a gentle key light on the dog's face and casting subtle shadows to the right.\",\n  \"cinematography\": {\n    \"shot_size\": \"medium\",\n    \"camera_angle\": \"eye_level\",\n    \"camera_movement_quality\": \"locked_off\",\n    \"lens_characteristic\": \"normal\",\n    \"depth_of_field\": \"medium\",\n    \"focus_dynamics\": \"locked\",\n    \"composition\": \"centered\",\n    \"lighting_style\": \"three_point\",\n    \"color_palette\": \"mustard yellow, deep teal, warm brown, slate blue\",\n    \"special_techniques\": []\n  },\n  \"camera_movement\": \"static\",\n  \"camera_movement_intensity\": \"none\",\n  \"subject_motion\": \"slow\",\n  \"subject_motion_direction\": \"stationary\",\n  \"objects\": [\n    \"dog\",\n    \"armchair\",\n    \"pillow\",\n    \"leash\"\n  ],\n  \"framing\": \"Medium\",\n  \"brand\": \"None\",\n  \"emotion\": \"calm\",\n  \"movement\": \"Slow\",\n  \"audio\": {\n    \"has_voiceover\": false,\n    \"voiceover_transcript\": null,\n    \"music\": \"gentle, ambient synth pad, slow tempo, calm mood\",\n    \"sfx\": [],\n    \"ambient\": \"quiet room tone\"\n  },\n  \"subject_bbox\": {\n    \"box_2d\": [223, 362, 1000, 589],\n    \"label\": \"Irish Terrier sitting in armchair\"\n  },\n  \"brand_mark_bbox\": null,\n  \"physical_brand_marks\": [],\n  \"graphics\": null,\n  \"cut_type\": \"unknown\",\n  \"tempo_cue\": \"slow\",\n  \"is_end_card\": false\n}",
+        "model": "gemini-3.5-flash",
+        "usage": {
+          "promptTokenCount": 4794,
+          "candidatesTokenCount": 488,
+          "totalTokenCount": 5282,
+          "promptTokensDetails": [
+            {
+              "modality": "TEXT",
+              "tokenCount": 4621
+            },
+            {
+              "modality": "VIDEO",
+              "tokenCount": 173
+            }
+          ],
+          "serviceTier": "standard"
+        }
+      },
+      "videoAnalysisError": null,
+      "captionError": null
+    },
+    {
+      "index": 2,
+      "id": "scene-002",
+      "tcIn": 1.626625,
+      "tcOut": 3.3366666666666664,
+      "duration": 1.7100416666666665,
+      "thumbnail": "F:/Proyectos/Kissd ReEdit/Apple/.reedit/scenes/scene-002.jpg",
+      "caption": "A medium shot of a smiling woman with dark hair, glasses, and a pearl necklace, wearing a pink tweed blazer, holding a small Jack Russell terrier dog. They are seated in a studio setting with a textured blue backdrop, flanked by a warm lamp on the right. The camera is locked-off with a shallow depth of field, illuminated by a soft, motivated key light.",
+      "structured": {
+        "visual": "A medium shot of a smiling woman with dark hair, glasses, and a pearl necklace, wearing a pink tweed blazer, holding a small Jack Russell terrier dog. They are seated in a studio setting with a textured blue backdrop, flanked by a warm lamp on the right. The camera is locked-off with a shallow depth of field, illuminated by a soft, motivated key light.",
+        "brand": "Driver/face visible",
+        "emotion": "calm",
+        "framing": "Medium",
+        "movement": "Slow",
+        "audio": {
+          "has_voiceover": false,
+          "voiceover_transcript": null,
+          "music": "gentle, acoustic guitar melody, slow tempo, warm and comforting mood",
+          "sfx": [],
+          "ambient": "quiet room tone"
+        },
+        "rawText": "{\n  \"visual\": \"A medium shot of a smiling woman with dark hair, glasses, and a pearl necklace, wearing a pink tweed blazer, holding a small Jack Russell terrier dog. They are seated in a studio setting with a textured blue backdrop, flanked by a warm lamp on the right. The camera is locked-off with a shallow depth of field, illuminated by a soft, motivated key light.\",\n  \"cinematography\": {\n    \"shot_size\": \"medium\",\n    \"camera_angle\": \"eye_level\",\n    \"camera_movement_quality\": \"locked_off\",\n    \"lens_characteristic\": \"normal\",\n    \"depth_of_field\": \"shallow\",\n    \"focus_dynamics\": \"locked\",\n    \"composition\": \"centered\",\n    \"lighting_style\": \"three_point\",\n    \"color_palette\": \"warm pink, deep teal, soft cream\",\n    \"special_techniques\": []\n  },\n  \"camera_movement\": \"static\",\n  \"camera_movement_intensity\": \"none\",\n  \"subject_motion\": \"slow\",\n  \"subject_motion_direction\": \"stationary\",\n  \"objects\": [\n    \"woman\",\n    \"dog\",\n    \"lamp\",\n    \"chair\"\n  ],\n  \"framing\": \"Medium\",\n  \"brand\": \"Driver/face visible\",\n  \"emotion\": \"calm\",\n  \"movement\": \"Slow\",\n  \"audio\": {\n    \"has_voiceover\": false,\n    \"voiceover_transcript\": null,\n    \"music\": \"gentle, acoustic guitar melody, slow tempo, warm and comforting mood\",\n    \"sfx\": [],\n    \"ambient\": \"quiet room tone\"\n  },\n  \"subject_bbox\": {\n    \"box_2d\": [63, 278, 1000, 734],\n    \"label\": \"woman holding a dog\"\n  },\n  \"brand_mark_bbox\": null,\n  \"physical_brand_marks\": [],\n  \"graphics\": null,\n  \"cut_type\": \"unknown\",\n  \"tempo_cue\": \"slow\",\n  \"is_end_card\": false\n}",
+        "model": "gemini-3.5-flash"
+      },
+      "videoAnalysis": {
+        "visual": "A medium shot of a smiling woman with dark hair, glasses, and a pearl necklace, wearing a pink tweed blazer, holding a small Jack Russell terrier dog. They are seated in a studio setting with a textured blue backdrop, flanked by a warm lamp on the right. The camera is locked-off with a shallow depth of field, illuminated by a soft, motivated key light.",
+        "cinematography": {
+          "shot_size": "medium",
+          "camera_angle": "eye_level",
+          "camera_movement_quality": "locked_off",
+          "lens_characteristic": "normal",
+          "depth_of_field": "shallow",
+          "focus_dynamics": "locked",
+          "composition": "centered",
+          "lighting_style": "three_point",
+          "color_palette": "warm pink, deep teal, soft cream",
+          "special_techniques": []
+        },
+        "camera_movement": "static",
+        "camera_movement_intensity": "none",
+        "subject_motion": "slow",
+        "subject_motion_direction": "stationary",
+        "objects": [
+          "woman",
+          "dog",
+          "lamp",
+          "chair"
+        ],
+        "framing": "Medium",
+        "brand": "Driver/face visible",
+        "emotion": "calm",
+        "movement": "Slow",
+        "audio": {
+          "has_voiceover": false,
+          "voiceover_transcript": null,
+          "music": "gentle, acoustic guitar melody, slow tempo, warm and comforting mood",
+          "sfx": [],
+          "ambient": "quiet room tone"
+        },
+        "graphics": null,
+        "subject_bbox": {
+          "box_2d": [
+            63,
+            278,
+            1000,
+            734
+          ],
+          "label": "woman holding a dog"
+        },
+        "brand_mark_bbox": null,
+        "physical_brand_marks": [],
+        "cut_type": "unknown",
+        "tempo_cue": "slow",
+        "is_end_card": false,
+        "clipPath": "F:/Proyectos/Kissd ReEdit/Apple/.reedit/clips/scene-002.mp4",
+        "rawText": "{\n  \"visual\": \"A medium shot of a smiling woman with dark hair, glasses, and a pearl necklace, wearing a pink tweed blazer, holding a small Jack Russell terrier dog. They are seated in a studio setting with a textured blue backdrop, flanked by a warm lamp on the right. The camera is locked-off with a shallow depth of field, illuminated by a soft, motivated key light.\",\n  \"cinematography\": {\n    \"shot_size\": \"medium\",\n    \"camera_angle\": \"eye_level\",\n    \"camera_movement_quality\": \"locked_off\",\n    \"lens_characteristic\": \"normal\",\n    \"depth_of_field\": \"shallow\",\n    \"focus_dynamics\": \"locked\",\n    \"composition\": \"centered\",\n    \"lighting_style\": \"three_point\",\n    \"color_palette\": \"warm pink, deep teal, soft cream\",\n    \"special_techniques\": []\n  },\n  \"camera_movement\": \"static\",\n  \"camera_movement_intensity\": \"none\",\n  \"subject_motion\": \"slow\",\n  \"subject_motion_direction\": \"stationary\",\n  \"objects\": [\n    \"woman\",\n    \"dog\",\n    \"lamp\",\n    \"chair\"\n  ],\n  \"framing\": \"Medium\",\n  \"brand\": \"Driver/face visible\",\n  \"emotion\": \"calm\",\n  \"movement\": \"Slow\",\n  \"audio\": {\n    \"has_voiceover\": false,\n    \"voiceover_transcript\": null,\n    \"music\": \"gentle, acoustic guitar melody, slow tempo, warm and comforting mood\",\n    \"sfx\": [],\n    \"ambient\": \"quiet room tone\"\n  },\n  \"subject_bbox\": {\n    \"box_2d\": [63, 278, 1000, 734],\n    \"label\": \"woman holding a dog\"\n  },\n  \"brand_mark_bbox\": null,\n  \"physical_brand_marks\": [],\n  \"graphics\": null,\n  \"cut_type\": \"unknown\",\n  \"tempo_cue\": \"slow\",\n  \"is_end_card\": false\n}",
+        "model": "gemini-3.5-flash",
+        "usage": {
+          "promptTokenCount": 4796,
+          "candidatesTokenCount": 494,
+          "totalTokenCount": 5290,
+          "cachedContentTokenCount": 3915,
+          "promptTokensDetails": [
+            {
+              "modality": "VIDEO",
+              "tokenCount": 175
+            },
+            {
+              "modality": "TEXT",
+              "tokenCount": 4621
+            }
+          ],
+          "cacheTokensDetails": [
+            {
+              "modality": "TEXT",
+              "tokenCount": 3773
+            },
+            {
+              "modality": "VIDEO",
+              "tokenCount": 142
+            }
+          ],
+          "serviceTier": "standard"
+        }
+      },
+      "videoAnalysisError": null,
+      "captionError": null
+    },
+    {
+      "index": 3,
+      "id": "scene-003",
+      "tcIn": 3.3366666666666664,
+      "tcOut": 5.171833333333333,
+      "duration": 1.8351666666666664,
+      "thumbnail": "F:/Proyectos/Kissd ReEdit/Apple/.reedit/scenes/scene-003.jpg",
+      "caption": "A locked-off medium shot captures a Papillon dog with long black and white fur sitting on a mustard-yellow velvet armchair. The setting is a stylized studio interior with a dark teal wall, a teal throw pillow with orange piping, and a red lamp on a side table. The dog turns its head toward the camera, alertly looking forward as post-production text overlays the center of the frame.",
+      "structured": {
+        "visual": "A locked-off medium shot captures a Papillon dog with long black and white fur sitting on a mustard-yellow velvet armchair. The setting is a stylized studio interior with a dark teal wall, a teal throw pillow with orange piping, and a red lamp on a side table. The dog turns its head toward the camera, alertly looking forward as post-production text overlays the center of the frame.",
+        "brand": "Text/logo on-screen",
+        "emotion": "playful",
+        "framing": "Medium",
+        "movement": "Slow",
+        "audio": {
+          "has_voiceover": false,
+          "voiceover_transcript": null,
+          "music": "soft, ambient synth pad with a gentle, rising tone, slow tempo, calm mood",
+          "sfx": [],
+          "ambient": null
+        },
+        "rawText": "{\n  \"visual\": \"A locked-off medium shot captures a Papillon dog with long black and white fur sitting on a mustard-yellow velvet armchair. The setting is a stylized studio interior with a dark teal wall, a teal throw pillow with orange piping, and a red lamp on a side table. The dog turns its head toward the camera, alertly looking forward as post-production text overlays the center of the frame.\",\n  \"cinematography\": {\n    \"shot_size\": \"medium\",\n    \"camera_angle\": \"eye_level\",\n    \"camera_movement_quality\": \"locked_off\",\n    \"lens_characteristic\": \"normal\",\n    \"depth_of_field\": \"medium\",\n    \"focus_dynamics\": \"locked\",\n    \"composition\": \"centered\",\n    \"lighting_style\": \"three_point\",\n    \"color_palette\": \"mustard yellow, deep teal, crimson red, black and white\",\n    \"special_techniques\": []\n  },\n  \"camera_movement\": \"static\",\n  \"camera_movement_intensity\": \"none\",\n  \"subject_motion\": \"moderate\",\n  \"subject_motion_direction\": \"stationary\",\n  \"objects\": [\n    \"dog\",\n    \"armchair\",\n    \"pillow\",\n    \"lamp\",\n    \"table\"\n  ],\n  \"framing\": \"Medium\",\n  \"brand\": \"Text/logo on-screen\",\n  \"emotion\": \"playful\",\n  \"movement\": \"Slow\",\n  \"audio\": {\n    \"has_voiceover\": false,\n    \"voiceover_transcript\": null,\n    \"music\": \"soft, ambient synth pad with a gentle, rising tone, slow tempo, calm mood\",\n    \"sfx\": [],\n    \"ambient\": null\n  },\n  \"subject_bbox\": {\n    \"box_2d\": [193, 172, 853, 649],\n    \"label\": \"Papillon dog\"\n  },\n  \"brand_mark_bbox\": null,\n  \"physical_brand_marks\": [],\n  \"graphics\": {\n    \"has_text_on_screen\": true,\n    \"text_content\": \"GET UP CLOSE WITH\",\n    \"text_role\": \"title\",\n    \"has_logo\": false,\n    \"logo_description\": null,\n    \"other_graphics\": null,\n    \"bboxes\": [\n      {\n        \"box_2d\": [390, 331, 442, 669],\n        \"role\": \"title\",\n        \"kind\": \"overlay\",\n        \"label\": \"GET UP CLOSE WITH\"\n      }\n    ],\n    \"removal_hint\": {\n      \"mask_strategy\": \"color\",\n      \"text_color_family\": \"green\",\n      \"text_is_bright\": true,\n      \"luma_threshold_hint\": null,\n      \"hsv_range_hint\": {\n        \"lower\": [\n          35,\n          50,\n          50\n        ],\n        \"upper\": [\n          85,\n          255,\n          255\n        ]\n      },\n      \"coverage_estimate_pct\": 3,\n      \"position\": \"center\",\n      \"animated\": false\n    }\n  },\n  \"cut_type\": \"unknown\",\n  \"tempo_cue\": \"slow\",\n  \"is_end_card\": false\n}",
+        "model": "gemini-3.5-flash"
+      },
+      "videoAnalysis": {
+        "visual": "A locked-off medium shot captures a Papillon dog with long black and white fur sitting on a mustard-yellow velvet armchair. The setting is a stylized studio interior with a dark teal wall, a teal throw pillow with orange piping, and a red lamp on a side table. The dog turns its head toward the camera, alertly looking forward as post-production text overlays the center of the frame.",
+        "cinematography": {
+          "shot_size": "medium",
+          "camera_angle": "eye_level",
+          "camera_movement_quality": "locked_off",
+          "lens_characteristic": "normal",
+          "depth_of_field": "medium",
+          "focus_dynamics": "locked",
+          "composition": "centered",
+          "lighting_style": "three_point",
+          "color_palette": "mustard yellow, deep teal, crimson red, black and white",
+          "special_techniques": []
+        },
+        "camera_movement": "static",
+        "camera_movement_intensity": "none",
+        "subject_motion": "moderate",
+        "subject_motion_direction": "stationary",
+        "objects": [
+          "dog",
+          "armchair",
+          "pillow",
+          "lamp",
+          "table"
+        ],
+        "framing": "Medium",
+        "brand": "Text/logo on-screen",
+        "emotion": "playful",
+        "movement": "Slow",
+        "audio": {
+          "has_voiceover": false,
+          "voiceover_transcript": null,
+          "music": "soft, ambient synth pad with a gentle, rising tone, slow tempo, calm mood",
+          "sfx": [],
+          "ambient": null
+        },
+        "graphics": {
+          "has_text_on_screen": true,
+          "text_content": "GET UP CLOSE WITH",
+          "text_role": "title",
+          "has_logo": false,
+          "logo_description": null,
+          "other_graphics": null,
+          "bboxes": [
+            {
+              "box_2d": [
+                390,
+                331,
+                442,
+                669
+              ],
+              "role": "title",
+              "kind": "overlay",
+              "label": "GET UP CLOSE WITH"
+            }
+          ],
+          "removal_hint": {
+            "mask_strategy": "color",
+            "text_color_family": "green",
+            "text_is_bright": true,
+            "luma_threshold_hint": null,
+            "hsv_range_hint": {
+              "lower": [
+                35,
+                50,
+                50
+              ],
+              "upper": [
+                85,
+                255,
+                255
+              ]
+            },
+            "coverage_estimate_pct": 3,
+            "position": "center",
+            "animated": false
+          }
+        },
+        "subject_bbox": {
+          "box_2d": [
+            193,
+            172,
+            853,
+            649
+          ],
+          "label": "Papillon dog"
+        },
+        "brand_mark_bbox": null,
+        "physical_brand_marks": [],
+        "cut_type": "unknown",
+        "tempo_cue": "slow",
+        "is_end_card": false,
+        "clipPath": "F:/Proyectos/Kissd ReEdit/Apple/.reedit/clips/scene-003.mp4",
+        "rawText": "{\n  \"visual\": \"A locked-off medium shot captures a Papillon dog with long black and white fur sitting on a mustard-yellow velvet armchair. The setting is a stylized studio interior with a dark teal wall, a teal throw pillow with orange piping, and a red lamp on a side table. The dog turns its head toward the camera, alertly looking forward as post-production text overlays the center of the frame.\",\n  \"cinematography\": {\n    \"shot_size\": \"medium\",\n    \"camera_angle\": \"eye_level\",\n    \"camera_movement_quality\": \"locked_off\",\n    \"lens_characteristic\": \"normal\",\n    \"depth_of_field\": \"medium\",\n    \"focus_dynamics\": \"locked\",\n    \"composition\": \"centered\",\n    \"lighting_style\": \"three_point\",\n    \"color_palette\": \"mustard yellow, deep teal, crimson red, black and white\",\n    \"special_techniques\": []\n  },\n  \"camera_movement\": \"static\",\n  \"camera_movement_intensity\": \"none\",\n  \"subject_motion\": \"moderate\",\n  \"subject_motion_direction\": \"stationary\",\n  \"objects\": [\n    \"dog\",\n    \"armchair\",\n    \"pillow\",\n    \"lamp\",\n    \"table\"\n  ],\n  \"framing\": \"Medium\",\n  \"brand\": \"Text/logo on-screen\",\n  \"emotion\": \"playful\",\n  \"movement\": \"Slow\",\n  \"audio\": {\n    \"has_voiceover\": false,\n    \"voiceover_transcript\": null,\n    \"music\": \"soft, ambient synth pad with a gentle, rising tone, slow tempo, calm mood\",\n    \"sfx\": [],\n    \"ambient\": null\n  },\n  \"subject_bbox\": {\n    \"box_2d\": [193, 172, 853, 649],\n    \"label\": \"Papillon dog\"\n  },\n  \"brand_mark_bbox\": null,\n  \"physical_brand_marks\": [],\n  \"graphics\": {\n    \"has_text_on_screen\": true,\n    \"text_content\": \"GET UP CLOSE WITH\",\n    \"text_role\": \"title\",\n    \"has_logo\": false,\n    \"logo_description\": null,\n    \"other_graphics\": null,\n    \"bboxes\": [\n      {\n        \"box_2d\": [390, 331, 442, 669],\n        \"role\": \"title\",\n        \"kind\": \"overlay\",\n        \"label\": \"GET UP CLOSE WITH\"\n      }\n    ],\n    \"removal_hint\": {\n      \"mask_strategy\": \"color\",\n      \"text_color_family\": \"green\",\n      \"text_is_bright\": true,\n      \"luma_threshold_hint\": null,\n      \"hsv_range_hint\": {\n        \"lower\": [\n          35,\n          50,\n          50\n        ],\n        \"upper\": [\n          85,\n          255,\n          255\n        ]\n      },\n      \"coverage_estimate_pct\": 3,\n      \"position\": \"center\",\n      \"animated\": false\n    }\n  },\n  \"cut_type\": \"unknown\",\n  \"tempo_cue\": \"slow\",\n  \"is_end_card\": false\n}",
+        "model": "gemini-3.5-flash",
+        "usage": {
+          "promptTokenCount": 4799,
+          "candidatesTokenCount": 789,
+          "totalTokenCount": 5588,
+          "cachedContentTokenCount": 3916,
+          "promptTokensDetails": [
+            {
+              "modality": "VIDEO",
+              "tokenCount": 178
+            },
+            {
+              "modality": "TEXT",
+              "tokenCount": 4621
+            }
+          ],
+          "cacheTokensDetails": [
+            {
+              "modality": "TEXT",
+              "tokenCount": 3771
+            },
+            {
+              "modality": "VIDEO",
+              "tokenCount": 145
+            }
+          ],
+          "serviceTier": "standard"
+        }
+      },
+      "videoAnalysisError": null,
+      "captionError": null,
+      "optimizations": [
+        {
+          "version": "V01",
+          "path": "F:\\Proyectos\\Kissd ReEdit\\Apple\\.reedit\\optimized\\scene-003_V01.mp4",
+          "model": null,
+          "createdAt": "2026-06-16T14:32:36.597Z",
+          "workflowJsonPath": "F:\\Proyectos\\Kissd ReEdit\\Apple\\.reedit\\optimized\\scene-003_V01.workflow.json"
+        }
+      ],
+      "activeOptimizationVersion": "V01"
+    },
+    {
+      "index": 4,
+      "id": "scene-004",
+      "tcIn": 5.171833333333333,
+      "tcOut": 7.465791666666666,
+      "duration": 2.2939583333333333,
+      "thumbnail": "F:/Proyectos/Kissd ReEdit/Apple/.reedit/scenes/scene-004.jpg",
+      "caption": "A group of six people stand smiling behind a green table displaying five brown Lagotto Romagnolo dogs. The setting is a brightly lit indoor exhibition hall with event signage and other attendees visible in the background. The camera is locked-off at eye level, capturing a medium group shot with a shallow depth of field that keeps the focus on the dogs and their handlers.",
+      "structured": {
+        "visual": "A group of six people stand smiling behind a green table displaying five brown Lagotto Romagnolo dogs. The setting is a brightly lit indoor exhibition hall with event signage and other attendees visible in the background. The camera is locked-off at eye level, capturing a medium group shot with a shallow depth of field that keeps the focus on the dogs and their handlers.",
+        "brand": "Text/logo on-screen",
+        "emotion": "playful",
+        "framing": "Medium",
+        "movement": "Slow",
+        "audio": {
+          "has_voiceover": false,
+          "voiceover_transcript": null,
+          "music": "uplifting and bright acoustic pop, acoustic guitar and light percussion, mid tempo",
+          "sfx": [],
+          "ambient": "soft indoor crowd murmur"
+        },
+        "rawText": "{\n  \"visual\": \"A group of six people stand smiling behind a green table displaying five brown Lagotto Romagnolo dogs. The setting is a brightly lit indoor exhibition hall with event signage and other attendees visible in the background. The camera is locked-off at eye level, capturing a medium group shot with a shallow depth of field that keeps the focus on the dogs and their handlers.\",\n  \"cinematography\": {\n    \"shot_size\": \"group\",\n    \"camera_angle\": \"eye_level\",\n    \"camera_movement_quality\": \"locked_off\",\n    \"lens_characteristic\": \"normal\",\n    \"depth_of_field\": \"shallow\",\n    \"focus_dynamics\": \"locked\",\n    \"composition\": \"centered\",\n    \"lighting_style\": \"high_key\",\n    \"color_palette\": \"vibrant green, warm brown, cream, teal\",\n    \"special_techniques\": []\n  },\n  \"camera_movement\": \"static\",\n  \"camera_movement_intensity\": \"none\",\n  \"subject_motion\": \"slow\",\n  \"subject_motion_direction\": \"stationary\",\n  \"objects\": [\n    \"dogs\",\n    \"people\",\n    \"table\"\n  ],\n  \"framing\": \"Medium\",\n  \"brand\": \"Text/logo on-screen\",\n  \"emotion\": \"playful\",\n  \"movement\": \"Slow\",\n  \"audio\": {\n    \"has_voiceover\": false,\n    \"voiceover_transcript\": null,\n    \"music\": \"uplifting and bright acoustic pop, acoustic guitar and light percussion, mid tempo\",\n    \"sfx\": [],\n    \"ambient\": \"soft indoor crowd murmur\"\n  },\n  \"subject_bbox\": {\n    \"box_2d\": [298, 616, 844, 804],\n    \"label\": \"brown curly-haired dog\"\n  },\n  \"brand_mark_bbox\": null,\n  \"physical_brand_marks\": [],\n  \"graphics\": {\n    \"has_text_on_screen\": true,\n    \"text_content\": \"GET UP CLOSE WITH\\nTHE STARS\",\n    \"text_role\": \"title\",\n    \"has_logo\": false,\n    \"logo_description\": null,\n    \"other_graphics\": null,\n    \"bboxes\": [\n      {\n        \"box_2d\": [348, 292, 582, 707],\n        \"role\": \"title\",\n        \"kind\": \"overlay\",\n        \"label\": \"GET UP CLOSE WITH THE STARS\"\n      }\n    ],\n    \"removal_hint\": {\n      \"mask_strategy\": \"color\",\n      \"text_color_family\": \"green\",\n      \"text_is_bright\": true,\n      \"luma_threshold_hint\": null,\n      \"hsv_range_hint\": {\n        \"lower\": [\n          35,\n          100,\n          100\n        ],\n        \"upper\": [\n          85,\n          255,\n          255\n        ]\n      },\n      \"coverage_estimate_pct\": 12,\n      \"position\": \"center\",\n      \"animated\": false\n    }\n  },\n  \"cut_type\": \"unknown\",\n  \"tempo_cue\": \"slow\",\n  \"is_end_card\": false\n}",
+        "model": "gemini-3.5-flash"
+      },
+      "videoAnalysis": {
+        "visual": "A group of six people stand smiling behind a green table displaying five brown Lagotto Romagnolo dogs. The setting is a brightly lit indoor exhibition hall with event signage and other attendees visible in the background. The camera is locked-off at eye level, capturing a medium group shot with a shallow depth of field that keeps the focus on the dogs and their handlers.",
+        "cinematography": {
+          "shot_size": "group",
+          "camera_angle": "eye_level",
+          "camera_movement_quality": "locked_off",
+          "lens_characteristic": "normal",
+          "depth_of_field": "shallow",
+          "focus_dynamics": "locked",
+          "composition": "centered",
+          "lighting_style": "high_key",
+          "color_palette": "vibrant green, warm brown, cream, teal",
+          "special_techniques": []
+        },
+        "camera_movement": "static",
+        "camera_movement_intensity": "none",
+        "subject_motion": "slow",
+        "subject_motion_direction": "stationary",
+        "objects": [
+          "dogs",
+          "people",
+          "table"
+        ],
+        "framing": "Medium",
+        "brand": "Text/logo on-screen",
+        "emotion": "playful",
+        "movement": "Slow",
+        "audio": {
+          "has_voiceover": false,
+          "voiceover_transcript": null,
+          "music": "uplifting and bright acoustic pop, acoustic guitar and light percussion, mid tempo",
+          "sfx": [],
+          "ambient": "soft indoor crowd murmur"
+        },
+        "graphics": {
+          "has_text_on_screen": true,
+          "text_content": "GET UP CLOSE WITH\nTHE STARS",
+          "text_role": "title",
+          "has_logo": false,
+          "logo_description": null,
+          "other_graphics": null,
+          "bboxes": [
+            {
+              "box_2d": [
+                348,
+                292,
+                582,
+                707
+              ],
+              "role": "title",
+              "kind": "overlay",
+              "label": "GET UP CLOSE WITH THE STARS"
+            }
+          ],
+          "removal_hint": {
+            "mask_strategy": "color",
+            "text_color_family": "green",
+            "text_is_bright": true,
+            "luma_threshold_hint": null,
+            "hsv_range_hint": {
+              "lower": [
+                35,
+                100,
+                100
+              ],
+              "upper": [
+                85,
+                255,
+                255
+              ]
+            },
+            "coverage_estimate_pct": 12,
+            "position": "center",
+            "animated": false
+          }
+        },
+        "subject_bbox": {
+          "box_2d": [
+            298,
+            616,
+            844,
+            804
+          ],
+          "label": "brown curly-haired dog"
+        },
+        "brand_mark_bbox": null,
+        "physical_brand_marks": [],
+        "cut_type": "unknown",
+        "tempo_cue": "slow",
+        "is_end_card": false,
+        "clipPath": "F:/Proyectos/Kissd ReEdit/Apple/.reedit/clips/scene-004.mp4",
+        "rawText": "{\n  \"visual\": \"A group of six people stand smiling behind a green table displaying five brown Lagotto Romagnolo dogs. The setting is a brightly lit indoor exhibition hall with event signage and other attendees visible in the background. The camera is locked-off at eye level, capturing a medium group shot with a shallow depth of field that keeps the focus on the dogs and their handlers.\",\n  \"cinematography\": {\n    \"shot_size\": \"group\",\n    \"camera_angle\": \"eye_level\",\n    \"camera_movement_quality\": \"locked_off\",\n    \"lens_characteristic\": \"normal\",\n    \"depth_of_field\": \"shallow\",\n    \"focus_dynamics\": \"locked\",\n    \"composition\": \"centered\",\n    \"lighting_style\": \"high_key\",\n    \"color_palette\": \"vibrant green, warm brown, cream, teal\",\n    \"special_techniques\": []\n  },\n  \"camera_movement\": \"static\",\n  \"camera_movement_intensity\": \"none\",\n  \"subject_motion\": \"slow\",\n  \"subject_motion_direction\": \"stationary\",\n  \"objects\": [\n    \"dogs\",\n    \"people\",\n    \"table\"\n  ],\n  \"framing\": \"Medium\",\n  \"brand\": \"Text/logo on-screen\",\n  \"emotion\": \"playful\",\n  \"movement\": \"Slow\",\n  \"audio\": {\n    \"has_voiceover\": false,\n    \"voiceover_transcript\": null,\n    \"music\": \"uplifting and bright acoustic pop, acoustic guitar and light percussion, mid tempo\",\n    \"sfx\": [],\n    \"ambient\": \"soft indoor crowd murmur\"\n  },\n  \"subject_bbox\": {\n    \"box_2d\": [298, 616, 844, 804],\n    \"label\": \"brown curly-haired dog\"\n  },\n  \"brand_mark_bbox\": null,\n  \"physical_brand_marks\": [],\n  \"graphics\": {\n    \"has_text_on_screen\": true,\n    \"text_content\": \"GET UP CLOSE WITH\\nTHE STARS\",\n    \"text_role\": \"title\",\n    \"has_logo\": false,\n    \"logo_description\": null,\n    \"other_graphics\": null,\n    \"bboxes\": [\n      {\n        \"box_2d\": [348, 292, 582, 707],\n        \"role\": \"title\",\n        \"kind\": \"overlay\",\n        \"label\": \"GET UP CLOSE WITH THE STARS\"\n      }\n    ],\n    \"removal_hint\": {\n      \"mask_strategy\": \"color\",\n      \"text_color_family\": \"green\",\n      \"text_is_bright\": true,\n      \"luma_threshold_hint\": null,\n      \"hsv_range_hint\": {\n        \"lower\": [\n          35,\n          100,\n          100\n        ],\n        \"upper\": [\n          85,\n          255,\n          255\n        ]\n      },\n      \"coverage_estimate_pct\": 12,\n      \"position\": \"center\",\n      \"animated\": false\n    }\n  },\n  \"cut_type\": \"unknown\",\n  \"tempo_cue\": \"slow\",\n  \"is_end_card\": false\n}",
+        "model": "gemini-3.5-flash",
+        "usage": {
+          "promptTokenCount": 4811,
+          "candidatesTokenCount": 781,
+          "totalTokenCount": 5592,
+          "cachedContentTokenCount": 3910,
+          "promptTokensDetails": [
+            {
+              "modality": "VIDEO",
+              "tokenCount": 190
+            },
+            {
+              "modality": "TEXT",
+              "tokenCount": 4621
+            }
+          ],
+          "cacheTokensDetails": [
+            {
+              "modality": "TEXT",
+              "tokenCount": 3756
+            },
+            {
+              "modality": "VIDEO",
+              "tokenCount": 154
+            }
+          ],
+          "serviceTier": "standard"
+        }
+      },
+      "videoAnalysisError": null,
+      "captionError": null,
+      "optimizations": [
+        {
+          "version": "V01",
+          "path": "F:\\Proyectos\\Kissd ReEdit\\Apple\\.reedit\\optimized\\scene-004_V01.mp4",
+          "model": null,
+          "createdAt": "2026-06-16T14:33:58.546Z",
+          "workflowJsonPath": "F:\\Proyectos\\Kissd ReEdit\\Apple\\.reedit\\optimized\\scene-004_V01.workflow.json"
+        }
+      ],
+      "activeOptimizationVersion": "V01"
+    },
+    {
+      "index": 5,
+      "id": "scene-005",
+      "tcIn": 7.465791666666666,
+      "tcOut": 10.176833333333333,
+      "duration": 2.7110416666666666,
+      "thumbnail": "F:/Proyectos/Kissd ReEdit/Apple/.reedit/scenes/scene-005.jpg",
+      "caption": "A locked-off wide shot with deep focus captures three meticulously groomed poodles on grooming tables inside a vast exhibition hall. The central poodle is white, flanked by a light apricot poodle on the left and a golden-apricot poodle on the right. The camera slowly pushes in as the poodles stand poised, surrounded by the bustling, industrial-lit environment of a major dog show.",
+      "structured": {
+        "visual": "A locked-off wide shot with deep focus captures three meticulously groomed poodles on grooming tables inside a vast exhibition hall. The central poodle is white, flanked by a light apricot poodle on the left and a golden-apricot poodle on the right. The camera slowly pushes in as the poodles stand poised, surrounded by the bustling, industrial-lit environment of a major dog show.",
+        "brand": "None",
+        "emotion": "focused",
+        "framing": "Wide",
+        "movement": "Slow",
+        "audio": {
+          "has_voiceover": false,
+          "voiceover_transcript": null,
+          "music": "upbeat electronic synth pop, driving tempo, energetic mood",
+          "sfx": [],
+          "ambient": "muffled indoor crowd chatter and dog show background noise"
+        },
+        "rawText": "{\n  \"visual\": \"A locked-off wide shot with deep focus captures three meticulously groomed poodles on grooming tables inside a vast exhibition hall. The central poodle is white, flanked by a light apricot poodle on the left and a golden-apricot poodle on the right. The camera slowly pushes in as the poodles stand poised, surrounded by the bustling, industrial-lit environment of a major dog show.\",\n  \"cinematography\": {\n    \"shot_size\": \"long\",\n    \"camera_angle\": \"eye_level\",\n    \"camera_movement_quality\": \"gimbal\",\n    \"lens_characteristic\": \"wide\",\n    \"depth_of_field\": \"deep\",\n    \"focus_dynamics\": \"locked\",\n    \"composition\": \"symmetrical\",\n    \"lighting_style\": \"natural_daylight\",\n    \"color_palette\": \"lime green, soft cream, industrial gray\",\n    \"special_techniques\": []\n  },\n  \"camera_movement\": \"push_in\",\n  \"camera_movement_intensity\": \"subtle\",\n  \"subject_motion\": \"none\",\n  \"subject_motion_direction\": \"stationary\",\n  \"objects\": [\"poodles\", \"grooming tables\", \"exhibition hall\"],\n  \"framing\": \"Wide\",\n  \"brand\": \"None\",\n  \"emotion\": \"focused\",\n  \"movement\": \"Slow\",\n  \"audio\": {\n    \"has_voiceover\": false,\n    \"voiceover_transcript\": null,\n    \"music\": \"upbeat electronic synth pop, driving tempo, energetic mood\",\n    \"sfx\": [],\n    \"ambient\": \"muffled indoor crowd chatter and dog show background noise\"\n  },\n  \"subject_bbox\": {\n    \"box_2d\": [217, 185, 903, 359],\n    \"label\": \"groomed apricot poodle on blue table\"\n  },\n  \"brand_mark_bbox\": null,\n  \"physical_brand_marks\": [],\n  \"graphics\": {\n    \"has_text_on_screen\": true,\n    \"text_content\": \"OF THE WORLD'S\\nBIGGEST\\nDOG SHOW\",\n    \"text_role\": \"title\",\n    \"has_logo\": false,\n    \"logo_description\": null,\n    \"other_graphics\": null,\n    \"bboxes\": [\n      {\n        \"box_2d\": [336, 347, 384, 654],\n        \"role\": \"title\",\n        \"kind\": \"overlay\",\n        \"label\": \"OF THE WORLD'S\"\n      },\n      {\n        \"box_2d\": [408, 255, 592, 741],\n        \"role\": \"title\",\n        \"kind\": \"overlay\",\n        \"label\": \"BIGGEST\"\n      },\n      {\n        \"box_2d\": [616, 421, 663, 578],\n        \"role\": \"title\",\n        \"kind\": \"overlay\",\n        \"label\": \"DOG SHOW\"\n      }\n    ],\n    \"removal_hint\": {\n      \"mask_strategy\": \"color\",\n      \"text_color_family\": \"multi\",\n      \"text_is_bright\": true,\n      \"luma_threshold_hint\": null,\n      \"hsv_range_hint\": {\n        \"lower\": [35, 50, 50],\n        \"upper\": [85, 255, 255]\n      },\n      \"coverage_estimate_pct\": 15,\n      \"position\": \"center\",\n      \"animated\": false\n    }\n  },\n  \"cut_type\": \"unknown\",\n  \"tempo_cue\": \"mid\",\n  \"is_end_card\": false\n}",
+        "model": "gemini-3.5-flash"
+      },
+      "videoAnalysis": {
+        "visual": "A locked-off wide shot with deep focus captures three meticulously groomed poodles on grooming tables inside a vast exhibition hall. The central poodle is white, flanked by a light apricot poodle on the left and a golden-apricot poodle on the right. The camera slowly pushes in as the poodles stand poised, surrounded by the bustling, industrial-lit environment of a major dog show.",
+        "cinematography": {
+          "shot_size": "long",
+          "camera_angle": "eye_level",
+          "camera_movement_quality": "gimbal",
+          "lens_characteristic": "wide",
+          "depth_of_field": "deep",
+          "focus_dynamics": "locked",
+          "composition": "symmetrical",
+          "lighting_style": "natural_daylight",
+          "color_palette": "lime green, soft cream, industrial gray",
+          "special_techniques": []
+        },
+        "camera_movement": "push_in",
+        "camera_movement_intensity": "subtle",
+        "subject_motion": "none",
+        "subject_motion_direction": "stationary",
+        "objects": [
+          "poodles",
+          "grooming tables",
+          "exhibition hall"
+        ],
+        "framing": "Wide",
+        "brand": "None",
+        "emotion": "focused",
+        "movement": "Slow",
+        "audio": {
+          "has_voiceover": false,
+          "voiceover_transcript": null,
+          "music": "upbeat electronic synth pop, driving tempo, energetic mood",
+          "sfx": [],
+          "ambient": "muffled indoor crowd chatter and dog show background noise"
+        },
+        "graphics": {
+          "has_text_on_screen": true,
+          "text_content": "OF THE WORLD'S\nBIGGEST\nDOG SHOW",
+          "text_role": "title",
+          "has_logo": false,
+          "logo_description": null,
+          "other_graphics": null,
+          "bboxes": [
+            {
+              "box_2d": [
+                336,
+                347,
+                384,
+                654
+              ],
+              "role": "title",
+              "kind": "overlay",
+              "label": "OF THE WORLD'S"
+            },
+            {
+              "box_2d": [
+                408,
+                255,
+                592,
+                741
+              ],
+              "role": "title",
+              "kind": "overlay",
+              "label": "BIGGEST"
+            },
+            {
+              "box_2d": [
+                616,
+                421,
+                663,
+                578
+              ],
+              "role": "title",
+              "kind": "overlay",
+              "label": "DOG SHOW"
+            }
+          ],
+          "removal_hint": {
+            "mask_strategy": "color",
+            "text_color_family": "multi",
+            "text_is_bright": true,
+            "luma_threshold_hint": null,
+            "hsv_range_hint": {
+              "lower": [
+                35,
+                50,
+                50
+              ],
+              "upper": [
+                85,
+                255,
+                255
+              ]
+            },
+            "coverage_estimate_pct": 15,
+            "position": "center",
+            "animated": false
+          }
+        },
+        "subject_bbox": {
+          "box_2d": [
+            217,
+            185,
+            903,
+            359
+          ],
+          "label": "groomed apricot poodle on blue table"
+        },
+        "brand_mark_bbox": null,
+        "physical_brand_marks": [],
+        "cut_type": "unknown",
+        "tempo_cue": "mid",
+        "is_end_card": false,
+        "clipPath": "F:/Proyectos/Kissd ReEdit/Apple/.reedit/clips/scene-005.mp4",
+        "rawText": "{\n  \"visual\": \"A locked-off wide shot with deep focus captures three meticulously groomed poodles on grooming tables inside a vast exhibition hall. The central poodle is white, flanked by a light apricot poodle on the left and a golden-apricot poodle on the right. The camera slowly pushes in as the poodles stand poised, surrounded by the bustling, industrial-lit environment of a major dog show.\",\n  \"cinematography\": {\n    \"shot_size\": \"long\",\n    \"camera_angle\": \"eye_level\",\n    \"camera_movement_quality\": \"gimbal\",\n    \"lens_characteristic\": \"wide\",\n    \"depth_of_field\": \"deep\",\n    \"focus_dynamics\": \"locked\",\n    \"composition\": \"symmetrical\",\n    \"lighting_style\": \"natural_daylight\",\n    \"color_palette\": \"lime green, soft cream, industrial gray\",\n    \"special_techniques\": []\n  },\n  \"camera_movement\": \"push_in\",\n  \"camera_movement_intensity\": \"subtle\",\n  \"subject_motion\": \"none\",\n  \"subject_motion_direction\": \"stationary\",\n  \"objects\": [\"poodles\", \"grooming tables\", \"exhibition hall\"],\n  \"framing\": \"Wide\",\n  \"brand\": \"None\",\n  \"emotion\": \"focused\",\n  \"movement\": \"Slow\",\n  \"audio\": {\n    \"has_voiceover\": false,\n    \"voiceover_transcript\": null,\n    \"music\": \"upbeat electronic synth pop, driving tempo, energetic mood\",\n    \"sfx\": [],\n    \"ambient\": \"muffled indoor crowd chatter and dog show background noise\"\n  },\n  \"subject_bbox\": {\n    \"box_2d\": [217, 185, 903, 359],\n    \"label\": \"groomed apricot poodle on blue table\"\n  },\n  \"brand_mark_bbox\": null,\n  \"physical_brand_marks\": [],\n  \"graphics\": {\n    \"has_text_on_screen\": true,\n    \"text_content\": \"OF THE WORLD'S\\nBIGGEST\\nDOG SHOW\",\n    \"text_role\": \"title\",\n    \"has_logo\": false,\n    \"logo_description\": null,\n    \"other_graphics\": null,\n    \"bboxes\": [\n      {\n        \"box_2d\": [336, 347, 384, 654],\n        \"role\": \"title\",\n        \"kind\": \"overlay\",\n        \"label\": \"OF THE WORLD'S\"\n      },\n      {\n        \"box_2d\": [408, 255, 592, 741],\n        \"role\": \"title\",\n        \"kind\": \"overlay\",\n        \"label\": \"BIGGEST\"\n      },\n      {\n        \"box_2d\": [616, 421, 663, 578],\n        \"role\": \"title\",\n        \"kind\": \"overlay\",\n        \"label\": \"DOG SHOW\"\n      }\n    ],\n    \"removal_hint\": {\n      \"mask_strategy\": \"color\",\n      \"text_color_family\": \"multi\",\n      \"text_is_bright\": true,\n      \"luma_threshold_hint\": null,\n      \"hsv_range_hint\": {\n        \"lower\": [35, 50, 50],\n        \"upper\": [85, 255, 255]\n      },\n      \"coverage_estimate_pct\": 15,\n      \"position\": \"center\",\n      \"animated\": false\n    }\n  },\n  \"cut_type\": \"unknown\",\n  \"tempo_cue\": \"mid\",\n  \"is_end_card\": false\n}",
+        "model": "gemini-3.5-flash",
+        "usage": {
+          "promptTokenCount": 4887,
+          "candidatesTokenCount": 890,
+          "totalTokenCount": 5777,
+          "cachedContentTokenCount": 3908,
+          "promptTokensDetails": [
+            {
+              "modality": "VIDEO",
+              "tokenCount": 266
+            },
+            {
+              "modality": "TEXT",
+              "tokenCount": 4621
+            }
+          ],
+          "cacheTokensDetails": [
+            {
+              "modality": "VIDEO",
+              "tokenCount": 212
+            },
+            {
+              "modality": "TEXT",
+              "tokenCount": 3696
+            }
+          ],
+          "serviceTier": "standard"
+        }
+      },
+      "videoAnalysisError": null,
+      "captionError": null,
+      "optimizations": [
+        {
+          "version": "V01",
+          "path": "F:\\Proyectos\\Kissd ReEdit\\Apple\\.reedit\\optimized\\scene-005_V01.mp4",
+          "model": null,
+          "createdAt": "2026-06-16T14:35:35.261Z",
+          "workflowJsonPath": "F:\\Proyectos\\Kissd ReEdit\\Apple\\.reedit\\optimized\\scene-005_V01.workflow.json"
+        }
+      ],
+      "activeOptimizationVersion": "V01"
+    },
+    {
+      "index": 6,
+      "id": "scene-006",
+      "tcIn": 10.176833333333333,
+      "tcOut": 11.011,
+      "duration": 0.8341666666666665,
+      "thumbnail": "F:/Proyectos/Kissd ReEdit/Apple/.reedit/scenes/scene-006.jpg",
+      "caption": "A medium shot captures a man in a dark jacket and a woman in a black dress with a red scarf grooming a white Borzoi dog on a table. The setting is a large indoor exhibition hall with industrial lighting and other dog show setups in the background. The camera remains static, maintaining a steady eye-level view of the interaction.",
+      "structured": {
+        "visual": "A medium shot captures a man in a dark jacket and a woman in a black dress with a red scarf grooming a white Borzoi dog on a table. The setting is a large indoor exhibition hall with industrial lighting and other dog show setups in the background. The camera remains static, maintaining a steady eye-level view of the interaction.",
+        "brand": "None",
+        "emotion": "calm",
+        "framing": "Medium",
+        "movement": "Slow",
+        "audio": {
+          "has_voiceover": false,
+          "voiceover_transcript": null,
+          "music": null,
+          "sfx": [],
+          "ambient": "low background chatter and indoor hall ambience"
+        },
+        "rawText": "{\n  \"visual\": \"A medium shot captures a man in a dark jacket and a woman in a black dress with a red scarf grooming a white Borzoi dog on a table. The setting is a large indoor exhibition hall with industrial lighting and other dog show setups in the background. The camera remains static, maintaining a steady eye-level view of the interaction.\",\n  \"cinematography\": {\n    \"shot_size\": \"medium\",\n    \"camera_angle\": \"eye_level\",\n    \"camera_movement_quality\": \"locked_off\",\n    \"lens_characteristic\": \"normal\",\n    \"depth_of_field\": \"medium\",\n    \"focus_dynamics\": \"locked\",\n    \"composition\": \"centered\",\n    \"lighting_style\": \"natural_daylight\",\n    \"color_palette\": \"white, dark blue, red, gray\",\n    \"special_techniques\": []\n  },\n  \"camera_movement\": \"static\",\n  \"camera_movement_intensity\": \"none\",\n  \"subject_motion\": \"slow\",\n  \"subject_motion_direction\": \"stationary\",\n  \"objects\": [\n    \"dog\",\n    \"man\",\n    \"woman\",\n    \"table\",\n    \"exhibition hall\"\n  ],\n  \"framing\": \"Medium\",\n  \"brand\": \"None\",\n  \"emotion\": \"calm\",\n  \"movement\": \"Slow\",\n  \"audio\": {\n    \"has_voiceover\": false,\n    \"voiceover_transcript\": null,\n    \"music\": null,\n    \"sfx\": [],\n    \"ambient\": \"low background chatter and indoor hall ambience\"\n  },\n  \"subject_bbox\": {\n    \"box_2d\": [319, 440, 824, 563],\n    \"label\": \"white Borzoi dog\"\n  },\n  \"brand_mark_bbox\": null,\n  \"physical_brand_marks\": [],\n  \"graphics\": null,\n  \"cut_type\": \"unknown\",\n  \"tempo_cue\": \"slow\",\n  \"is_end_card\": false\n}",
+        "model": "gemini-3.5-flash"
+      },
+      "videoAnalysis": {
+        "visual": "A medium shot captures a man in a dark jacket and a woman in a black dress with a red scarf grooming a white Borzoi dog on a table. The setting is a large indoor exhibition hall with industrial lighting and other dog show setups in the background. The camera remains static, maintaining a steady eye-level view of the interaction.",
+        "cinematography": {
+          "shot_size": "medium",
+          "camera_angle": "eye_level",
+          "camera_movement_quality": "locked_off",
+          "lens_characteristic": "normal",
+          "depth_of_field": "medium",
+          "focus_dynamics": "locked",
+          "composition": "centered",
+          "lighting_style": "natural_daylight",
+          "color_palette": "white, dark blue, red, gray",
+          "special_techniques": []
+        },
+        "camera_movement": "static",
+        "camera_movement_intensity": "none",
+        "subject_motion": "slow",
+        "subject_motion_direction": "stationary",
+        "objects": [
+          "dog",
+          "man",
+          "woman",
+          "table",
+          "exhibition hall"
+        ],
+        "framing": "Medium",
+        "brand": "None",
+        "emotion": "calm",
+        "movement": "Slow",
+        "audio": {
+          "has_voiceover": false,
+          "voiceover_transcript": null,
+          "music": null,
+          "sfx": [],
+          "ambient": "low background chatter and indoor hall ambience"
+        },
+        "graphics": null,
+        "subject_bbox": {
+          "box_2d": [
+            319,
+            440,
+            824,
+            563
+          ],
+          "label": "white Borzoi dog"
+        },
+        "brand_mark_bbox": null,
+        "physical_brand_marks": [],
+        "cut_type": "unknown",
+        "tempo_cue": "slow",
+        "is_end_card": false,
+        "clipPath": "F:/Proyectos/Kissd ReEdit/Apple/.reedit/clips/scene-006.mp4",
+        "rawText": "{\n  \"visual\": \"A medium shot captures a man in a dark jacket and a woman in a black dress with a red scarf grooming a white Borzoi dog on a table. The setting is a large indoor exhibition hall with industrial lighting and other dog show setups in the background. The camera remains static, maintaining a steady eye-level view of the interaction.\",\n  \"cinematography\": {\n    \"shot_size\": \"medium\",\n    \"camera_angle\": \"eye_level\",\n    \"camera_movement_quality\": \"locked_off\",\n    \"lens_characteristic\": \"normal\",\n    \"depth_of_field\": \"medium\",\n    \"focus_dynamics\": \"locked\",\n    \"composition\": \"centered\",\n    \"lighting_style\": \"natural_daylight\",\n    \"color_palette\": \"white, dark blue, red, gray\",\n    \"special_techniques\": []\n  },\n  \"camera_movement\": \"static\",\n  \"camera_movement_intensity\": \"none\",\n  \"subject_motion\": \"slow\",\n  \"subject_motion_direction\": \"stationary\",\n  \"objects\": [\n    \"dog\",\n    \"man\",\n    \"woman\",\n    \"table\",\n    \"exhibition hall\"\n  ],\n  \"framing\": \"Medium\",\n  \"brand\": \"None\",\n  \"emotion\": \"calm\",\n  \"movement\": \"Slow\",\n  \"audio\": {\n    \"has_voiceover\": false,\n    \"voiceover_transcript\": null,\n    \"music\": null,\n    \"sfx\": [],\n    \"ambient\": \"low background chatter and indoor hall ambience\"\n  },\n  \"subject_bbox\": {\n    \"box_2d\": [319, 440, 824, 563],\n    \"label\": \"white Borzoi dog\"\n  },\n  \"brand_mark_bbox\": null,\n  \"physical_brand_marks\": [],\n  \"graphics\": null,\n  \"cut_type\": \"unknown\",\n  \"tempo_cue\": \"slow\",\n  \"is_end_card\": false\n}",
+        "model": "gemini-3.5-flash",
+        "usage": {
+          "promptTokenCount": 4708,
+          "candidatesTokenCount": 482,
+          "totalTokenCount": 5190,
+          "cachedContentTokenCount": 3923,
+          "promptTokensDetails": [
+            {
+              "modality": "TEXT",
+              "tokenCount": 4621
+            },
+            {
+              "modality": "VIDEO",
+              "tokenCount": 87
+            }
+          ],
+          "cacheTokensDetails": [
+            {
+              "modality": "VIDEO",
+              "tokenCount": 72
+            },
+            {
+              "modality": "TEXT",
+              "tokenCount": 3851
+            }
+          ],
+          "serviceTier": "standard"
+        }
+      },
+      "videoAnalysisError": null,
+      "captionError": null
+    },
+    {
+      "index": 7,
+      "id": "scene-007",
+      "tcIn": 11.011,
+      "tcOut": 12.053708333333333,
+      "duration": 1.0427083333333336,
+      "thumbnail": "F:/Proyectos/Kissd ReEdit/Apple/.reedit/scenes/scene-007.jpg",
+      "caption": "A medium shot captures a blonde woman in a red cardigan and white skirt grooming a large, light-apricot standard poodle on a blue grooming table. The setting is a spacious indoor exhibition hall with a high steel-truss ceiling, illuminated by cool, even overhead lighting. The woman gently holds the poodle's front leg, while the dog stands patiently in profile, facing right. The camera remains locked-off with a medium depth of field, keeping the subjects sharp against the bustling background.",
+      "structured": {
+        "visual": "A medium shot captures a blonde woman in a red cardigan and white skirt grooming a large, light-apricot standard poodle on a blue grooming table. The setting is a spacious indoor exhibition hall with a high steel-truss ceiling, illuminated by cool, even overhead lighting. The woman gently holds the poodle's front leg, while the dog stands patiently in profile, facing right. The camera remains locked-off with a medium depth of field, keeping the subjects sharp against the bustling background.",
+        "brand": "Driver/face visible",
+        "emotion": "focused",
+        "framing": "Medium",
+        "movement": "Slow",
+        "audio": {
+          "has_voiceover": false,
+          "voiceover_transcript": null,
+          "music": "upbeat electronic pop, synth and light percussion, mid-tempo, cheerful",
+          "sfx": [],
+          "ambient": "muffled indoor crowd chatter and hall acoustics"
+        },
+        "rawText": "{\n  \"visual\": \"A medium shot captures a blonde woman in a red cardigan and white skirt grooming a large, light-apricot standard poodle on a blue grooming table. The setting is a spacious indoor exhibition hall with a high steel-truss ceiling, illuminated by cool, even overhead lighting. The woman gently holds the poodle's front leg, while the dog stands patiently in profile, facing right. The camera remains locked-off with a medium depth of field, keeping the subjects sharp against the bustling background.\",\n  \"cinematography\": {\n    \"shot_size\": \"medium\",\n    \"camera_angle\": \"eye_level\",\n    \"camera_movement_quality\": \"locked_off\",\n    \"lens_characteristic\": \"normal\",\n    \"depth_of_field\": \"medium\",\n    \"focus_dynamics\": \"locked\",\n    \"composition\": \"rule_of_thirds\",\n    \"lighting_style\": \"natural_daylight\",\n    \"color_palette\": \"apricot, vibrant red, clean white, industrial gray\",\n    \"special_techniques\": []\n  },\n  \"camera_movement\": \"static\",\n  \"camera_movement_intensity\": \"none\",\n  \"subject_motion\": \"slow\",\n  \"subject_motion_direction\": \"stationary\",\n  \"objects\": [\n    \"standard poodle\",\n    \"groomer\",\n    \"grooming table\",\n    \"exhibition hall\"\n  ],\n  \"framing\": \"Medium\",\n  \"brand\": \"Driver/face visible\",\n  \"emotion\": \"focused\",\n  \"movement\": \"Slow\",\n  \"audio\": {\n    \"has_voiceover\": false,\n    \"voiceover_transcript\": null,\n    \"music\": \"upbeat electronic pop, synth and light percussion, mid-tempo, cheerful\",\n    \"sfx\": [],\n    \"ambient\": \"muffled indoor crowd chatter and hall acoustics\"\n  },\n  \"subject_bbox\": {\n    \"box_2d\": [270, 642, 994, 953],\n    \"label\": \"groomer's face\"\n  },\n  \"brand_mark_bbox\": null,\n  \"physical_brand_marks\": [\n    {\n      \"box_2d\": [758, 19, 836, 129],\n      \"label\": \"Crufts logo on barrier\"\n    }\n  ],\n  \"graphics\": null,\n  \"cut_type\": \"unknown\",\n  \"tempo_cue\": \"slow\",\n  \"is_end_card\": false\n}",
+        "model": "gemini-3.5-flash"
+      },
+      "videoAnalysis": {
+        "visual": "A medium shot captures a blonde woman in a red cardigan and white skirt grooming a large, light-apricot standard poodle on a blue grooming table. The setting is a spacious indoor exhibition hall with a high steel-truss ceiling, illuminated by cool, even overhead lighting. The woman gently holds the poodle's front leg, while the dog stands patiently in profile, facing right. The camera remains locked-off with a medium depth of field, keeping the subjects sharp against the bustling background.",
+        "cinematography": {
+          "shot_size": "medium",
+          "camera_angle": "eye_level",
+          "camera_movement_quality": "locked_off",
+          "lens_characteristic": "normal",
+          "depth_of_field": "medium",
+          "focus_dynamics": "locked",
+          "composition": "rule_of_thirds",
+          "lighting_style": "natural_daylight",
+          "color_palette": "apricot, vibrant red, clean white, industrial gray",
+          "special_techniques": []
+        },
+        "camera_movement": "static",
+        "camera_movement_intensity": "none",
+        "subject_motion": "slow",
+        "subject_motion_direction": "stationary",
+        "objects": [
+          "standard poodle",
+          "groomer",
+          "grooming table",
+          "exhibition hall"
+        ],
+        "framing": "Medium",
+        "brand": "Driver/face visible",
+        "emotion": "focused",
+        "movement": "Slow",
+        "audio": {
+          "has_voiceover": false,
+          "voiceover_transcript": null,
+          "music": "upbeat electronic pop, synth and light percussion, mid-tempo, cheerful",
+          "sfx": [],
+          "ambient": "muffled indoor crowd chatter and hall acoustics"
+        },
+        "graphics": null,
+        "subject_bbox": {
+          "box_2d": [
+            270,
+            642,
+            994,
+            953
+          ],
+          "label": "groomer's face"
+        },
+        "brand_mark_bbox": null,
+        "physical_brand_marks": [
+          {
+            "box_2d": [
+              758,
+              19,
+              836,
+              129
+            ],
+            "label": "Crufts logo on barrier"
+          }
+        ],
+        "cut_type": "unknown",
+        "tempo_cue": "slow",
+        "is_end_card": false,
+        "clipPath": "F:/Proyectos/Kissd ReEdit/Apple/.reedit/clips/scene-007.mp4",
+        "rawText": "{\n  \"visual\": \"A medium shot captures a blonde woman in a red cardigan and white skirt grooming a large, light-apricot standard poodle on a blue grooming table. The setting is a spacious indoor exhibition hall with a high steel-truss ceiling, illuminated by cool, even overhead lighting. The woman gently holds the poodle's front leg, while the dog stands patiently in profile, facing right. The camera remains locked-off with a medium depth of field, keeping the subjects sharp against the bustling background.\",\n  \"cinematography\": {\n    \"shot_size\": \"medium\",\n    \"camera_angle\": \"eye_level\",\n    \"camera_movement_quality\": \"locked_off\",\n    \"lens_characteristic\": \"normal\",\n    \"depth_of_field\": \"medium\",\n    \"focus_dynamics\": \"locked\",\n    \"composition\": \"rule_of_thirds\",\n    \"lighting_style\": \"natural_daylight\",\n    \"color_palette\": \"apricot, vibrant red, clean white, industrial gray\",\n    \"special_techniques\": []\n  },\n  \"camera_movement\": \"static\",\n  \"camera_movement_intensity\": \"none\",\n  \"subject_motion\": \"slow\",\n  \"subject_motion_direction\": \"stationary\",\n  \"objects\": [\n    \"standard poodle\",\n    \"groomer\",\n    \"grooming table\",\n    \"exhibition hall\"\n  ],\n  \"framing\": \"Medium\",\n  \"brand\": \"Driver/face visible\",\n  \"emotion\": \"focused\",\n  \"movement\": \"Slow\",\n  \"audio\": {\n    \"has_voiceover\": false,\n    \"voiceover_transcript\": null,\n    \"music\": \"upbeat electronic pop, synth and light percussion, mid-tempo, cheerful\",\n    \"sfx\": [],\n    \"ambient\": \"muffled indoor crowd chatter and hall acoustics\"\n  },\n  \"subject_bbox\": {\n    \"box_2d\": [270, 642, 994, 953],\n    \"label\": \"groomer's face\"\n  },\n  \"brand_mark_bbox\": null,\n  \"physical_brand_marks\": [\n    {\n      \"box_2d\": [758, 19, 836, 129],\n      \"label\": \"Crufts logo on barrier\"\n    }\n  ],\n  \"graphics\": null,\n  \"cut_type\": \"unknown\",\n  \"tempo_cue\": \"slow\",\n  \"is_end_card\": false\n}",
+        "model": "gemini-3.5-flash",
+        "usage": {
+          "promptTokenCount": 4714,
+          "candidatesTokenCount": 587,
+          "totalTokenCount": 5301,
+          "cachedContentTokenCount": 3918,
+          "promptTokensDetails": [
+            {
+              "modality": "VIDEO",
+              "tokenCount": 93
+            },
+            {
+              "modality": "TEXT",
+              "tokenCount": 4621
+            }
+          ],
+          "cacheTokensDetails": [
+            {
+              "modality": "VIDEO",
+              "tokenCount": 77
+            },
+            {
+              "modality": "TEXT",
+              "tokenCount": 3841
+            }
+          ],
+          "serviceTier": "standard"
+        }
+      },
+      "videoAnalysisError": null,
+      "captionError": null
+    },
+    {
+      "index": 8,
+      "id": "scene-008",
+      "tcIn": 12.053708333333333,
+      "tcOut": 12.971291666666666,
+      "duration": 0.917583333333333,
+      "thumbnail": "F:/Proyectos/Kissd ReEdit/Apple/.reedit/scenes/scene-008.jpg",
+      "caption": "A medium close-up shot captures a fluffy brown poodle being groomed at an indoor dog show. A person wearing a textured blue jacket uses a brush on the dog's head while holding its muzzle steady. The background features the bustling, dimly lit arena of the Crufts dog show with green partitions and overhead lighting.",
+      "structured": {
+        "visual": "A medium close-up shot captures a fluffy brown poodle being groomed at an indoor dog show. A person wearing a textured blue jacket uses a brush on the dog's head while holding its muzzle steady. The background features the bustling, dimly lit arena of the Crufts dog show with green partitions and overhead lighting.",
+        "brand": "Logo visible",
+        "emotion": "focused",
+        "framing": "Medium",
+        "movement": "Slow",
+        "audio": {
+          "has_voiceover": false,
+          "voiceover_transcript": null,
+          "music": null,
+          "sfx": [],
+          "ambient": "low indoor crowd murmur and dog show atmosphere"
+        },
+        "rawText": "{\n  \"visual\": \"A medium close-up shot captures a fluffy brown poodle being groomed at an indoor dog show. A person wearing a textured blue jacket uses a brush on the dog's head while holding its muzzle steady. The background features the bustling, dimly lit arena of the Crufts dog show with green partitions and overhead lighting.\",\n  \"cinematography\": {\n    \"shot_size\": \"medium_close_up\",\n    \"camera_angle\": \"eye_level\",\n    \"camera_movement_quality\": \"handheld\",\n    \"lens_characteristic\": \"wide\",\n    \"depth_of_field\": \"shallow\",\n    \"focus_dynamics\": \"locked\",\n    \"composition\": \"rule_of_thirds\",\n    \"lighting_style\": \"practical\",\n    \"color_palette\": \"vibrant blue, warm brown, dark gray\",\n    \"special_techniques\": []\n  },\n  \"camera_movement\": \"handheld\",\n  \"camera_movement_intensity\": \"subtle\",\n  \"subject_motion\": \"slow\",\n  \"subject_motion_direction\": \"stationary\",\n  \"objects\": [\n    \"poodle\",\n    \"brush\",\n    \"groomer\",\n    \"show tag\"\n  ],\n  \"framing\": \"Medium\",\n  \"brand\": \"Logo visible\",\n  \"emotion\": \"focused\",\n  \"movement\": \"Slow\",\n  \"audio\": {\n    \"has_voiceover\": false,\n    \"voiceover_transcript\": null,\n    \"music\": null,\n    \"sfx\": [],\n    \"ambient\": \"low indoor crowd murmur and dog show atmosphere\"\n  },\n  \"subject_bbox\": {\n    \"box_2d\": [257, 311, 1000, 599],\n    \"label\": \"brown poodle\"\n  },\n  \"brand_mark_bbox\": {\n    \"box_2d\": [690, 818, 799, 955],\n    \"label\": \"Crufts logo on tag\"\n  },\n  \"physical_brand_marks\": [\n    {\n      \"box_2d\": [690, 818, 799, 955],\n      \"label\": \"Crufts logo on tag\"\n    }\n  ],\n  \"graphics\": null,\n  \"cut_type\": \"unknown\",\n  \"tempo_cue\": \"slow\",\n  \"is_end_card\": false\n}",
+        "model": "gemini-3.5-flash"
+      },
+      "videoAnalysis": {
+        "visual": "A medium close-up shot captures a fluffy brown poodle being groomed at an indoor dog show. A person wearing a textured blue jacket uses a brush on the dog's head while holding its muzzle steady. The background features the bustling, dimly lit arena of the Crufts dog show with green partitions and overhead lighting.",
+        "cinematography": {
+          "shot_size": "medium_close_up",
+          "camera_angle": "eye_level",
+          "camera_movement_quality": "handheld",
+          "lens_characteristic": "wide",
+          "depth_of_field": "shallow",
+          "focus_dynamics": "locked",
+          "composition": "rule_of_thirds",
+          "lighting_style": "practical",
+          "color_palette": "vibrant blue, warm brown, dark gray",
+          "special_techniques": []
+        },
+        "camera_movement": "handheld",
+        "camera_movement_intensity": "subtle",
+        "subject_motion": "slow",
+        "subject_motion_direction": "stationary",
+        "objects": [
+          "poodle",
+          "brush",
+          "groomer",
+          "show tag"
+        ],
+        "framing": "Medium",
+        "brand": "Logo visible",
+        "emotion": "focused",
+        "movement": "Slow",
+        "audio": {
+          "has_voiceover": false,
+          "voiceover_transcript": null,
+          "music": null,
+          "sfx": [],
+          "ambient": "low indoor crowd murmur and dog show atmosphere"
+        },
+        "graphics": null,
+        "subject_bbox": {
+          "box_2d": [
+            257,
+            311,
+            1000,
+            599
+          ],
+          "label": "brown poodle"
+        },
+        "brand_mark_bbox": {
+          "box_2d": [
+            690,
+            818,
+            799,
+            955
+          ],
+          "label": "Crufts logo on tag"
+        },
+        "physical_brand_marks": [
+          {
+            "box_2d": [
+              690,
+              818,
+              799,
+              955
+            ],
+            "label": "Crufts logo on tag"
+          }
+        ],
+        "cut_type": "unknown",
+        "tempo_cue": "slow",
+        "is_end_card": false,
+        "clipPath": "F:/Proyectos/Kissd ReEdit/Apple/.reedit/clips/scene-008.mp4",
+        "rawText": "{\n  \"visual\": \"A medium close-up shot captures a fluffy brown poodle being groomed at an indoor dog show. A person wearing a textured blue jacket uses a brush on the dog's head while holding its muzzle steady. The background features the bustling, dimly lit arena of the Crufts dog show with green partitions and overhead lighting.\",\n  \"cinematography\": {\n    \"shot_size\": \"medium_close_up\",\n    \"camera_angle\": \"eye_level\",\n    \"camera_movement_quality\": \"handheld\",\n    \"lens_characteristic\": \"wide\",\n    \"depth_of_field\": \"shallow\",\n    \"focus_dynamics\": \"locked\",\n    \"composition\": \"rule_of_thirds\",\n    \"lighting_style\": \"practical\",\n    \"color_palette\": \"vibrant blue, warm brown, dark gray\",\n    \"special_techniques\": []\n  },\n  \"camera_movement\": \"handheld\",\n  \"camera_movement_intensity\": \"subtle\",\n  \"subject_motion\": \"slow\",\n  \"subject_motion_direction\": \"stationary\",\n  \"objects\": [\n    \"poodle\",\n    \"brush\",\n    \"groomer\",\n    \"show tag\"\n  ],\n  \"framing\": \"Medium\",\n  \"brand\": \"Logo visible\",\n  \"emotion\": \"focused\",\n  \"movement\": \"Slow\",\n  \"audio\": {\n    \"has_voiceover\": false,\n    \"voiceover_transcript\": null,\n    \"music\": null,\n    \"sfx\": [],\n    \"ambient\": \"low indoor crowd murmur and dog show atmosphere\"\n  },\n  \"subject_bbox\": {\n    \"box_2d\": [257, 311, 1000, 599],\n    \"label\": \"brown poodle\"\n  },\n  \"brand_mark_bbox\": {\n    \"box_2d\": [690, 818, 799, 955],\n    \"label\": \"Crufts logo on tag\"\n  },\n  \"physical_brand_marks\": [\n    {\n      \"box_2d\": [690, 818, 799, 955],\n      \"label\": \"Crufts logo on tag\"\n    }\n  ],\n  \"graphics\": null,\n  \"cut_type\": \"unknown\",\n  \"tempo_cue\": \"slow\",\n  \"is_end_card\": false\n}",
+        "model": "gemini-3.5-flash",
+        "usage": {
+          "promptTokenCount": 4711,
+          "candidatesTokenCount": 570,
+          "totalTokenCount": 5281,
+          "cachedContentTokenCount": 3923,
+          "promptTokensDetails": [
+            {
+              "modality": "VIDEO",
+              "tokenCount": 90
+            },
+            {
+              "modality": "TEXT",
+              "tokenCount": 4621
+            }
+          ],
+          "cacheTokensDetails": [
+            {
+              "modality": "TEXT",
+              "tokenCount": 3849
+            },
+            {
+              "modality": "VIDEO",
+              "tokenCount": 74
+            }
+          ],
+          "serviceTier": "standard"
+        }
+      },
+      "videoAnalysisError": null,
+      "captionError": null
+    },
+    {
+      "index": 9,
+      "id": "scene-009",
+      "tcIn": 12.971291666666666,
+      "tcOut": 14.597916666666666,
+      "duration": 1.6266250000000007,
+      "thumbnail": "F:/Proyectos/Kissd ReEdit/Apple/.reedit/scenes/scene-009.jpg",
+      "caption": "A wide, locked-off shot captures a dog show arena under bright stadium lighting. A handler in dark clothing guides a large, long-haired white dog across the green turf. In the background, a seated audience and event staff watch from behind a low barrier.",
+      "structured": {
+        "visual": "A wide, locked-off shot captures a dog show arena under bright stadium lighting. A handler in dark clothing guides a large, long-haired white dog across the green turf. In the background, a seated audience and event staff watch from behind a low barrier.",
+        "brand": "None",
+        "emotion": "focused",
+        "framing": "Wide",
+        "movement": "Moderate",
+        "audio": {
+          "has_voiceover": true,
+          "voiceover_transcript": "It's the greatest...",
+          "music": "upbeat electronic synth pop, fast tempo, energetic mood",
+          "sfx": [],
+          "ambient": "crowd chatter and arena acoustics"
+        },
+        "rawText": "{\n  \"visual\": \"A wide, locked-off shot captures a dog show arena under bright stadium lighting. A handler in dark clothing guides a large, long-haired white dog across the green turf. In the background, a seated audience and event staff watch from behind a low barrier.\",\n  \"cinematography\": {\n    \"shot_size\": \"long\",\n    \"camera_angle\": \"low_angle\",\n    \"camera_movement_quality\": \"locked_off\",\n    \"lens_characteristic\": \"wide\",\n    \"depth_of_field\": \"deep\",\n    \"focus_dynamics\": \"locked\",\n    \"composition\": \"leading_lines\",\n    \"lighting_style\": \"practical\",\n    \"color_palette\": \"vibrant green, dark charcoal, bright white\",\n    \"special_techniques\": []\n  },\n  \"camera_movement\": \"static\",\n  \"camera_movement_intensity\": \"none\",\n  \"subject_motion\": \"moderate\",\n  \"subject_motion_direction\": \"right-to-left\",\n  \"objects\": [\n    \"dog\",\n    \"handler\",\n    \"arena\",\n    \"audience\",\n    \"lights\"\n  ],\n  \"framing\": \"Wide\",\n  \"brand\": \"None\",\n  \"emotion\": \"focused\",\n  \"movement\": \"Moderate\",\n  \"audio\": {\n    \"has_voiceover\": true,\n    \"voiceover_transcript\": \"It's the greatest...\",\n    \"music\": \"upbeat electronic synth pop, fast tempo, energetic mood\",\n    \"sfx\": [],\n    \"ambient\": \"crowd chatter and arena acoustics\"\n  },\n  \"subject_bbox\": {\n    \"box_2d\": [573, 878, 763, 1000],\n    \"label\": \"large white long-haired dog\"\n  },\n  \"brand_mark_bbox\": null,\n  \"physical_brand_marks\": [],\n  \"graphics\": null,\n  \"cut_type\": \"unknown\",\n  \"tempo_cue\": \"mid\",\n  \"is_end_card\": false\n}",
+        "model": "gemini-3.5-flash"
+      },
+      "videoAnalysis": {
+        "visual": "A wide, locked-off shot captures a dog show arena under bright stadium lighting. A handler in dark clothing guides a large, long-haired white dog across the green turf. In the background, a seated audience and event staff watch from behind a low barrier.",
+        "cinematography": {
+          "shot_size": "long",
+          "camera_angle": "low_angle",
+          "camera_movement_quality": "locked_off",
+          "lens_characteristic": "wide",
+          "depth_of_field": "deep",
+          "focus_dynamics": "locked",
+          "composition": "leading_lines",
+          "lighting_style": "practical",
+          "color_palette": "vibrant green, dark charcoal, bright white",
+          "special_techniques": []
+        },
+        "camera_movement": "static",
+        "camera_movement_intensity": "none",
+        "subject_motion": "moderate",
+        "subject_motion_direction": "right-to-left",
+        "objects": [
+          "dog",
+          "handler",
+          "arena",
+          "audience",
+          "lights"
+        ],
+        "framing": "Wide",
+        "brand": "None",
+        "emotion": "focused",
+        "movement": "Moderate",
+        "audio": {
+          "has_voiceover": true,
+          "voiceover_transcript": "It's the greatest...",
+          "music": "upbeat electronic synth pop, fast tempo, energetic mood",
+          "sfx": [],
+          "ambient": "crowd chatter and arena acoustics"
+        },
+        "graphics": null,
+        "subject_bbox": {
+          "box_2d": [
+            573,
+            878,
+            763,
+            1000
+          ],
+          "label": "large white long-haired dog"
+        },
+        "brand_mark_bbox": null,
+        "physical_brand_marks": [],
+        "cut_type": "unknown",
+        "tempo_cue": "mid",
+        "is_end_card": false,
+        "clipPath": "F:/Proyectos/Kissd ReEdit/Apple/.reedit/clips/scene-009.mp4",
+        "rawText": "{\n  \"visual\": \"A wide, locked-off shot captures a dog show arena under bright stadium lighting. A handler in dark clothing guides a large, long-haired white dog across the green turf. In the background, a seated audience and event staff watch from behind a low barrier.\",\n  \"cinematography\": {\n    \"shot_size\": \"long\",\n    \"camera_angle\": \"low_angle\",\n    \"camera_movement_quality\": \"locked_off\",\n    \"lens_characteristic\": \"wide\",\n    \"depth_of_field\": \"deep\",\n    \"focus_dynamics\": \"locked\",\n    \"composition\": \"leading_lines\",\n    \"lighting_style\": \"practical\",\n    \"color_palette\": \"vibrant green, dark charcoal, bright white\",\n    \"special_techniques\": []\n  },\n  \"camera_movement\": \"static\",\n  \"camera_movement_intensity\": \"none\",\n  \"subject_motion\": \"moderate\",\n  \"subject_motion_direction\": \"right-to-left\",\n  \"objects\": [\n    \"dog\",\n    \"handler\",\n    \"arena\",\n    \"audience\",\n    \"lights\"\n  ],\n  \"framing\": \"Wide\",\n  \"brand\": \"None\",\n  \"emotion\": \"focused\",\n  \"movement\": \"Moderate\",\n  \"audio\": {\n    \"has_voiceover\": true,\n    \"voiceover_transcript\": \"It's the greatest...\",\n    \"music\": \"upbeat electronic synth pop, fast tempo, energetic mood\",\n    \"sfx\": [],\n    \"ambient\": \"crowd chatter and arena acoustics\"\n  },\n  \"subject_bbox\": {\n    \"box_2d\": [573, 878, 763, 1000],\n    \"label\": \"large white long-haired dog\"\n  },\n  \"brand_mark_bbox\": null,\n  \"physical_brand_marks\": [],\n  \"graphics\": null,\n  \"cut_type\": \"unknown\",\n  \"tempo_cue\": \"mid\",\n  \"is_end_card\": false\n}",
+        "model": "gemini-3.5-flash",
+        "usage": {
+          "promptTokenCount": 4794,
+          "candidatesTokenCount": 485,
+          "totalTokenCount": 5279,
+          "cachedContentTokenCount": 3915,
+          "promptTokensDetails": [
+            {
+              "modality": "VIDEO",
+              "tokenCount": 173
+            },
+            {
+              "modality": "TEXT",
+              "tokenCount": 4621
+            }
+          ],
+          "cacheTokensDetails": [
+            {
+              "modality": "TEXT",
+              "tokenCount": 3774
+            },
+            {
+              "modality": "VIDEO",
+              "tokenCount": 141
+            }
+          ],
+          "serviceTier": "standard"
+        }
+      },
+      "videoAnalysisError": null,
+      "captionError": null
+    },
+    {
+      "index": 10,
+      "id": "scene-010",
+      "tcIn": 14.597916666666666,
+      "tcOut": 16.141125,
+      "duration": 1.5432083333333324,
+      "thumbnail": "F:/Proyectos/Kissd ReEdit/Apple/.reedit/scenes/scene-010.jpg",
+      "caption": "A medium long shot captures a bearded man in a light blue suit guiding a large, fluffy black Tibetan Mastiff on a leash across a green carpeted stage. In the background, a woman in a dark blue dress stands near a circular archway branded with 'Crufts Dog Show'. The camera pans left to track their movement under bright, even stage lighting.",
+      "structured": {
+        "visual": "A medium long shot captures a bearded man in a light blue suit guiding a large, fluffy black Tibetan Mastiff on a leash across a green carpeted stage. In the background, a woman in a dark blue dress stands near a circular archway branded with 'Crufts Dog Show'. The camera pans left to track their movement under bright, even stage lighting.",
+        "brand": "None",
+        "emotion": "focused",
+        "framing": "Medium",
+        "movement": "Moderate",
+        "audio": {
+          "has_voiceover": true,
+          "voiceover_transcript": "show of the world",
+          "music": "upbeat electronic synth pop, mid tempo, energetic",
+          "sfx": [],
+          "ambient": "crowd chatter and applause"
+        },
+        "rawText": "{\n  \"visual\": \"A medium long shot captures a bearded man in a light blue suit guiding a large, fluffy black Tibetan Mastiff on a leash across a green carpeted stage. In the background, a woman in a dark blue dress stands near a circular archway branded with 'Crufts Dog Show'. The camera pans left to track their movement under bright, even stage lighting.\",\n  \"cinematography\": {\n    \"shot_size\": \"medium_long\",\n    \"camera_angle\": \"eye_level\",\n    \"camera_movement_quality\": \"unknown\",\n    \"lens_characteristic\": \"normal\",\n    \"depth_of_field\": \"medium\",\n    \"focus_dynamics\": \"focus_pull\",\n    \"composition\": \"rule_of_thirds\",\n    \"lighting_style\": \"high_key\",\n    \"color_palette\": \"light blue, deep black, vibrant green\",\n    \"special_techniques\": []\n  },\n  \"camera_movement\": \"pan_left\",\n  \"camera_movement_intensity\": \"subtle\",\n  \"subject_motion\": \"moderate\",\n  \"subject_motion_direction\": \"toward camera\",\n  \"objects\": [\n    \"dog\",\n    \"man\",\n    \"leash\",\n    \"stage\"\n  ],\n  \"framing\": \"Medium\",\n  \"brand\": \"None\",\n  \"emotion\": \"focused\",\n  \"movement\": \"Moderate\",\n  \"audio\": {\n    \"has_voiceover\": true,\n    \"voiceover_transcript\": \"show of the world\",\n    \"music\": \"upbeat electronic synth pop, mid tempo, energetic\",\n    \"sfx\": [],\n    \"ambient\": \"crowd chatter and applause\"\n  },\n  \"subject_bbox\": {\n    \"box_2d\": [492, 305, 1000, 466],\n    \"label\": \"Tibetan Mastiff dog walking on stage\"\n  },\n  \"brand_mark_bbox\": null,\n  \"physical_brand_marks\": [],\n  \"graphics\": {\n    \"has_text_on_screen\": false,\n    \"text_content\": null,\n    \"text_role\": \"none\",\n    \"has_logo\": false,\n    \"logo_description\": null,\n    \"other_graphics\": null,\n    \"bboxes\": [],\n    \"removal_hint\": {\n      \"mask_strategy\": \"unsure\",\n      \"text_color_family\": null,\n      \"text_is_bright\": null,\n      \"luma_threshold_hint\": null,\n      \"hsv_range_hint\": null,\n      \"coverage_estimate_pct\": 0,\n      \"position\": \"bottom\",\n      \"animated\": false\n    }\n  },\n  \"cut_type\": \"unknown\",\n  \"tempo_cue\": \"mid\",\n  \"is_end_card\": false\n}",
+        "model": "gemini-3.5-flash"
+      },
+      "videoAnalysis": {
+        "visual": "A medium long shot captures a bearded man in a light blue suit guiding a large, fluffy black Tibetan Mastiff on a leash across a green carpeted stage. In the background, a woman in a dark blue dress stands near a circular archway branded with 'Crufts Dog Show'. The camera pans left to track their movement under bright, even stage lighting.",
+        "cinematography": {
+          "shot_size": "medium_long",
+          "camera_angle": "eye_level",
+          "camera_movement_quality": "unknown",
+          "lens_characteristic": "normal",
+          "depth_of_field": "medium",
+          "focus_dynamics": "focus_pull",
+          "composition": "rule_of_thirds",
+          "lighting_style": "high_key",
+          "color_palette": "light blue, deep black, vibrant green",
+          "special_techniques": []
+        },
+        "camera_movement": "pan_left",
+        "camera_movement_intensity": "subtle",
+        "subject_motion": "moderate",
+        "subject_motion_direction": "toward camera",
+        "objects": [
+          "dog",
+          "man",
+          "leash",
+          "stage"
+        ],
+        "framing": "Medium",
+        "brand": "None",
+        "emotion": "focused",
+        "movement": "Moderate",
+        "audio": {
+          "has_voiceover": true,
+          "voiceover_transcript": "show of the world",
+          "music": "upbeat electronic synth pop, mid tempo, energetic",
+          "sfx": [],
+          "ambient": "crowd chatter and applause"
+        },
+        "graphics": null,
+        "subject_bbox": {
+          "box_2d": [
+            492,
+            305,
+            1000,
+            466
+          ],
+          "label": "Tibetan Mastiff dog walking on stage"
+        },
+        "brand_mark_bbox": null,
+        "physical_brand_marks": [],
+        "cut_type": "unknown",
+        "tempo_cue": "mid",
+        "is_end_card": false,
+        "clipPath": "F:/Proyectos/Kissd ReEdit/Apple/.reedit/clips/scene-010.mp4",
+        "rawText": "{\n  \"visual\": \"A medium long shot captures a bearded man in a light blue suit guiding a large, fluffy black Tibetan Mastiff on a leash across a green carpeted stage. In the background, a woman in a dark blue dress stands near a circular archway branded with 'Crufts Dog Show'. The camera pans left to track their movement under bright, even stage lighting.\",\n  \"cinematography\": {\n    \"shot_size\": \"medium_long\",\n    \"camera_angle\": \"eye_level\",\n    \"camera_movement_quality\": \"unknown\",\n    \"lens_characteristic\": \"normal\",\n    \"depth_of_field\": \"medium\",\n    \"focus_dynamics\": \"focus_pull\",\n    \"composition\": \"rule_of_thirds\",\n    \"lighting_style\": \"high_key\",\n    \"color_palette\": \"light blue, deep black, vibrant green\",\n    \"special_techniques\": []\n  },\n  \"camera_movement\": \"pan_left\",\n  \"camera_movement_intensity\": \"subtle\",\n  \"subject_motion\": \"moderate\",\n  \"subject_motion_direction\": \"toward camera\",\n  \"objects\": [\n    \"dog\",\n    \"man\",\n    \"leash\",\n    \"stage\"\n  ],\n  \"framing\": \"Medium\",\n  \"brand\": \"None\",\n  \"emotion\": \"focused\",\n  \"movement\": \"Moderate\",\n  \"audio\": {\n    \"has_voiceover\": true,\n    \"voiceover_transcript\": \"show of the world\",\n    \"music\": \"upbeat electronic synth pop, mid tempo, energetic\",\n    \"sfx\": [],\n    \"ambient\": \"crowd chatter and applause\"\n  },\n  \"subject_bbox\": {\n    \"box_2d\": [492, 305, 1000, 466],\n    \"label\": \"Tibetan Mastiff dog walking on stage\"\n  },\n  \"brand_mark_bbox\": null,\n  \"physical_brand_marks\": [],\n  \"graphics\": {\n    \"has_text_on_screen\": false,\n    \"text_content\": null,\n    \"text_role\": \"none\",\n    \"has_logo\": false,\n    \"logo_description\": null,\n    \"other_graphics\": null,\n    \"bboxes\": [],\n    \"removal_hint\": {\n      \"mask_strategy\": \"unsure\",\n      \"text_color_family\": null,\n      \"text_is_bright\": null,\n      \"luma_threshold_hint\": null,\n      \"hsv_range_hint\": null,\n      \"coverage_estimate_pct\": 0,\n      \"position\": \"bottom\",\n      \"animated\": false\n    }\n  },\n  \"cut_type\": \"unknown\",\n  \"tempo_cue\": \"mid\",\n  \"is_end_card\": false\n}",
+        "model": "gemini-3.5-flash",
+        "usage": {
+          "promptTokenCount": 4792,
+          "candidatesTokenCount": 666,
+          "totalTokenCount": 5458,
+          "cachedContentTokenCount": 3915,
+          "promptTokensDetails": [
+            {
+              "modality": "TEXT",
+              "tokenCount": 4621
+            },
+            {
+              "modality": "VIDEO",
+              "tokenCount": 171
+            }
+          ],
+          "cacheTokensDetails": [
+            {
+              "modality": "TEXT",
+              "tokenCount": 3776
+            },
+            {
+              "modality": "VIDEO",
+              "tokenCount": 139
+            }
+          ],
+          "serviceTier": "standard"
+        }
+      },
+      "videoAnalysisError": null,
+      "captionError": null
+    },
+    {
+      "index": 11,
+      "id": "scene-011",
+      "tcIn": 16.141125,
+      "tcOut": 17.55920833333333,
+      "duration": 1.4180833333333318,
+      "thumbnail": "F:/Proyectos/Kissd ReEdit/Apple/.reedit/scenes/scene-011.jpg",
+      "caption": "A medium shot of a light brindle Whippet trotting gracefully across a bright green carpeted show ring. In the soft-focus background, handlers are seen kneeling on the green surface. The camera tracks the dog's smooth, rhythmic movement with a steady, low-angle pan, keeping the subject sharply in focus against the shallow depth of field.",
+      "structured": {
+        "visual": "A medium shot of a light brindle Whippet trotting gracefully across a bright green carpeted show ring. In the soft-focus background, handlers are seen kneeling on the green surface. The camera tracks the dog's smooth, rhythmic movement with a steady, low-angle pan, keeping the subject sharply in focus against the shallow depth of field.",
+        "brand": "None",
+        "emotion": "focused",
+        "framing": "Medium",
+        "movement": "Moderate",
+        "audio": {
+          "has_voiceover": true,
+          "voiceover_transcript": "Rufus has a nickname...",
+          "music": "upbeat acoustic guitar and light percussion, cheerful tempo",
+          "sfx": [],
+          "ambient": "muffled indoor arena crowd murmur"
+        },
+        "rawText": "{\n  \"visual\": \"A medium shot of a light brindle Whippet trotting gracefully across a bright green carpeted show ring. In the soft-focus background, handlers are seen kneeling on the green surface. The camera tracks the dog's smooth, rhythmic movement with a steady, low-angle pan, keeping the subject sharply in focus against the shallow depth of field.\",\n  \"cinematography\": {\n    \"shot_size\": \"medium\",\n    \"camera_angle\": \"low_angle\",\n    \"camera_movement_quality\": \"gimbal\",\n    \"lens_characteristic\": \"telephoto\",\n    \"depth_of_field\": \"shallow\",\n    \"focus_dynamics\": \"focus_pull\",\n    \"composition\": \"rule_of_thirds\",\n    \"lighting_style\": \"high_key\",\n    \"color_palette\": \"bright green, cream, light brindle\",\n    \"special_techniques\": []\n  },\n  \"camera_movement\": \"pan_right\",\n  \"camera_movement_intensity\": \"subtle\",\n  \"subject_motion\": \"moderate\",\n  \"subject_motion_direction\": \"left-to-right\",\n  \"objects\": [\n    \"dog\",\n    \"carpet\"\n  ],\n  \"framing\": \"Medium\",\n  \"brand\": \"None\",\n  \"emotion\": \"focused\",\n  \"movement\": \"Moderate\",\n  \"audio\": {\n    \"has_voiceover\": true,\n    \"voiceover_transcript\": \"Rufus has a nickname...\",\n    \"music\": \"upbeat acoustic guitar and light percussion, cheerful tempo\",\n    \"sfx\": [],\n    \"ambient\": \"muffled indoor arena crowd murmur\"\n  },\n  \"subject_bbox\": {\n    \"box_2d\": [198, 260, 988, 508],\n    \"label\": \"brindle Whippet\"\n  },\n  \"brand_mark_bbox\": null,\n  \"physical_brand_marks\": [],\n  \"graphics\": null,\n  \"cut_type\": \"hard_cut\",\n  \"tempo_cue\": \"mid\",\n  \"is_end_card\": false\n}",
+        "model": "gemini-3.5-flash"
+      },
+      "videoAnalysis": {
+        "visual": "A medium shot of a light brindle Whippet trotting gracefully across a bright green carpeted show ring. In the soft-focus background, handlers are seen kneeling on the green surface. The camera tracks the dog's smooth, rhythmic movement with a steady, low-angle pan, keeping the subject sharply in focus against the shallow depth of field.",
+        "cinematography": {
+          "shot_size": "medium",
+          "camera_angle": "low_angle",
+          "camera_movement_quality": "gimbal",
+          "lens_characteristic": "telephoto",
+          "depth_of_field": "shallow",
+          "focus_dynamics": "focus_pull",
+          "composition": "rule_of_thirds",
+          "lighting_style": "high_key",
+          "color_palette": "bright green, cream, light brindle",
+          "special_techniques": []
+        },
+        "camera_movement": "pan_right",
+        "camera_movement_intensity": "subtle",
+        "subject_motion": "moderate",
+        "subject_motion_direction": "left-to-right",
+        "objects": [
+          "dog",
+          "carpet"
+        ],
+        "framing": "Medium",
+        "brand": "None",
+        "emotion": "focused",
+        "movement": "Moderate",
+        "audio": {
+          "has_voiceover": true,
+          "voiceover_transcript": "Rufus has a nickname...",
+          "music": "upbeat acoustic guitar and light percussion, cheerful tempo",
+          "sfx": [],
+          "ambient": "muffled indoor arena crowd murmur"
+        },
+        "graphics": null,
+        "subject_bbox": {
+          "box_2d": [
+            198,
+            260,
+            988,
+            508
+          ],
+          "label": "brindle Whippet"
+        },
+        "brand_mark_bbox": null,
+        "physical_brand_marks": [],
+        "cut_type": "hard_cut",
+        "tempo_cue": "mid",
+        "is_end_card": false,
+        "clipPath": "F:/Proyectos/Kissd ReEdit/Apple/.reedit/clips/scene-011.mp4",
+        "rawText": "{\n  \"visual\": \"A medium shot of a light brindle Whippet trotting gracefully across a bright green carpeted show ring. In the soft-focus background, handlers are seen kneeling on the green surface. The camera tracks the dog's smooth, rhythmic movement with a steady, low-angle pan, keeping the subject sharply in focus against the shallow depth of field.\",\n  \"cinematography\": {\n    \"shot_size\": \"medium\",\n    \"camera_angle\": \"low_angle\",\n    \"camera_movement_quality\": \"gimbal\",\n    \"lens_characteristic\": \"telephoto\",\n    \"depth_of_field\": \"shallow\",\n    \"focus_dynamics\": \"focus_pull\",\n    \"composition\": \"rule_of_thirds\",\n    \"lighting_style\": \"high_key\",\n    \"color_palette\": \"bright green, cream, light brindle\",\n    \"special_techniques\": []\n  },\n  \"camera_movement\": \"pan_right\",\n  \"camera_movement_intensity\": \"subtle\",\n  \"subject_motion\": \"moderate\",\n  \"subject_motion_direction\": \"left-to-right\",\n  \"objects\": [\n    \"dog\",\n    \"carpet\"\n  ],\n  \"framing\": \"Medium\",\n  \"brand\": \"None\",\n  \"emotion\": \"focused\",\n  \"movement\": \"Moderate\",\n  \"audio\": {\n    \"has_voiceover\": true,\n    \"voiceover_transcript\": \"Rufus has a nickname...\",\n    \"music\": \"upbeat acoustic guitar and light percussion, cheerful tempo\",\n    \"sfx\": [],\n    \"ambient\": \"muffled indoor arena crowd murmur\"\n  },\n  \"subject_bbox\": {\n    \"box_2d\": [198, 260, 988, 508],\n    \"label\": \"brindle Whippet\"\n  },\n  \"brand_mark_bbox\": null,\n  \"physical_brand_marks\": [],\n  \"graphics\": null,\n  \"cut_type\": \"hard_cut\",\n  \"tempo_cue\": \"mid\",\n  \"is_end_card\": false\n}",
+        "model": "gemini-3.5-flash",
+        "usage": {
+          "promptTokenCount": 4723,
+          "candidatesTokenCount": 495,
+          "totalTokenCount": 5218,
+          "cachedContentTokenCount": 3918,
+          "promptTokensDetails": [
+            {
+              "modality": "TEXT",
+              "tokenCount": 4621
+            },
+            {
+              "modality": "VIDEO",
+              "tokenCount": 102
+            }
+          ],
+          "cacheTokensDetails": [
+            {
+              "modality": "TEXT",
+              "tokenCount": 3834
+            },
+            {
+              "modality": "VIDEO",
+              "tokenCount": 84
+            }
+          ],
+          "serviceTier": "standard"
+        }
+      },
+      "videoAnalysisError": null,
+      "captionError": null
+    },
+    {
+      "index": 12,
+      "id": "scene-012",
+      "tcIn": 17.55920833333333,
+      "tcOut": 18.393375,
+      "duration": 0.8341666666666683,
+      "thumbnail": "F:/Proyectos/Kissd ReEdit/Apple/.reedit/scenes/scene-012.jpg",
+      "caption": "A close-up shot of a small Papillon dog with distinctive white and brown fur, standing on a white surface against a solid green background. Two handlers in formal attire, wearing dark blazers, gently hold and position the dog's head and hindquarters. The camera remains locked-off with a shallow depth of field, keeping the dog in sharp focus while the background is softly blurred.",
+      "structured": {
+        "visual": "A close-up shot of a small Papillon dog with distinctive white and brown fur, standing on a white surface against a solid green background. Two handlers in formal attire, wearing dark blazers, gently hold and position the dog's head and hindquarters. The camera remains locked-off with a shallow depth of field, keeping the dog in sharp focus while the background is softly blurred.",
+        "brand": "None",
+        "emotion": "focused",
+        "framing": "Close-up",
+        "movement": "Slow",
+        "audio": null,
+        "rawText": "{\n  \"visual\": \"A close-up shot of a small Papillon dog with distinctive white and brown fur, standing on a white surface against a solid green background. Two handlers in formal attire, wearing dark blazers, gently hold and position the dog's head and hindquarters. The camera remains locked-off with a shallow depth of field, keeping the dog in sharp focus while the background is softly blurred.\",\n  \"cinematography\": {\n    \"shot_size\": \"close_up\",\n    \"camera_angle\": \"eye_level\",\n    \"camera_movement_quality\": \"locked_off\",\n    \"lens_characteristic\": \"telephoto\",\n    \"depth_of_field\": \"shallow\",\n    \"focus_dynamics\": \"locked\",\n    \"composition\": \"centered\",\n    \"lighting_style\": \"high_key\",\n    \"color_palette\": \"emerald green, crisp white, warm chestnut, navy blue\",\n    \"special_techniques\": []\n  },\n  \"camera_movement\": \"static\",\n  \"camera_movement_intensity\": \"none\",\n  \"subject_motion\": \"slow\",\n  \"subject_motion_direction\": \"stationary\",\n  \"objects\": [\n    \"dog\",\n    \"hands\",\n    \"suit jacket\"\n  ],\n  \"framing\": \"Close-up\",\n  \"brand\": \"None\",\n  \"emotion\": \"focused\",\n  \"movement\": \"Slow\",\n  \"audio\": null,\n  \"subject_bbox\": {\n    \"box_2d\": [115, 370, 1000, 765],\n    \"label\": \"Papillon dog\"\n  },\n  \"brand_mark_bbox\": null,\n  \"physical_brand_marks\": [],\n  \"graphics\": null,\n  \"cut_type\": \"unknown\",\n  \"tempo_cue\": \"slow\",\n  \"is_end_card\": false\n}",
+        "model": "gemini-3.5-flash"
+      },
+      "videoAnalysis": {
+        "visual": "A close-up shot of a small Papillon dog with distinctive white and brown fur, standing on a white surface against a solid green background. Two handlers in formal attire, wearing dark blazers, gently hold and position the dog's head and hindquarters. The camera remains locked-off with a shallow depth of field, keeping the dog in sharp focus while the background is softly blurred.",
+        "cinematography": {
+          "shot_size": "close_up",
+          "camera_angle": "eye_level",
+          "camera_movement_quality": "locked_off",
+          "lens_characteristic": "telephoto",
+          "depth_of_field": "shallow",
+          "focus_dynamics": "locked",
+          "composition": "centered",
+          "lighting_style": "high_key",
+          "color_palette": "emerald green, crisp white, warm chestnut, navy blue",
+          "special_techniques": []
+        },
+        "camera_movement": "static",
+        "camera_movement_intensity": "none",
+        "subject_motion": "slow",
+        "subject_motion_direction": "stationary",
+        "objects": [
+          "dog",
+          "hands",
+          "suit jacket"
+        ],
+        "framing": "Close-up",
+        "brand": "None",
+        "emotion": "focused",
+        "movement": "Slow",
+        "audio": null,
+        "graphics": null,
+        "subject_bbox": {
+          "box_2d": [
+            115,
+            370,
+            1000,
+            765
+          ],
+          "label": "Papillon dog"
+        },
+        "brand_mark_bbox": null,
+        "physical_brand_marks": [],
+        "cut_type": "unknown",
+        "tempo_cue": "slow",
+        "is_end_card": false,
+        "clipPath": "F:/Proyectos/Kissd ReEdit/Apple/.reedit/clips/scene-012.mp4",
+        "rawText": "{\n  \"visual\": \"A close-up shot of a small Papillon dog with distinctive white and brown fur, standing on a white surface against a solid green background. Two handlers in formal attire, wearing dark blazers, gently hold and position the dog's head and hindquarters. The camera remains locked-off with a shallow depth of field, keeping the dog in sharp focus while the background is softly blurred.\",\n  \"cinematography\": {\n    \"shot_size\": \"close_up\",\n    \"camera_angle\": \"eye_level\",\n    \"camera_movement_quality\": \"locked_off\",\n    \"lens_characteristic\": \"telephoto\",\n    \"depth_of_field\": \"shallow\",\n    \"focus_dynamics\": \"locked\",\n    \"composition\": \"centered\",\n    \"lighting_style\": \"high_key\",\n    \"color_palette\": \"emerald green, crisp white, warm chestnut, navy blue\",\n    \"special_techniques\": []\n  },\n  \"camera_movement\": \"static\",\n  \"camera_movement_intensity\": \"none\",\n  \"subject_motion\": \"slow\",\n  \"subject_motion_direction\": \"stationary\",\n  \"objects\": [\n    \"dog\",\n    \"hands\",\n    \"suit jacket\"\n  ],\n  \"framing\": \"Close-up\",\n  \"brand\": \"None\",\n  \"emotion\": \"focused\",\n  \"movement\": \"Slow\",\n  \"audio\": null,\n  \"subject_bbox\": {\n    \"box_2d\": [115, 370, 1000, 765],\n    \"label\": \"Papillon dog\"\n  },\n  \"brand_mark_bbox\": null,\n  \"physical_brand_marks\": [],\n  \"graphics\": null,\n  \"cut_type\": \"unknown\",\n  \"tempo_cue\": \"slow\",\n  \"is_end_card\": false\n}",
+        "model": "gemini-3.5-flash",
+        "usage": {
+          "promptTokenCount": 4708,
+          "candidatesTokenCount": 437,
+          "totalTokenCount": 5145,
+          "cachedContentTokenCount": 3923,
+          "promptTokensDetails": [
+            {
+              "modality": "VIDEO",
+              "tokenCount": 87
+            },
+            {
+              "modality": "TEXT",
+              "tokenCount": 4621
+            }
+          ],
+          "cacheTokensDetails": [
+            {
+              "modality": "TEXT",
+              "tokenCount": 3851
+            },
+            {
+              "modality": "VIDEO",
+              "tokenCount": 72
+            }
+          ],
+          "serviceTier": "standard"
+        }
+      },
+      "videoAnalysisError": null,
+      "captionError": null
+    },
+    {
+      "index": 13,
+      "id": "scene-013",
+      "tcIn": 18.393375,
+      "tcOut": 19.26925,
+      "duration": 0.8758750000000006,
+      "thumbnail": "F:/Proyectos/Kissd ReEdit/Apple/.reedit/scenes/scene-013.jpg",
+      "caption": "A medium close-up shot of a bald man with glasses, wearing a gray patterned suit jacket, a white shirt, and a bright orange tie. He has a green rosette pinned to his lapel and is looking downward. The background is a dark, soft-focus curtain with small, out-of-focus white lights, creating a shallow depth of field.",
+      "structured": {
+        "visual": "A medium close-up shot of a bald man with glasses, wearing a gray patterned suit jacket, a white shirt, and a bright orange tie. He has a green rosette pinned to his lapel and is looking downward. The background is a dark, soft-focus curtain with small, out-of-focus white lights, creating a shallow depth of field.",
+        "brand": "None",
+        "emotion": "serious",
+        "framing": "Close-up",
+        "movement": "Slow",
+        "audio": {
+          "has_voiceover": true,
+          "voiceover_transcript": "the giant killer",
+          "music": null,
+          "sfx": [],
+          "ambient": "low room tone"
+        },
+        "rawText": "{\n  \"visual\": \"A medium close-up shot of a bald man with glasses, wearing a gray patterned suit jacket, a white shirt, and a bright orange tie. He has a green rosette pinned to his lapel and is looking downward. The background is a dark, soft-focus curtain with small, out-of-focus white lights, creating a shallow depth of field.\",\n  \"cinematography\": {\n    \"shot_size\": \"medium_close_up\",\n    \"camera_angle\": \"eye_level\",\n    \"camera_movement_quality\": \"locked_off\",\n    \"lens_characteristic\": \"normal\",\n    \"depth_of_field\": \"shallow\",\n    \"focus_dynamics\": \"locked\",\n    \"composition\": \"centered\",\n    \"lighting_style\": \"three_point\",\n    \"color_palette\": \"gray, orange, green, black\",\n    \"special_techniques\": []\n  },\n  \"camera_movement\": \"static\",\n  \"camera_movement_intensity\": \"none\",\n  \"subject_motion\": \"slow\",\n  \"subject_motion_direction\": \"stationary\",\n  \"objects\": [\n    \"man\",\n    \"suit jacket\",\n    \"tie\",\n    \"glasses\",\n    \"rosette\"\n  ],\n  \"framing\": \"Close-up\",\n  \"brand\": \"None\",\n  \"emotion\": \"serious\",\n  \"movement\": \"Slow\",\n  \"audio\": {\n    \"has_voiceover\": true,\n    \"voiceover_transcript\": \"the giant killer\",\n    \"music\": null,\n    \"sfx\": [],\n    \"ambient\": \"low room tone\"\n  },\n  \"subject_bbox\": {\n    \"box_2d\": [\n      101,\n      186,\n      1000,\n      743\n    ],\n    \"label\": \"man in suit looking down\"\n  },\n  \"brand_mark_bbox\": null,\n  \"physical_brand_marks\": [],\n  \"graphics\": null,\n  \"cut_type\": \"unknown\",\n  \"tempo_cue\": \"slow\",\n  \"is_end_card\": false\n}",
+        "model": "gemini-3.5-flash"
+      },
+      "videoAnalysis": {
+        "visual": "A medium close-up shot of a bald man with glasses, wearing a gray patterned suit jacket, a white shirt, and a bright orange tie. He has a green rosette pinned to his lapel and is looking downward. The background is a dark, soft-focus curtain with small, out-of-focus white lights, creating a shallow depth of field.",
+        "cinematography": {
+          "shot_size": "medium_close_up",
+          "camera_angle": "eye_level",
+          "camera_movement_quality": "locked_off",
+          "lens_characteristic": "normal",
+          "depth_of_field": "shallow",
+          "focus_dynamics": "locked",
+          "composition": "centered",
+          "lighting_style": "three_point",
+          "color_palette": "gray, orange, green, black",
+          "special_techniques": []
+        },
+        "camera_movement": "static",
+        "camera_movement_intensity": "none",
+        "subject_motion": "slow",
+        "subject_motion_direction": "stationary",
+        "objects": [
+          "man",
+          "suit jacket",
+          "tie",
+          "glasses",
+          "rosette"
+        ],
+        "framing": "Close-up",
+        "brand": "None",
+        "emotion": "serious",
+        "movement": "Slow",
+        "audio": {
+          "has_voiceover": true,
+          "voiceover_transcript": "the giant killer",
+          "music": null,
+          "sfx": [],
+          "ambient": "low room tone"
+        },
+        "graphics": null,
+        "subject_bbox": {
+          "box_2d": [
+            101,
+            186,
+            1000,
+            743
+          ],
+          "label": "man in suit looking down"
+        },
+        "brand_mark_bbox": null,
+        "physical_brand_marks": [],
+        "cut_type": "unknown",
+        "tempo_cue": "slow",
+        "is_end_card": false,
+        "clipPath": "F:/Proyectos/Kissd ReEdit/Apple/.reedit/clips/scene-013.mp4",
+        "rawText": "{\n  \"visual\": \"A medium close-up shot of a bald man with glasses, wearing a gray patterned suit jacket, a white shirt, and a bright orange tie. He has a green rosette pinned to his lapel and is looking downward. The background is a dark, soft-focus curtain with small, out-of-focus white lights, creating a shallow depth of field.\",\n  \"cinematography\": {\n    \"shot_size\": \"medium_close_up\",\n    \"camera_angle\": \"eye_level\",\n    \"camera_movement_quality\": \"locked_off\",\n    \"lens_characteristic\": \"normal\",\n    \"depth_of_field\": \"shallow\",\n    \"focus_dynamics\": \"locked\",\n    \"composition\": \"centered\",\n    \"lighting_style\": \"three_point\",\n    \"color_palette\": \"gray, orange, green, black\",\n    \"special_techniques\": []\n  },\n  \"camera_movement\": \"static\",\n  \"camera_movement_intensity\": \"none\",\n  \"subject_motion\": \"slow\",\n  \"subject_motion_direction\": \"stationary\",\n  \"objects\": [\n    \"man\",\n    \"suit jacket\",\n    \"tie\",\n    \"glasses\",\n    \"rosette\"\n  ],\n  \"framing\": \"Close-up\",\n  \"brand\": \"None\",\n  \"emotion\": \"serious\",\n  \"movement\": \"Slow\",\n  \"audio\": {\n    \"has_voiceover\": true,\n    \"voiceover_transcript\": \"the giant killer\",\n    \"music\": null,\n    \"sfx\": [],\n    \"ambient\": \"low room tone\"\n  },\n  \"subject_bbox\": {\n    \"box_2d\": [\n      101,\n      186,\n      1000,\n      743\n    ],\n    \"label\": \"man in suit looking down\"\n  },\n  \"brand_mark_bbox\": null,\n  \"physical_brand_marks\": [],\n  \"graphics\": null,\n  \"cut_type\": \"unknown\",\n  \"tempo_cue\": \"slow\",\n  \"is_end_card\": false\n}",
+        "model": "gemini-3.5-flash",
+        "usage": {
+          "promptTokenCount": 4709,
+          "candidatesTokenCount": 498,
+          "totalTokenCount": 5207,
+          "cachedContentTokenCount": 3923,
+          "promptTokensDetails": [
+            {
+              "modality": "VIDEO",
+              "tokenCount": 88
+            },
+            {
+              "modality": "TEXT",
+              "tokenCount": 4621
+            }
+          ],
+          "cacheTokensDetails": [
+            {
+              "modality": "VIDEO",
+              "tokenCount": 73
+            },
+            {
+              "modality": "TEXT",
+              "tokenCount": 3850
+            }
+          ],
+          "serviceTier": "standard"
+        }
+      },
+      "videoAnalysisError": null,
+      "captionError": null
+    },
+    {
+      "index": 14,
+      "id": "scene-014",
+      "tcIn": 19.26925,
+      "tcOut": 20.353666666666665,
+      "duration": 1.084416666666666,
+      "thumbnail": "F:/Proyectos/Kissd ReEdit/Apple/.reedit/scenes/scene-014.jpg",
+      "caption": "A low-angle, shallow-DOF tracking shot captures a long-haired white Maltese dog trotting on green turf alongside a handler wearing plaid trousers and black leather shoes. The camera tracks backward, keeping pace with the dog's forward motion. Bright, even studio lighting illuminates the scene, creating a clean, high-key aesthetic.",
+      "structured": {
+        "visual": "A low-angle, shallow-DOF tracking shot captures a long-haired white Maltese dog trotting on green turf alongside a handler wearing plaid trousers and black leather shoes. The camera tracks backward, keeping pace with the dog's forward motion. Bright, even studio lighting illuminates the scene, creating a clean, high-key aesthetic.",
+        "brand": "Text/logo on-screen",
+        "emotion": "playful",
+        "framing": "Medium",
+        "movement": "Moderate",
+        "audio": {
+          "has_voiceover": false,
+          "voiceover_transcript": null,
+          "music": "energetic electronic dance music, synth-driven, fast tempo",
+          "sfx": [],
+          "ambient": null
+        },
+        "rawText": "{\n  \"visual\": \"A low-angle, shallow-DOF tracking shot captures a long-haired white Maltese dog trotting on green turf alongside a handler wearing plaid trousers and black leather shoes. The camera tracks backward, keeping pace with the dog's forward motion. Bright, even studio lighting illuminates the scene, creating a clean, high-key aesthetic.\",\n  \"cinematography\": {\n    \"shot_size\": \"medium_long\",\n    \"camera_angle\": \"low_angle\",\n    \"camera_movement_quality\": \"gimbal\",\n    \"lens_characteristic\": \"telephoto\",\n    \"depth_of_field\": \"shallow\",\n    \"focus_dynamics\": \"focus_pull\",\n    \"composition\": \"rule_of_thirds\",\n    \"lighting_style\": \"high_key\",\n    \"color_palette\": \"bright white, vibrant green, dark brown plaid, yellow text\",\n    \"special_techniques\": []\n  },\n  \"camera_movement\": \"pull_out\",\n  \"camera_movement_intensity\": \"moderate\",\n  \"subject_motion\": \"moderate\",\n  \"subject_motion_direction\": \"toward camera\",\n  \"objects\": [\n    \"dog\",\n    \"shoes\",\n    \"trousers\"\n  ],\n  \"framing\": \"Medium\",\n  \"brand\": \"Text/logo on-screen\",\n  \"emotion\": \"playful\",\n  \"movement\": \"Moderate\",\n  \"audio\": {\n    \"has_voiceover\": false,\n    \"voiceover_transcript\": null,\n    \"music\": \"energetic electronic dance music, synth-driven, fast tempo\",\n    \"sfx\": [],\n    \"ambient\": null\n  },\n  \"subject_bbox\": {\n    \"box_2d\": [45, 410, 842, 967],\n    \"label\": \"Maltese dog trotting\"\n  },\n  \"brand_mark_bbox\": null,\n  \"physical_brand_marks\": [],\n  \"graphics\": {\n    \"has_text_on_screen\": true,\n    \"text_content\": \"THE\\nULTIMATE\",\n    \"text_role\": \"title\",\n    \"has_logo\": false,\n    \"logo_description\": null,\n    \"other_graphics\": null,\n    \"bboxes\": [\n      {\n        \"box_2d\": [343, 218, 513, 583],\n        \"role\": \"title\",\n        \"kind\": \"overlay\",\n        \"label\": \"THE ULTIMATE\"\n      }\n    ],\n    \"removal_hint\": {\n      \"mask_strategy\": \"color\",\n      \"text_color_family\": \"yellow\",\n      \"text_is_bright\": true,\n      \"luma_threshold_hint\": null,\n      \"hsv_range_hint\": {\n        \"lower\": [\n          20,\n          100,\n          100\n        ],\n        \"upper\": [\n          35,\n          255,\n          255\n        ]\n      },\n      \"coverage_estimate_pct\": 5,\n      \"position\": \"center\",\n      \"animated\": false\n    }\n  },\n  \"cut_type\": \"unknown\",\n  \"tempo_cue\": \"fast\",\n  \"is_end_card\": false\n}",
+        "model": "gemini-3.5-flash"
+      },
+      "videoAnalysis": {
+        "visual": "A low-angle, shallow-DOF tracking shot captures a long-haired white Maltese dog trotting on green turf alongside a handler wearing plaid trousers and black leather shoes. The camera tracks backward, keeping pace with the dog's forward motion. Bright, even studio lighting illuminates the scene, creating a clean, high-key aesthetic.",
+        "cinematography": {
+          "shot_size": "medium_long",
+          "camera_angle": "low_angle",
+          "camera_movement_quality": "gimbal",
+          "lens_characteristic": "telephoto",
+          "depth_of_field": "shallow",
+          "focus_dynamics": "focus_pull",
+          "composition": "rule_of_thirds",
+          "lighting_style": "high_key",
+          "color_palette": "bright white, vibrant green, dark brown plaid, yellow text",
+          "special_techniques": []
+        },
+        "camera_movement": "pull_out",
+        "camera_movement_intensity": "moderate",
+        "subject_motion": "moderate",
+        "subject_motion_direction": "toward camera",
+        "objects": [
+          "dog",
+          "shoes",
+          "trousers"
+        ],
+        "framing": "Medium",
+        "brand": "Text/logo on-screen",
+        "emotion": "playful",
+        "movement": "Moderate",
+        "audio": {
+          "has_voiceover": false,
+          "voiceover_transcript": null,
+          "music": "energetic electronic dance music, synth-driven, fast tempo",
+          "sfx": [],
+          "ambient": null
+        },
+        "graphics": {
+          "has_text_on_screen": true,
+          "text_content": "THE\nULTIMATE",
+          "text_role": "title",
+          "has_logo": false,
+          "logo_description": null,
+          "other_graphics": null,
+          "bboxes": [
+            {
+              "box_2d": [
+                343,
+                218,
+                513,
+                583
+              ],
+              "role": "title",
+              "kind": "overlay",
+              "label": "THE ULTIMATE"
+            }
+          ],
+          "removal_hint": {
+            "mask_strategy": "color",
+            "text_color_family": "yellow",
+            "text_is_bright": true,
+            "luma_threshold_hint": null,
+            "hsv_range_hint": {
+              "lower": [
+                20,
+                100,
+                100
+              ],
+              "upper": [
+                35,
+                255,
+                255
+              ]
+            },
+            "coverage_estimate_pct": 5,
+            "position": "center",
+            "animated": false
+          }
+        },
+        "subject_bbox": {
+          "box_2d": [
+            45,
+            410,
+            842,
+            967
+          ],
+          "label": "Maltese dog trotting"
+        },
+        "brand_mark_bbox": null,
+        "physical_brand_marks": [],
+        "cut_type": "unknown",
+        "tempo_cue": "fast",
+        "is_end_card": false,
+        "clipPath": "F:/Proyectos/Kissd ReEdit/Apple/.reedit/clips/scene-014.mp4",
+        "rawText": "{\n  \"visual\": \"A low-angle, shallow-DOF tracking shot captures a long-haired white Maltese dog trotting on green turf alongside a handler wearing plaid trousers and black leather shoes. The camera tracks backward, keeping pace with the dog's forward motion. Bright, even studio lighting illuminates the scene, creating a clean, high-key aesthetic.\",\n  \"cinematography\": {\n    \"shot_size\": \"medium_long\",\n    \"camera_angle\": \"low_angle\",\n    \"camera_movement_quality\": \"gimbal\",\n    \"lens_characteristic\": \"telephoto\",\n    \"depth_of_field\": \"shallow\",\n    \"focus_dynamics\": \"focus_pull\",\n    \"composition\": \"rule_of_thirds\",\n    \"lighting_style\": \"high_key\",\n    \"color_palette\": \"bright white, vibrant green, dark brown plaid, yellow text\",\n    \"special_techniques\": []\n  },\n  \"camera_movement\": \"pull_out\",\n  \"camera_movement_intensity\": \"moderate\",\n  \"subject_motion\": \"moderate\",\n  \"subject_motion_direction\": \"toward camera\",\n  \"objects\": [\n    \"dog\",\n    \"shoes\",\n    \"trousers\"\n  ],\n  \"framing\": \"Medium\",\n  \"brand\": \"Text/logo on-screen\",\n  \"emotion\": \"playful\",\n  \"movement\": \"Moderate\",\n  \"audio\": {\n    \"has_voiceover\": false,\n    \"voiceover_transcript\": null,\n    \"music\": \"energetic electronic dance music, synth-driven, fast tempo\",\n    \"sfx\": [],\n    \"ambient\": null\n  },\n  \"subject_bbox\": {\n    \"box_2d\": [45, 410, 842, 967],\n    \"label\": \"Maltese dog trotting\"\n  },\n  \"brand_mark_bbox\": null,\n  \"physical_brand_marks\": [],\n  \"graphics\": {\n    \"has_text_on_screen\": true,\n    \"text_content\": \"THE\\nULTIMATE\",\n    \"text_role\": \"title\",\n    \"has_logo\": false,\n    \"logo_description\": null,\n    \"other_graphics\": null,\n    \"bboxes\": [\n      {\n        \"box_2d\": [343, 218, 513, 583],\n        \"role\": \"title\",\n        \"kind\": \"overlay\",\n        \"label\": \"THE ULTIMATE\"\n      }\n    ],\n    \"removal_hint\": {\n      \"mask_strategy\": \"color\",\n      \"text_color_family\": \"yellow\",\n      \"text_is_bright\": true,\n      \"luma_threshold_hint\": null,\n      \"hsv_range_hint\": {\n        \"lower\": [\n          20,\n          100,\n          100\n        ],\n        \"upper\": [\n          35,\n          255,\n          255\n        ]\n      },\n      \"coverage_estimate_pct\": 5,\n      \"position\": \"center\",\n      \"animated\": false\n    }\n  },\n  \"cut_type\": \"unknown\",\n  \"tempo_cue\": \"fast\",\n  \"is_end_card\": false\n}",
+        "model": "gemini-3.5-flash",
+        "usage": {
+          "promptTokenCount": 4715,
+          "candidatesTokenCount": 778,
+          "totalTokenCount": 5493,
+          "cachedContentTokenCount": 3918,
+          "promptTokensDetails": [
+            {
+              "modality": "VIDEO",
+              "tokenCount": 94
+            },
+            {
+              "modality": "TEXT",
+              "tokenCount": 4621
+            }
+          ],
+          "cacheTokensDetails": [
+            {
+              "modality": "TEXT",
+              "tokenCount": 3840
+            },
+            {
+              "modality": "VIDEO",
+              "tokenCount": 78
+            }
+          ],
+          "serviceTier": "standard"
+        }
+      },
+      "videoAnalysisError": null,
+      "captionError": null,
+      "optimizations": [
+        {
+          "version": "V01",
+          "path": "F:\\Proyectos\\Kissd ReEdit\\Apple\\.reedit\\optimized\\scene-014_V01.mp4",
+          "model": null,
+          "createdAt": "2026-06-16T14:36:15.032Z",
+          "workflowJsonPath": "F:\\Proyectos\\Kissd ReEdit\\Apple\\.reedit\\optimized\\scene-014_V01.workflow.json"
+        }
+      ],
+      "activeOptimizationVersion": "V01"
+    },
+    {
+      "index": 15,
+      "id": "scene-015",
+      "tcIn": 20.353666666666665,
+      "tcOut": 21.27125,
+      "duration": 0.917583333333333,
+      "thumbnail": "F:/Proyectos/Kissd ReEdit/Apple/.reedit/scenes/scene-015.jpg",
+      "caption": "A medium shot captures an elegant Afghan Hound with long, flowing tan and cream fur trotting from left to right. The dog is guided by a handler, visible only from the waist down in black pants and a white top, against a vibrant red and green studio backdrop. The camera tracks the dog's fluid movement with a smooth, locked-off pan, keeping the subject centered under bright, even studio lighting.",
+      "structured": {
+        "visual": "A medium shot captures an elegant Afghan Hound with long, flowing tan and cream fur trotting from left to right. The dog is guided by a handler, visible only from the waist down in black pants and a white top, against a vibrant red and green studio backdrop. The camera tracks the dog's fluid movement with a smooth, locked-off pan, keeping the subject centered under bright, even studio lighting.",
+        "brand": "None",
+        "emotion": "playful",
+        "framing": "Medium",
+        "movement": "Moderate",
+        "audio": null,
+        "rawText": "{\n  \"visual\": \"A medium shot captures an elegant Afghan Hound with long, flowing tan and cream fur trotting from left to right. The dog is guided by a handler, visible only from the waist down in black pants and a white top, against a vibrant red and green studio backdrop. The camera tracks the dog's fluid movement with a smooth, locked-off pan, keeping the subject centered under bright, even studio lighting.\",\n  \"cinematography\": {\n    \"shot_size\": \"medium\",\n    \"camera_angle\": \"eye_level\",\n    \"camera_movement_quality\": \"locked_off\",\n    \"lens_characteristic\": \"normal\",\n    \"depth_of_field\": \"medium\",\n    \"focus_dynamics\": \"locked\",\n    \"composition\": \"centered\",\n    \"lighting_style\": \"high_key\",\n    \"color_palette\": \"vibrant red, deep green, cream, tan\",\n    \"special_techniques\": []\n  },\n  \"camera_movement\": \"static\",\n  \"camera_movement_intensity\": \"none\",\n  \"subject_motion\": \"moderate\",\n  \"subject_motion_direction\": \"left-to-right\",\n  \"objects\": [\n    \"dog\",\n    \"handler\"\n  ],\n  \"framing\": \"Medium\",\n  \"brand\": \"None\",\n  \"emotion\": \"playful\",\n  \"movement\": \"Moderate\",\n  \"audio\": null,\n  \"subject_bbox\": {\n    \"box_2d\": [\n      0,\n      76,\n      1000,\n      962\n    ],\n    \"label\": \"Afghan Hound trotting\"\n  },\n  \"brand_mark_bbox\": null,\n  \"physical_brand_marks\": [],\n  \"graphics\": {\n    \"has_text_on_screen\": true,\n    \"text_content\": \"THE\\nULTIMATE DOG\\nSPECTACULAR\",\n    \"text_role\": \"title\",\n    \"has_logo\": false,\n    \"logo_description\": null,\n    \"other_graphics\": null,\n    \"bboxes\": [\n      {\n        \"box_2d\": [\n          325,\n          215,\n          643,\n          785\n        ],\n        \"role\": \"title\",\n        \"kind\": \"overlay\",\n        \"label\": \"THE ULTIMATE DOG SPECTACULAR\"\n      }\n    ],\n    \"removal_hint\": {\n      \"mask_strategy\": \"color\",\n      \"text_color_family\": \"yellow\",\n      \"text_is_bright\": true,\n      \"luma_threshold_hint\": null,\n      \"hsv_range_hint\": {\n        \"lower\": [\n          20,\n          100,\n          100\n        ],\n        \"upper\": [\n          30,\n          255,\n          255\n        ]\n      },\n      \"coverage_estimate_pct\": 15,\n      \"position\": \"center\",\n      \"animated\": false\n    }\n  },\n  \"cut_type\": \"unknown\",\n  \"tempo_cue\": \"mid\",\n  \"is_end_card\": false\n}",
+        "model": "gemini-3.5-flash"
+      },
+      "videoAnalysis": {
+        "visual": "A medium shot captures an elegant Afghan Hound with long, flowing tan and cream fur trotting from left to right. The dog is guided by a handler, visible only from the waist down in black pants and a white top, against a vibrant red and green studio backdrop. The camera tracks the dog's fluid movement with a smooth, locked-off pan, keeping the subject centered under bright, even studio lighting.",
+        "cinematography": {
+          "shot_size": "medium",
+          "camera_angle": "eye_level",
+          "camera_movement_quality": "locked_off",
+          "lens_characteristic": "normal",
+          "depth_of_field": "medium",
+          "focus_dynamics": "locked",
+          "composition": "centered",
+          "lighting_style": "high_key",
+          "color_palette": "vibrant red, deep green, cream, tan",
+          "special_techniques": []
+        },
+        "camera_movement": "static",
+        "camera_movement_intensity": "none",
+        "subject_motion": "moderate",
+        "subject_motion_direction": "left-to-right",
+        "objects": [
+          "dog",
+          "handler"
+        ],
+        "framing": "Medium",
+        "brand": "None",
+        "emotion": "playful",
+        "movement": "Moderate",
+        "audio": null,
+        "graphics": {
+          "has_text_on_screen": true,
+          "text_content": "THE\nULTIMATE DOG\nSPECTACULAR",
+          "text_role": "title",
+          "has_logo": false,
+          "logo_description": null,
+          "other_graphics": null,
+          "bboxes": [
+            {
+              "box_2d": [
+                325,
+                215,
+                643,
+                785
+              ],
+              "role": "title",
+              "kind": "overlay",
+              "label": "THE ULTIMATE DOG SPECTACULAR"
+            }
+          ],
+          "removal_hint": {
+            "mask_strategy": "color",
+            "text_color_family": "yellow",
+            "text_is_bright": true,
+            "luma_threshold_hint": null,
+            "hsv_range_hint": {
+              "lower": [
+                20,
+                100,
+                100
+              ],
+              "upper": [
+                30,
+                255,
+                255
+              ]
+            },
+            "coverage_estimate_pct": 15,
+            "position": "center",
+            "animated": false
+          }
+        },
+        "subject_bbox": {
+          "box_2d": [
+            0,
+            76,
+            1000,
+            962
+          ],
+          "label": "Afghan Hound trotting"
+        },
+        "brand_mark_bbox": null,
+        "physical_brand_marks": [],
+        "cut_type": "unknown",
+        "tempo_cue": "mid",
+        "is_end_card": false,
+        "clipPath": "F:/Proyectos/Kissd ReEdit/Apple/.reedit/clips/scene-015.mp4",
+        "rawText": "{\n  \"visual\": \"A medium shot captures an elegant Afghan Hound with long, flowing tan and cream fur trotting from left to right. The dog is guided by a handler, visible only from the waist down in black pants and a white top, against a vibrant red and green studio backdrop. The camera tracks the dog's fluid movement with a smooth, locked-off pan, keeping the subject centered under bright, even studio lighting.\",\n  \"cinematography\": {\n    \"shot_size\": \"medium\",\n    \"camera_angle\": \"eye_level\",\n    \"camera_movement_quality\": \"locked_off\",\n    \"lens_characteristic\": \"normal\",\n    \"depth_of_field\": \"medium\",\n    \"focus_dynamics\": \"locked\",\n    \"composition\": \"centered\",\n    \"lighting_style\": \"high_key\",\n    \"color_palette\": \"vibrant red, deep green, cream, tan\",\n    \"special_techniques\": []\n  },\n  \"camera_movement\": \"static\",\n  \"camera_movement_intensity\": \"none\",\n  \"subject_motion\": \"moderate\",\n  \"subject_motion_direction\": \"left-to-right\",\n  \"objects\": [\n    \"dog\",\n    \"handler\"\n  ],\n  \"framing\": \"Medium\",\n  \"brand\": \"None\",\n  \"emotion\": \"playful\",\n  \"movement\": \"Moderate\",\n  \"audio\": null,\n  \"subject_bbox\": {\n    \"box_2d\": [\n      0,\n      76,\n      1000,\n      962\n    ],\n    \"label\": \"Afghan Hound trotting\"\n  },\n  \"brand_mark_bbox\": null,\n  \"physical_brand_marks\": [],\n  \"graphics\": {\n    \"has_text_on_screen\": true,\n    \"text_content\": \"THE\\nULTIMATE DOG\\nSPECTACULAR\",\n    \"text_role\": \"title\",\n    \"has_logo\": false,\n    \"logo_description\": null,\n    \"other_graphics\": null,\n    \"bboxes\": [\n      {\n        \"box_2d\": [\n          325,\n          215,\n          643,\n          785\n        ],\n        \"role\": \"title\",\n        \"kind\": \"overlay\",\n        \"label\": \"THE ULTIMATE DOG SPECTACULAR\"\n      }\n    ],\n    \"removal_hint\": {\n      \"mask_strategy\": \"color\",\n      \"text_color_family\": \"yellow\",\n      \"text_is_bright\": true,\n      \"luma_threshold_hint\": null,\n      \"hsv_range_hint\": {\n        \"lower\": [\n          20,\n          100,\n          100\n        ],\n        \"upper\": [\n          30,\n          255,\n          255\n        ]\n      },\n      \"coverage_estimate_pct\": 15,\n      \"position\": \"center\",\n      \"animated\": false\n    }\n  },\n  \"cut_type\": \"unknown\",\n  \"tempo_cue\": \"mid\",\n  \"is_end_card\": false\n}",
+        "model": "gemini-3.5-flash",
+        "usage": {
+          "promptTokenCount": 4711,
+          "candidatesTokenCount": 739,
+          "totalTokenCount": 5450,
+          "cachedContentTokenCount": 3923,
+          "promptTokensDetails": [
+            {
+              "modality": "TEXT",
+              "tokenCount": 4621
+            },
+            {
+              "modality": "VIDEO",
+              "tokenCount": 90
+            }
+          ],
+          "cacheTokensDetails": [
+            {
+              "modality": "VIDEO",
+              "tokenCount": 74
+            },
+            {
+              "modality": "TEXT",
+              "tokenCount": 3849
+            }
+          ],
+          "serviceTier": "standard"
+        }
+      },
+      "videoAnalysisError": null,
+      "captionError": null,
+      "optimizations": [
+        {
+          "version": "V01",
+          "path": "F:\\Proyectos\\Kissd ReEdit\\Apple\\.reedit\\optimized\\scene-015_V01.mp4",
+          "model": null,
+          "createdAt": "2026-06-16T14:36:50.446Z",
+          "workflowJsonPath": "F:\\Proyectos\\Kissd ReEdit\\Apple\\.reedit\\optimized\\scene-015_V01.workflow.json"
+        }
+      ],
+      "activeOptimizationVersion": "V01"
+    },
+    {
+      "index": 16,
+      "id": "scene-016",
+      "tcIn": 21.27125,
+      "tcOut": 22.897875,
+      "duration": 1.6266250000000007,
+      "thumbnail": "F:/Proyectos/Kissd ReEdit/Apple/.reedit/scenes/scene-016.jpg",
+      "caption": "A wide, eye-level shot captures a dog show arena with a bright green artificial turf floor and a large green Skoda banner in the background. Several handlers stand with their dogs, including a Great Dane and a Whippet, while spectators watch from tiered seating behind a green barrier. A handler in a green jacket and beige trousers runs across the foreground with a light-colored Whippet on a leash, moving from left to right.",
+      "structured": {
+        "visual": "A wide, eye-level shot captures a dog show arena with a bright green artificial turf floor and a large green Skoda banner in the background. Several handlers stand with their dogs, including a Great Dane and a Whippet, while spectators watch from tiered seating behind a green barrier. A handler in a green jacket and beige trousers runs across the foreground with a light-colored Whippet on a leash, moving from left to right.",
+        "brand": "Logo visible",
+        "emotion": "focused",
+        "framing": "Wide",
+        "movement": "Moderate",
+        "audio": {
+          "has_voiceover": true,
+          "voiceover_transcript": "But you never know what's going to happen.",
+          "music": null,
+          "sfx": [],
+          "ambient": "crowd murmur, indoor arena acoustics"
+        },
+        "rawText": "{\n  \"visual\": \"A wide, eye-level shot captures a dog show arena with a bright green artificial turf floor and a large green Skoda banner in the background. Several handlers stand with their dogs, including a Great Dane and a Whippet, while spectators watch from tiered seating behind a green barrier. A handler in a green jacket and beige trousers runs across the foreground with a light-colored Whippet on a leash, moving from left to right.\",\n  \"cinematography\": {\n    \"shot_size\": \"long\",\n    \"camera_angle\": \"eye_level\",\n    \"camera_movement_quality\": \"locked_off\",\n    \"lens_characteristic\": \"normal\",\n    \"depth_of_field\": \"deep\",\n    \"focus_dynamics\": \"locked\",\n    \"composition\": \"rule_of_thirds\",\n    \"lighting_style\": \"high_key\",\n    \"color_palette\": \"bright green, dark green, beige, white\",\n    \"special_techniques\": []\n  },\n  \"camera_movement\": \"static\",\n  \"camera_movement_intensity\": \"none\",\n  \"subject_motion\": \"moderate\",\n  \"subject_motion_direction\": \"left-to-right\",\n  \"objects\": [\n    \"dogs\",\n    \"handlers\",\n    \"spectators\",\n    \"banner\",\n    \"turf\"\n  ],\n  \"framing\": \"Wide\",\n  \"brand\": \"Logo visible\",\n  \"emotion\": \"focused\",\n  \"movement\": \"Moderate\",\n  \"audio\": {\n    \"has_voiceover\": true,\n    \"voiceover_transcript\": \"But you never know what's going to happen.\",\n    \"music\": null,\n    \"sfx\": [],\n    \"ambient\": \"crowd murmur, indoor arena acoustics\"\n  },\n  \"subject_bbox\": {\n    \"box_2d\": [300, 816, 856, 922],\n    \"label\": \"handler running with dog\"\n  },\n  \"brand_mark_bbox\": {\n    \"box_2d\": [75, 356, 187, 866], \"label\": \"Skoda logo on background banner\"\n  },\n  \"physical_brand_marks\": [\n    {\n      \"box_2d\": [75, 356, 187, 866],\n      \"label\": \"Skoda logo on background banner\"\n    }\n  ],\n  \"graphics\": {\n    \"has_text_on_screen\": true,\n    \"text_content\": \"PRESENTED IN\\nAPPLE IMMERSIVE\",\n    \"text_role\": \"title\",\n    \"has_logo\": false,\n    \"logo_description\": null,\n    \"other_graphics\": null,\n    \"bboxes\": [\n      {\n        \"box_2d\": [403, 292, 574, 781],\n        \"role\": \"title\",\n        \"kind\": \"overlay\",\n        \"label\": \"PRESENTED IN APPLE IMMERSIVE\"\n      }\n    ],\n    \"removal_hint\": {\n      \"mask_strategy\": \"color\",\n      \"text_color_family\": \"yellow\",\n      \"text_is_bright\": true,\n      \"luma_threshold_hint\": null,\n      \"hsv_range_hint\": {\n        \"lower\": [\n          20,\n          100,\n          100\n        ],\n        \"upper\": [\n          30,\n          255,\n          255\n        ]\n      },\n      \"coverage_estimate_pct\": 12,\n      \"position\": \"center\",\n      \"animated\": false\n    }\n  },\n  \"cut_type\": \"unknown\",\n  \"tempo_cue\": \"mid\",\n  \"is_end_card\": false\n}",
+        "model": "gemini-3.5-flash"
+      },
+      "videoAnalysis": {
+        "visual": "A wide, eye-level shot captures a dog show arena with a bright green artificial turf floor and a large green Skoda banner in the background. Several handlers stand with their dogs, including a Great Dane and a Whippet, while spectators watch from tiered seating behind a green barrier. A handler in a green jacket and beige trousers runs across the foreground with a light-colored Whippet on a leash, moving from left to right.",
+        "cinematography": {
+          "shot_size": "long",
+          "camera_angle": "eye_level",
+          "camera_movement_quality": "locked_off",
+          "lens_characteristic": "normal",
+          "depth_of_field": "deep",
+          "focus_dynamics": "locked",
+          "composition": "rule_of_thirds",
+          "lighting_style": "high_key",
+          "color_palette": "bright green, dark green, beige, white",
+          "special_techniques": []
+        },
+        "camera_movement": "static",
+        "camera_movement_intensity": "none",
+        "subject_motion": "moderate",
+        "subject_motion_direction": "left-to-right",
+        "objects": [
+          "dogs",
+          "handlers",
+          "spectators",
+          "banner",
+          "turf"
+        ],
+        "framing": "Wide",
+        "brand": "Logo visible",
+        "emotion": "focused",
+        "movement": "Moderate",
+        "audio": {
+          "has_voiceover": true,
+          "voiceover_transcript": "But you never know what's going to happen.",
+          "music": null,
+          "sfx": [],
+          "ambient": "crowd murmur, indoor arena acoustics"
+        },
+        "graphics": {
+          "has_text_on_screen": true,
+          "text_content": "PRESENTED IN\nAPPLE IMMERSIVE",
+          "text_role": "title",
+          "has_logo": false,
+          "logo_description": null,
+          "other_graphics": null,
+          "bboxes": [
+            {
+              "box_2d": [
+                403,
+                292,
+                574,
+                781
+              ],
+              "role": "title",
+              "kind": "overlay",
+              "label": "PRESENTED IN APPLE IMMERSIVE"
+            }
+          ],
+          "removal_hint": {
+            "mask_strategy": "color",
+            "text_color_family": "yellow",
+            "text_is_bright": true,
+            "luma_threshold_hint": null,
+            "hsv_range_hint": {
+              "lower": [
+                20,
+                100,
+                100
+              ],
+              "upper": [
+                30,
+                255,
+                255
+              ]
+            },
+            "coverage_estimate_pct": 12,
+            "position": "center",
+            "animated": false
+          }
+        },
+        "subject_bbox": {
+          "box_2d": [
+            300,
+            816,
+            856,
+            922
+          ],
+          "label": "handler running with dog"
+        },
+        "brand_mark_bbox": {
+          "box_2d": [
+            75,
+            356,
+            187,
+            866
+          ],
+          "label": "Skoda logo on background banner"
+        },
+        "physical_brand_marks": [
+          {
+            "box_2d": [
+              75,
+              356,
+              187,
+              866
+            ],
+            "label": "Skoda logo on background banner"
+          }
+        ],
+        "cut_type": "unknown",
+        "tempo_cue": "mid",
+        "is_end_card": false,
+        "clipPath": "F:/Proyectos/Kissd ReEdit/Apple/.reedit/clips/scene-016.mp4",
+        "rawText": "{\n  \"visual\": \"A wide, eye-level shot captures a dog show arena with a bright green artificial turf floor and a large green Skoda banner in the background. Several handlers stand with their dogs, including a Great Dane and a Whippet, while spectators watch from tiered seating behind a green barrier. A handler in a green jacket and beige trousers runs across the foreground with a light-colored Whippet on a leash, moving from left to right.\",\n  \"cinematography\": {\n    \"shot_size\": \"long\",\n    \"camera_angle\": \"eye_level\",\n    \"camera_movement_quality\": \"locked_off\",\n    \"lens_characteristic\": \"normal\",\n    \"depth_of_field\": \"deep\",\n    \"focus_dynamics\": \"locked\",\n    \"composition\": \"rule_of_thirds\",\n    \"lighting_style\": \"high_key\",\n    \"color_palette\": \"bright green, dark green, beige, white\",\n    \"special_techniques\": []\n  },\n  \"camera_movement\": \"static\",\n  \"camera_movement_intensity\": \"none\",\n  \"subject_motion\": \"moderate\",\n  \"subject_motion_direction\": \"left-to-right\",\n  \"objects\": [\n    \"dogs\",\n    \"handlers\",\n    \"spectators\",\n    \"banner\",\n    \"turf\"\n  ],\n  \"framing\": \"Wide\",\n  \"brand\": \"Logo visible\",\n  \"emotion\": \"focused\",\n  \"movement\": \"Moderate\",\n  \"audio\": {\n    \"has_voiceover\": true,\n    \"voiceover_transcript\": \"But you never know what's going to happen.\",\n    \"music\": null,\n    \"sfx\": [],\n    \"ambient\": \"crowd murmur, indoor arena acoustics\"\n  },\n  \"subject_bbox\": {\n    \"box_2d\": [300, 816, 856, 922],\n    \"label\": \"handler running with dog\"\n  },\n  \"brand_mark_bbox\": {\n    \"box_2d\": [75, 356, 187, 866], \"label\": \"Skoda logo on background banner\"\n  },\n  \"physical_brand_marks\": [\n    {\n      \"box_2d\": [75, 356, 187, 866],\n      \"label\": \"Skoda logo on background banner\"\n    }\n  ],\n  \"graphics\": {\n    \"has_text_on_screen\": true,\n    \"text_content\": \"PRESENTED IN\\nAPPLE IMMERSIVE\",\n    \"text_role\": \"title\",\n    \"has_logo\": false,\n    \"logo_description\": null,\n    \"other_graphics\": null,\n    \"bboxes\": [\n      {\n        \"box_2d\": [403, 292, 574, 781],\n        \"role\": \"title\",\n        \"kind\": \"overlay\",\n        \"label\": \"PRESENTED IN APPLE IMMERSIVE\"\n      }\n    ],\n    \"removal_hint\": {\n      \"mask_strategy\": \"color\",\n      \"text_color_family\": \"yellow\",\n      \"text_is_bright\": true,\n      \"luma_threshold_hint\": null,\n      \"hsv_range_hint\": {\n        \"lower\": [\n          20,\n          100,\n          100\n        ],\n        \"upper\": [\n          30,\n          255,\n          255\n        ]\n      },\n      \"coverage_estimate_pct\": 12,\n      \"position\": \"center\",\n      \"animated\": false\n    }\n  },\n  \"cut_type\": \"unknown\",\n  \"tempo_cue\": \"mid\",\n  \"is_end_card\": false\n}",
+        "model": "gemini-3.5-flash",
+        "usage": {
+          "promptTokenCount": 4794,
+          "candidatesTokenCount": 896,
+          "totalTokenCount": 5690,
+          "cachedContentTokenCount": 3915,
+          "promptTokensDetails": [
+            {
+              "modality": "TEXT",
+              "tokenCount": 4621
+            },
+            {
+              "modality": "VIDEO",
+              "tokenCount": 173
+            }
+          ],
+          "cacheTokensDetails": [
+            {
+              "modality": "VIDEO",
+              "tokenCount": 141
+            },
+            {
+              "modality": "TEXT",
+              "tokenCount": 3774
+            }
+          ],
+          "serviceTier": "standard"
+        }
+      },
+      "videoAnalysisError": null,
+      "captionError": null,
+      "optimizations": [
+        {
+          "version": "V01",
+          "path": "F:\\Proyectos\\Kissd ReEdit\\Apple\\.reedit\\optimized\\scene-016_V01.mp4",
+          "model": null,
+          "createdAt": "2026-06-16T14:37:44.025Z",
+          "workflowJsonPath": "F:\\Proyectos\\Kissd ReEdit\\Apple\\.reedit\\optimized\\scene-016_V01.workflow.json"
+        }
+      ],
+      "activeOptimizationVersion": "V01"
+    },
+    {
+      "index": 17,
+      "id": "scene-017",
+      "tcIn": 22.897875,
+      "tcOut": 23.69033333333333,
+      "duration": 0.7924583333333324,
+      "thumbnail": "F:/Proyectos/Kissd ReEdit/Apple/.reedit/scenes/scene-017.jpg",
+      "caption": "A medium shot captures a woman in a sparkling blue dress leaning down to embrace a brown and white dog. The background is a softly blurred indoor setting with cool tones. The camera remains static, maintaining a shallow depth of field that keeps the focus on the emotional interaction between the woman and the dog.",
+      "structured": {
+        "visual": "A medium shot captures a woman in a sparkling blue dress leaning down to embrace a brown and white dog. The background is a softly blurred indoor setting with cool tones. The camera remains static, maintaining a shallow depth of field that keeps the focus on the emotional interaction between the woman and the dog.",
+        "brand": "Text/logo on-screen",
+        "emotion": "calm",
+        "framing": "Medium",
+        "movement": "Slow",
+        "audio": null,
+        "rawText": "{\n  \"visual\": \"A medium shot captures a woman in a sparkling blue dress leaning down to embrace a brown and white dog. The background is a softly blurred indoor setting with cool tones. The camera remains static, maintaining a shallow depth of field that keeps the focus on the emotional interaction between the woman and the dog.\",\n  \"cinematography\": {\n    \"shot_size\": \"medium\",\n    \"camera_angle\": \"eye_level\",\n    \"camera_movement_quality\": \"locked_off\",\n    \"lens_characteristic\": \"normal\",\n    \"depth_of_field\": \"shallow\",\n    \"focus_dynamics\": \"locked\",\n    \"composition\": \"centered\",\n    \"lighting_style\": \"high_key\",\n    \"color_palette\": \"royal blue, warm brown, soft white\",\n    \"special_techniques\": []\n  },\n  \"camera_movement\": \"static\",\n  \"camera_movement_intensity\": \"none\",\n  \"subject_motion\": \"slow\",\n  \"subject_motion_direction\": \"stationary\",\n  \"objects\": [\n    \"woman\",\n    \"dog\",\n    \"dress\"\n  ],\n  \"framing\": \"Medium\",\n  \"brand\": \"Text/logo on-screen\",\n  \"emotion\": \"calm\",\n  \"movement\": \"Slow\",\n  \"audio\": null,\n  \"subject_bbox\": {\n    \"box_2d\": [573, 385, 1000, 847],\n    \"label\": \"brown and white dog being embraced\"\n  },\n  \"brand_mark_bbox\": null,\n  \"physical_brand_marks\": [],\n  \"graphics\": {\n    \"has_text_on_screen\": true,\n    \"text_content\": \"PRESENTED IN\\nAPPLE IMMERSIVE\",\n    \"text_role\": \"title\",\n    \"has_logo\": false,\n    \"logo_description\": null,\n    \"other_graphics\": null,\n    \"bboxes\": [\n      {\n        \"box_2d\": [406, 190, 573, 818],\n        \"role\": \"title\",\n        \"kind\": \"overlay\",\n        \"label\": \"PRESENTED IN APPLE IMMERSIVE\"\n      }\n    ],\n    \"removal_hint\": {\n      \"mask_strategy\": \"color\",\n      \"text_color_family\": \"green\",\n      \"text_is_bright\": true,\n      \"luma_threshold_hint\": null,\n      \"hsv_range_hint\": {\n        \"lower\": [\n          35,\n          100,\n          100\n        ],\n        \"upper\": [\n          85,\n          255,\n          255\n        ]\n      },\n      \"coverage_estimate_pct\": 12,\n      \"position\": \"center\",\n      \"animated\": false\n    }\n  },\n  \"cut_type\": \"unknown\",\n  \"tempo_cue\": \"slow\",\n  \"is_end_card\": false\n}",
+        "model": "gemini-3.5-flash"
+      },
+      "videoAnalysis": {
+        "visual": "A medium shot captures a woman in a sparkling blue dress leaning down to embrace a brown and white dog. The background is a softly blurred indoor setting with cool tones. The camera remains static, maintaining a shallow depth of field that keeps the focus on the emotional interaction between the woman and the dog.",
+        "cinematography": {
+          "shot_size": "medium",
+          "camera_angle": "eye_level",
+          "camera_movement_quality": "locked_off",
+          "lens_characteristic": "normal",
+          "depth_of_field": "shallow",
+          "focus_dynamics": "locked",
+          "composition": "centered",
+          "lighting_style": "high_key",
+          "color_palette": "royal blue, warm brown, soft white",
+          "special_techniques": []
+        },
+        "camera_movement": "static",
+        "camera_movement_intensity": "none",
+        "subject_motion": "slow",
+        "subject_motion_direction": "stationary",
+        "objects": [
+          "woman",
+          "dog",
+          "dress"
+        ],
+        "framing": "Medium",
+        "brand": "Text/logo on-screen",
+        "emotion": "calm",
+        "movement": "Slow",
+        "audio": null,
+        "graphics": {
+          "has_text_on_screen": true,
+          "text_content": "PRESENTED IN\nAPPLE IMMERSIVE",
+          "text_role": "title",
+          "has_logo": false,
+          "logo_description": null,
+          "other_graphics": null,
+          "bboxes": [
+            {
+              "box_2d": [
+                406,
+                190,
+                573,
+                818
+              ],
+              "role": "title",
+              "kind": "overlay",
+              "label": "PRESENTED IN APPLE IMMERSIVE"
+            }
+          ],
+          "removal_hint": {
+            "mask_strategy": "color",
+            "text_color_family": "green",
+            "text_is_bright": true,
+            "luma_threshold_hint": null,
+            "hsv_range_hint": {
+              "lower": [
+                35,
+                100,
+                100
+              ],
+              "upper": [
+                85,
+                255,
+                255
+              ]
+            },
+            "coverage_estimate_pct": 12,
+            "position": "center",
+            "animated": false
+          }
+        },
+        "subject_bbox": {
+          "box_2d": [
+            573,
+            385,
+            1000,
+            847
+          ],
+          "label": "brown and white dog being embraced"
+        },
+        "brand_mark_bbox": null,
+        "physical_brand_marks": [],
+        "cut_type": "unknown",
+        "tempo_cue": "slow",
+        "is_end_card": false,
+        "clipPath": "F:/Proyectos/Kissd ReEdit/Apple/.reedit/clips/scene-017.mp4",
+        "rawText": "{\n  \"visual\": \"A medium shot captures a woman in a sparkling blue dress leaning down to embrace a brown and white dog. The background is a softly blurred indoor setting with cool tones. The camera remains static, maintaining a shallow depth of field that keeps the focus on the emotional interaction between the woman and the dog.\",\n  \"cinematography\": {\n    \"shot_size\": \"medium\",\n    \"camera_angle\": \"eye_level\",\n    \"camera_movement_quality\": \"locked_off\",\n    \"lens_characteristic\": \"normal\",\n    \"depth_of_field\": \"shallow\",\n    \"focus_dynamics\": \"locked\",\n    \"composition\": \"centered\",\n    \"lighting_style\": \"high_key\",\n    \"color_palette\": \"royal blue, warm brown, soft white\",\n    \"special_techniques\": []\n  },\n  \"camera_movement\": \"static\",\n  \"camera_movement_intensity\": \"none\",\n  \"subject_motion\": \"slow\",\n  \"subject_motion_direction\": \"stationary\",\n  \"objects\": [\n    \"woman\",\n    \"dog\",\n    \"dress\"\n  ],\n  \"framing\": \"Medium\",\n  \"brand\": \"Text/logo on-screen\",\n  \"emotion\": \"calm\",\n  \"movement\": \"Slow\",\n  \"audio\": null,\n  \"subject_bbox\": {\n    \"box_2d\": [573, 385, 1000, 847],\n    \"label\": \"brown and white dog being embraced\"\n  },\n  \"brand_mark_bbox\": null,\n  \"physical_brand_marks\": [],\n  \"graphics\": {\n    \"has_text_on_screen\": true,\n    \"text_content\": \"PRESENTED IN\\nAPPLE IMMERSIVE\",\n    \"text_role\": \"title\",\n    \"has_logo\": false,\n    \"logo_description\": null,\n    \"other_graphics\": null,\n    \"bboxes\": [\n      {\n        \"box_2d\": [406, 190, 573, 818],\n        \"role\": \"title\",\n        \"kind\": \"overlay\",\n        \"label\": \"PRESENTED IN APPLE IMMERSIVE\"\n      }\n    ],\n    \"removal_hint\": {\n      \"mask_strategy\": \"color\",\n      \"text_color_family\": \"green\",\n      \"text_is_bright\": true,\n      \"luma_threshold_hint\": null,\n      \"hsv_range_hint\": {\n        \"lower\": [\n          35,\n          100,\n          100\n        ],\n        \"upper\": [\n          85,\n          255,\n          255\n        ]\n      },\n      \"coverage_estimate_pct\": 12,\n      \"position\": \"center\",\n      \"animated\": false\n    }\n  },\n  \"cut_type\": \"unknown\",\n  \"tempo_cue\": \"slow\",\n  \"is_end_card\": false\n}",
+        "model": "gemini-3.5-flash",
+        "usage": {
+          "promptTokenCount": 4707,
+          "candidatesTokenCount": 707,
+          "totalTokenCount": 5414,
+          "cachedContentTokenCount": 3923,
+          "promptTokensDetails": [
+            {
+              "modality": "VIDEO",
+              "tokenCount": 86
+            },
+            {
+              "modality": "TEXT",
+              "tokenCount": 4621
+            }
+          ],
+          "cacheTokensDetails": [
+            {
+              "modality": "TEXT",
+              "tokenCount": 3852
+            },
+            {
+              "modality": "VIDEO",
+              "tokenCount": 71
+            }
+          ],
+          "serviceTier": "standard"
+        }
+      },
+      "videoAnalysisError": null,
+      "captionError": null,
+      "optimizations": [
+        {
+          "version": "V01",
+          "path": "F:\\Proyectos\\Kissd ReEdit\\Apple\\.reedit\\optimized\\scene-017_V01.mp4",
+          "model": null,
+          "createdAt": "2026-06-16T14:41:04.080Z",
+          "workflowJsonPath": "F:\\Proyectos\\Kissd ReEdit\\Apple\\.reedit\\optimized\\scene-017_V01.workflow.json"
+        }
+      ],
+      "activeOptimizationVersion": "V01"
+    },
+    {
+      "index": 18,
+      "id": "scene-018",
+      "tcIn": 23.69033333333333,
+      "tcOut": 34.993291666666664,
+      "duration": 11.302958333333333,
+      "thumbnail": "F:/Proyectos/Kissd ReEdit/Apple/.reedit/scenes/scene-018.jpg",
+      "caption": "A graphic title card displaying white text on a solid black background. The camera is locked off, presenting a static, centered composition. The text transitions from 'TOP DOGS in Apple Immersive' to 'Watch only on Apple Vision Pro' with a clean cut.",
+      "structured": {
+        "visual": "A graphic title card displaying white text on a solid black background. The camera is locked off, presenting a static, centered composition. The text transitions from 'TOP DOGS in Apple Immersive' to 'Watch only on Apple Vision Pro' with a clean cut.",
+        "brand": "Text/logo on-screen",
+        "emotion": "focused",
+        "framing": "Wide",
+        "movement": "Static",
+        "audio": {
+          "has_voiceover": false,
+          "voiceover_transcript": null,
+          "music": "ambient, synth-driven, low tempo, mysterious",
+          "sfx": [],
+          "ambient": "low synth hum"
+        },
+        "rawText": "{\n  \"visual\": \"A graphic title card displaying white text on a solid black background. The camera is locked off, presenting a static, centered composition. The text transitions from 'TOP DOGS in Apple Immersive' to 'Watch only on Apple Vision Pro' with a clean cut.\",\n  \"cinematography\": {\n    \"shot_size\": \"establishing\",\n    \"camera_angle\": \"eye_level\",\n    \"camera_movement_quality\": \"locked_off\",\n    \"lens_characteristic\": \"normal\",\n    \"depth_of_field\": \"deep\",\n    \"focus_dynamics\": \"locked\",\n    \"composition\": \"centered\",\n    \"lighting_style\": \"high_key\",\n    \"color_palette\": \"white, black\",\n    \"special_techniques\": []\n  },\n  \"camera_movement\": \"static\",\n  \"camera_movement_intensity\": \"none\",\n  \"subject_motion\": \"none\",\n  \"subject_motion_direction\": \"stationary\",\n  \"objects\": [\"text\"],\n  \"framing\": \"Wide\",\n  \"brand\": \"Text/logo on-screen\",\n  \"emotion\": \"focused\",\n  \"movement\": \"Static\",\n  \"audio\": {\n    \"has_voiceover\": false,\n    \"voiceover_transcript\": null,\n    \"music\": \"ambient, synth-driven, low tempo, mysterious\",\n    \"sfx\": [],\n    \"ambient\": \"low synth hum\"\n  },\n  \"subject_bbox\": {\n    \"box_2d\": [372, 163, 570, 834],\n    \"label\": \"TOP DOGS title text\"\n  },\n  \"brand_mark_bbox\": {\n    \"box_2d\": [663, 396, 715, 423],\n    \"label\": \"Apple logo\"\n  },\n  \"physical_brand_marks\": [],\n  \"graphics\": {\n    \"has_text_on_screen\": true,\n    \"text_content\": \"TOP DOGS\\nin Apple Immersive\",\n    \"text_role\": \"title\",\n    \"has_logo\": true,\n    \"logo_description\": \"Apple logo in white, centered on screen in the second frame\",\n    \"other_graphics\": null,\n    \"bboxes\": [\n      {\n        \"box_2d\": [372, 163, 570, 834],\n        \"role\": \"title\",\n        \"kind\": \"overlay\",\n        \"label\": \"TOP DOGS\"\n      },\n      {\n        \"box_2d\": [611, 354, 638, 644],\n        \"role\": \"subtitle\",\n        \"kind\": \"overlay\",\n        \"label\": \"in Apple Immersive\"\n      }\n    ],\n    \"removal_hint\": {\n      \"mask_strategy\": \"luma_bright\",\n      \"text_color_family\": \"white\",\n      \"text_is_bright\": true,\n      \"luma_threshold_hint\": 200,\n      \"hsv_range_hint\": null,\n      \"coverage_estimate_pct\": 15,\n      \"position\": \"center\",\n      \"animated\": true\n    }\n  },\n  \"cut_type\": \"hard_cut\",\n  \"tempo_cue\": \"slow\",\n  \"is_end_card\": true\n}",
+        "model": "gemini-3.5-flash"
+      },
+      "videoAnalysis": {
+        "visual": "A graphic title card displaying white text on a solid black background. The camera is locked off, presenting a static, centered composition. The text transitions from 'TOP DOGS in Apple Immersive' to 'Watch only on Apple Vision Pro' with a clean cut.",
+        "cinematography": {
+          "shot_size": "establishing",
+          "camera_angle": "eye_level",
+          "camera_movement_quality": "locked_off",
+          "lens_characteristic": "normal",
+          "depth_of_field": "deep",
+          "focus_dynamics": "locked",
+          "composition": "centered",
+          "lighting_style": "high_key",
+          "color_palette": "white, black",
+          "special_techniques": []
+        },
+        "camera_movement": "static",
+        "camera_movement_intensity": "none",
+        "subject_motion": "none",
+        "subject_motion_direction": "stationary",
+        "objects": [
+          "text"
+        ],
+        "framing": "Wide",
+        "brand": "Text/logo on-screen",
+        "emotion": "focused",
+        "movement": "Static",
+        "audio": {
+          "has_voiceover": false,
+          "voiceover_transcript": null,
+          "music": "ambient, synth-driven, low tempo, mysterious",
+          "sfx": [],
+          "ambient": "low synth hum"
+        },
+        "graphics": {
+          "has_text_on_screen": true,
+          "text_content": "TOP DOGS\nin Apple Immersive",
+          "text_role": "title",
+          "has_logo": true,
+          "logo_description": "Apple logo in white, centered on screen in the second frame",
+          "other_graphics": null,
+          "bboxes": [
+            {
+              "box_2d": [
+                372,
+                163,
+                570,
+                834
+              ],
+              "role": "title",
+              "kind": "overlay",
+              "label": "TOP DOGS"
+            },
+            {
+              "box_2d": [
+                611,
+                354,
+                638,
+                644
+              ],
+              "role": "subtitle",
+              "kind": "overlay",
+              "label": "in Apple Immersive"
+            }
+          ],
+          "removal_hint": {
+            "mask_strategy": "luma_bright",
+            "text_color_family": "white",
+            "text_is_bright": true,
+            "luma_threshold_hint": 200,
+            "hsv_range_hint": null,
+            "coverage_estimate_pct": 15,
+            "position": "center",
+            "animated": true
+          }
+        },
+        "subject_bbox": {
+          "box_2d": [
+            372,
+            163,
+            570,
+            834
+          ],
+          "label": "TOP DOGS title text"
+        },
+        "brand_mark_bbox": {
+          "box_2d": [
+            663,
+            396,
+            715,
+            423
+          ],
+          "label": "Apple logo"
+        },
+        "physical_brand_marks": [],
+        "cut_type": "hard_cut",
+        "tempo_cue": "slow",
+        "is_end_card": true,
+        "clipPath": "F:/Proyectos/Kissd ReEdit/Apple/.reedit/clips/scene-018.mp4",
+        "rawText": "{\n  \"visual\": \"A graphic title card displaying white text on a solid black background. The camera is locked off, presenting a static, centered composition. The text transitions from 'TOP DOGS in Apple Immersive' to 'Watch only on Apple Vision Pro' with a clean cut.\",\n  \"cinematography\": {\n    \"shot_size\": \"establishing\",\n    \"camera_angle\": \"eye_level\",\n    \"camera_movement_quality\": \"locked_off\",\n    \"lens_characteristic\": \"normal\",\n    \"depth_of_field\": \"deep\",\n    \"focus_dynamics\": \"locked\",\n    \"composition\": \"centered\",\n    \"lighting_style\": \"high_key\",\n    \"color_palette\": \"white, black\",\n    \"special_techniques\": []\n  },\n  \"camera_movement\": \"static\",\n  \"camera_movement_intensity\": \"none\",\n  \"subject_motion\": \"none\",\n  \"subject_motion_direction\": \"stationary\",\n  \"objects\": [\"text\"],\n  \"framing\": \"Wide\",\n  \"brand\": \"Text/logo on-screen\",\n  \"emotion\": \"focused\",\n  \"movement\": \"Static\",\n  \"audio\": {\n    \"has_voiceover\": false,\n    \"voiceover_transcript\": null,\n    \"music\": \"ambient, synth-driven, low tempo, mysterious\",\n    \"sfx\": [],\n    \"ambient\": \"low synth hum\"\n  },\n  \"subject_bbox\": {\n    \"box_2d\": [372, 163, 570, 834],\n    \"label\": \"TOP DOGS title text\"\n  },\n  \"brand_mark_bbox\": {\n    \"box_2d\": [663, 396, 715, 423],\n    \"label\": \"Apple logo\"\n  },\n  \"physical_brand_marks\": [],\n  \"graphics\": {\n    \"has_text_on_screen\": true,\n    \"text_content\": \"TOP DOGS\\nin Apple Immersive\",\n    \"text_role\": \"title\",\n    \"has_logo\": true,\n    \"logo_description\": \"Apple logo in white, centered on screen in the second frame\",\n    \"other_graphics\": null,\n    \"bboxes\": [\n      {\n        \"box_2d\": [372, 163, 570, 834],\n        \"role\": \"title\",\n        \"kind\": \"overlay\",\n        \"label\": \"TOP DOGS\"\n      },\n      {\n        \"box_2d\": [611, 354, 638, 644],\n        \"role\": \"subtitle\",\n        \"kind\": \"overlay\",\n        \"label\": \"in Apple Immersive\"\n      }\n    ],\n    \"removal_hint\": {\n      \"mask_strategy\": \"luma_bright\",\n      \"text_color_family\": \"white\",\n      \"text_is_bright\": true,\n      \"luma_threshold_hint\": 200,\n      \"hsv_range_hint\": null,\n      \"coverage_estimate_pct\": 15,\n      \"position\": \"center\",\n      \"animated\": true\n    }\n  },\n  \"cut_type\": \"hard_cut\",\n  \"tempo_cue\": \"slow\",\n  \"is_end_card\": true\n}",
+        "model": "gemini-3.5-flash",
+        "usage": {
+          "promptTokenCount": 5630,
+          "candidatesTokenCount": 796,
+          "totalTokenCount": 6426,
+          "cachedContentTokenCount": 3853,
+          "promptTokensDetails": [
+            {
+              "modality": "TEXT",
+              "tokenCount": 4621
+            },
+            {
+              "modality": "VIDEO",
+              "tokenCount": 1009
+            }
+          ],
+          "cacheTokensDetails": [
+            {
+              "modality": "TEXT",
+              "tokenCount": 3163
+            },
+            {
+              "modality": "VIDEO",
+              "tokenCount": 690
+            }
+          ],
+          "serviceTier": "standard"
+        }
+      },
+      "videoAnalysisError": null,
+      "captionError": null
+    }
+  ],
+  "voSegments": [
+    {
+      "id": "vo-0",
+      "text": "It's the greatest show of the world.",
+      "startSec": 13,
+      "endSec": 15.2,
+      "role": "line"
+    },
+    {
+      "id": "vo-1",
+      "text": "Crufts has a nickname, and we call it the giant killer.",
+      "startSec": 16.5,
+      "endSec": 19.8,
+      "role": "line"
+    },
+    {
+      "id": "vo-2",
+      "text": "You never know what's going to happen.",
+      "startSec": 21.3,
+      "endSec": 23.5,
+      "role": "line"
+    }
+  ],
+  "rawText": "{\n  \"rationale\": \"To improve Comprehension, this edit introduces the Apple Immersive branding immediately in the first 5 seconds to anchor the platform identity. We then showcase the behind-the-scenes grooming and high-energy arena competition, while removing the prominent Crufts-branded shot (scene-008) to eliminate advertiser confusion. The ad concludes with the strong, clear Apple Vision Pro call-to-action card to drive immediate engagement.\",\n  \"edl\": [\n    {\n      \"index\": 1,\n      \"kind\": \"original\",\n      \"sourceSceneId\": \"scene-001\",\n      \"newTcIn\": 0.00,\n      \"newTcOut\": 1.63,\n      \"note\": \"Open with the high-contrast, charming portrait of the Irish Terrier to immediately grab visual attention.\"\n    },\n    {\n      \"index\": 2,\n      \"kind\": \"original\",\n      \"sourceSceneId\": \"scene-017\",\n      \"newTcIn\": 1.63,\n      \"newTcOut\": 2.42,\n      \"note\": \"Bring the emotional handler embrace forward to establish early human connection and introduce the 'Apple Immersive' graphic within the first 3 seconds.\"\n    },\n    {\n      \"index\": 3,\n      \"kind\": \"original\",\n      \"sourceSceneId\": \"scene-002\",\n      \"newTcIn\": 2.42,\n      \"newTcOut\": 4.13,\n      \"note\": \"Continue the warm, studio-lit dog and owner portraits to maintain high-quality visual interest.\"\n    },\n    {\n      \"index\": 4,\n      \"kind\": \"original\",\n      \"sourceSceneId\": \"scene-003\",\n      \"newTcIn\": 4.13,\n      \"newTcOut\": 5.97,\n      \"note\": \"Transition to the alert Papillon dog, building the rhythmic pace of the introduction.\"\n    },\n    {\n      \"index\": 5,\n      \"kind\": \"original\",\n      \"sourceSceneId\": \"scene-004\",\n      \"newTcIn\": 5.97,\n      \"newTcOut\": 8.26,\n      \"note\": \"Show the group of handlers and dogs to establish the scale and community of the event.\"\n    },\n    {\n      \"index\": 6,\n      \"kind\": \"original\",\n      \"sourceSceneId\": \"scene-005\",\n      \"newTcIn\": 8.26,\n      \"newTcOut\": 10.97,\n      \"note\": \"Move into the vast exhibition hall with the meticulously groomed poodles, setting up the behind-the-scenes narrative.\"\n    },\n    {\n      \"index\": 7,\n      \"kind\": \"original\",\n      \"sourceSceneId\": \"scene-006\",\n      \"newTcIn\": 10.97,\n      \"newTcOut\": 11.80,\n      \"note\": \"Show the intimate grooming process of the Borzoi dog to emphasize preparation and care.\"\n    },\n    {\n      \"index\": 8,\n      \"kind\": \"original\",\n      \"sourceSceneId\": \"scene-007\",\n      \"newTcIn\": 11.80,\n      \"newTcOut\": 12.84,\n      \"note\": \"Keep the focused grooming sequence going with the standard poodle, avoiding the confusing Crufts logo shot.\"\n    },\n    {\n      \"index\": 9,\n      \"kind\": \"original\",\n      \"sourceSceneId\": \"scene-009\",\n      \"newTcIn\": 12.84,\n      \"newTcOut\": 14.47,\n      \"note\": \"Transition to the grand arena under stadium lights as the voiceover begins, building excitement.\"\n    },\n    {\n      \"index\": 10,\n      \"kind\": \"original\",\n      \"sourceSceneId\": \"scene-010\",\n      \"newTcIn\": 14.47,\n      \"newTcOut\": 16.01,\n      \"note\": \"Show the majestic Tibetan Mastiff walking the stage, aligning with the VO 'show of the world'.\"\n    },\n    {\n      \"index\": 11,\n      \"kind\": \"original\",\n      \"sourceSceneId\": \"scene-011\",\n      \"newTcIn\": 16.01,\n      \"newTcOut\": 17.43,\n      \"note\": \"Maintain the momentum with the graceful Whippet trotting across the green show ring.\"\n    },\n    {\n      \"index\": 12,\n      \"kind\": \"original\",\n      \"sourceSceneId\": \"scene-012\",\n      \"newTcIn\": 17.43,\n      \"newTcOut\": 18.26,\n      \"note\": \"Cut to the close-up of the Papillon being judged to highlight the high-stakes competition.\"\n    },\n    {\n      \"index\": 13,\n      \"kind\": \"original\",\n      \"sourceSceneId\": \"scene-013\",\n      \"newTcIn\": 18.26,\n      \"newTcOut\": 19.14,\n      \"note\": \"Show the serious expression of the judge, matching the dramatic 'giant killer' VO.\"\n    },\n    {\n      \"index\": 14,\n      \"kind\": \"original\",\n      \"sourceSceneId\": \"scene-014\",\n      \"newTcIn\": 19.14,\n      \"newTcOut\": 20.22,\n      \"note\": \"Accelerate the pacing with the fast-moving Maltese dog trotting on the green turf.\"\n    },\n    {\n      \"index\": 15,\n      \"kind\": \"original\",\n      \"sourceSceneId\": \"scene-015\",\n      \"newTcIn\": 20.22,\n      \"newTcOut\": 21.14,\n      \"note\": \"Show the elegant Afghan Hound in motion, building to the climax of the spectacular.\"\n    },\n    {\n      \"index\": 16,\n      \"kind\": \"original\",\n      \"sourceSceneId\": \"scene-016\",\n      \"newTcIn\": 21.14,\n      \"newTcOut\": 22.77,\n      \"note\": \"Present the wide arena shot with the 'Apple Immersive' text overlay to reinforce the unique viewing format.\"\n    },\n    {\n      \"index\": 17,\n      \"kind\": \"original\",\n      \"sourceSceneId\": \"scene-018\",\n      \"newTcIn\": 22.77,\n      \"newTcOut\": 34.07,\n      \"note\": \"End on the official Apple Vision Pro title card to deliver a strong, clear brand sign-off and call to action.\"\n    }\n  ]\n}",
+  "expectedEdl": [
+    {
+      "index": 1,
+      "kind": "original",
+      "sourceSceneId": "scene-001",
+      "newTcIn": 0,
+      "newTcOut": 1.63,
+      "note": "Open with the high-contrast, charming portrait of the Irish Terrier to immediately grab visual attention.",
+      "reframe": null,
+      "colorAdjustments": null,
+      "extend": null,
+      "referenceFrame": null
+    },
+    {
+      "index": 2,
+      "kind": "original",
+      "sourceSceneId": "scene-017",
+      "newTcIn": 1.63,
+      "newTcOut": 2.42,
+      "note": "Bring the emotional handler embrace forward to establish early human connection and introduce the 'Apple Immersive' graphic within the first 3 seconds.",
+      "reframe": null,
+      "colorAdjustments": null,
+      "extend": null,
+      "referenceFrame": null
+    },
+    {
+      "index": 3,
+      "kind": "original",
+      "sourceSceneId": "scene-002",
+      "newTcIn": 2.42,
+      "newTcOut": 4.13,
+      "note": "Continue the warm, studio-lit dog and owner portraits to maintain high-quality visual interest.",
+      "reframe": null,
+      "colorAdjustments": null,
+      "extend": null,
+      "referenceFrame": null
+    },
+    {
+      "index": 4,
+      "kind": "original",
+      "sourceSceneId": "scene-003",
+      "newTcIn": 4.13,
+      "newTcOut": 5.97,
+      "note": "Transition to the alert Papillon dog, building the rhythmic pace of the introduction.",
+      "reframe": null,
+      "colorAdjustments": null,
+      "extend": null,
+      "referenceFrame": null
+    },
+    {
+      "index": 5,
+      "kind": "original",
+      "sourceSceneId": "scene-004",
+      "newTcIn": 5.97,
+      "newTcOut": 8.26,
+      "note": "Show the group of handlers and dogs to establish the scale and community of the event.",
+      "reframe": null,
+      "colorAdjustments": null,
+      "extend": null,
+      "referenceFrame": null
+    },
+    {
+      "index": 6,
+      "kind": "original",
+      "sourceSceneId": "scene-005",
+      "newTcIn": 8.26,
+      "newTcOut": 10.97,
+      "note": "Move into the vast exhibition hall with the meticulously groomed poodles, setting up the behind-the-scenes narrative.",
+      "reframe": null,
+      "colorAdjustments": null,
+      "extend": null,
+      "referenceFrame": null
+    },
+    {
+      "index": 7,
+      "kind": "original",
+      "sourceSceneId": "scene-006",
+      "newTcIn": 10.97,
+      "newTcOut": 11.8,
+      "note": "Show the intimate grooming process of the Borzoi dog to emphasize preparation and care.",
+      "reframe": null,
+      "colorAdjustments": null,
+      "extend": null,
+      "referenceFrame": null
+    },
+    {
+      "index": 8,
+      "kind": "original",
+      "sourceSceneId": "scene-007",
+      "newTcIn": 11.8,
+      "newTcOut": 12.84,
+      "note": "Keep the focused grooming sequence going with the standard poodle, avoiding the confusing Crufts logo shot.",
+      "reframe": null,
+      "colorAdjustments": null,
+      "extend": null,
+      "referenceFrame": null
+    },
+    {
+      "index": 9,
+      "kind": "original",
+      "sourceSceneId": "scene-009",
+      "newTcIn": 12.84,
+      "newTcOut": 14.47,
+      "note": "Transition to the grand arena under stadium lights as the voiceover begins, building excitement.",
+      "reframe": null,
+      "colorAdjustments": null,
+      "extend": null,
+      "referenceFrame": null
+    },
+    {
+      "index": 10,
+      "kind": "original",
+      "sourceSceneId": "scene-010",
+      "newTcIn": 14.47,
+      "newTcOut": 16.01,
+      "note": "Show the majestic Tibetan Mastiff walking the stage, aligning with the VO 'show of the world'.",
+      "reframe": null,
+      "colorAdjustments": null,
+      "extend": null,
+      "referenceFrame": null
+    },
+    {
+      "index": 11,
+      "kind": "original",
+      "sourceSceneId": "scene-011",
+      "newTcIn": 16.01,
+      "newTcOut": 17.43,
+      "note": "Maintain the momentum with the graceful Whippet trotting across the green show ring.",
+      "reframe": null,
+      "colorAdjustments": null,
+      "extend": null,
+      "referenceFrame": null
+    },
+    {
+      "index": 12,
+      "kind": "original",
+      "sourceSceneId": "scene-012",
+      "newTcIn": 17.43,
+      "newTcOut": 18.26,
+      "note": "Cut to the close-up of the Papillon being judged to highlight the high-stakes competition.",
+      "reframe": null,
+      "colorAdjustments": null,
+      "extend": null,
+      "referenceFrame": null
+    },
+    {
+      "index": 13,
+      "kind": "original",
+      "sourceSceneId": "scene-013",
+      "newTcIn": 18.26,
+      "newTcOut": 19.14,
+      "note": "Show the serious expression of the judge, matching the dramatic 'giant killer' VO.",
+      "reframe": null,
+      "colorAdjustments": null,
+      "extend": null,
+      "referenceFrame": null
+    },
+    {
+      "index": 14,
+      "kind": "original",
+      "sourceSceneId": "scene-014",
+      "newTcIn": 19.14,
+      "newTcOut": 20.22,
+      "note": "Accelerate the pacing with the fast-moving Maltese dog trotting on the green turf.",
+      "reframe": null,
+      "colorAdjustments": null,
+      "extend": null,
+      "referenceFrame": null
+    },
+    {
+      "index": 15,
+      "kind": "original",
+      "sourceSceneId": "scene-015",
+      "newTcIn": 20.22,
+      "newTcOut": 21.14,
+      "note": "Show the elegant Afghan Hound in motion, building to the climax of the spectacular.",
+      "reframe": null,
+      "colorAdjustments": null,
+      "extend": null,
+      "referenceFrame": null
+    },
+    {
+      "index": 16,
+      "kind": "original",
+      "sourceSceneId": "scene-016",
+      "newTcIn": 21.14,
+      "newTcOut": 22.77,
+      "note": "Present the wide arena shot with the 'Apple Immersive' text overlay to reinforce the unique viewing format.",
+      "reframe": null,
+      "colorAdjustments": null,
+      "extend": null,
+      "referenceFrame": null
+    },
+    {
+      "index": 17,
+      "kind": "original",
+      "sourceSceneId": "scene-018",
+      "newTcIn": 22.77,
+      "newTcOut": 34.07,
+      "note": "End on the official Apple Vision Pro title card to deliver a strong, clear brand sign-off and call to action.",
+      "reframe": null,
+      "colorAdjustments": null,
+      "extend": null,
+      "referenceFrame": null
+    }
+  ],
+  "expectedRationale": "To improve Comprehension, this edit introduces the Apple Immersive branding immediately in the first 5 seconds to anchor the platform identity. We then showcase the behind-the-scenes grooming and high-energy arena competition, while removing the prominent Crufts-branded shot (scene-008) to eliminate advertiser confusion. The ad concludes with the strong, clear Apple Vision Pro call-to-action card to drive immediate engagement.",
+  "capabilities": {
+    "footageReframe": true,
+    "footageGeneration": false,
+    "colorCorrection": true,
+    "useOriginalVoiceover": true,
+    "useOriginalMusic": true,
+    "useAdditionalAssets": true,
+    "generateVoiceover": false,
+    "generateMusic": false
+  },
+  "metric": "Comprehension",
+  "targetDurationSec": 35.021,
+  "brandBrief": ""
+}

@@ -8,6 +8,7 @@
     "lint": "eslint .",
     "test": "vitest run",
     "test:watch": "vitest",
+    "eval:proposer": "node scripts/eval-proposer.mjs",
     "build": "vite build",
     "icons:generate": "icon-gen -i build/icon.png -o build --ico --ico-name icon --icns --icns-name icon",
     "preview": "vite preview",

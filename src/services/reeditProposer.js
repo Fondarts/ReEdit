@@ -1350,123 +1350,7 @@ export async function generateProposal({
     // The dispatcher picks a model based on the active backend; pass
     // it back out so the returned proposal records which one ran.
     lastModel = response?.model || lastModel
-    const parsed = extractJson(rawText)
-    if (!parsed) throw new Error('LLM response was not valid JSON. Try re-generating.')
-    const rawEdl = Array.isArray(parsed.edl) ? parsed.edl : []
-    const sceneById = new Map((scenes || []).map((s) => [s.id, s]))
-    let cursor = 0
-    const normalized = rawEdl.map((row, i) => {
-      const rawDur = Math.max(0.1, (Number(row.newTcOut) || 0) - (Number(row.newTcIn) || 0))
-      const start = cursor
-      const end = cursor + rawDur
-      cursor = end
-      // Parse `REFRAME [zoom=X.X] [anchor=x,y]` out of the note. We
-      // leave the note text alone so the UI keeps showing human-
-      // readable rationale; the parsed params land on `row.reframe`
-      // for the timeline to consume without a second pass.
-      let reframe = parseReframeDirective(row.note)
-      // Safety net: if the scene has an analyzed logo bbox and the
-      // LLM's anchor would clip the logo out of the post-crop window,
-      // snap the anchor (and if necessary reduce zoom) so the logo
-      // stays visible. This catches the common failure mode where the
-      // LLM says "push in on the logo" but writes anchor=0.5,0.5 when
-      // the logo is actually off-center — without this clamp, the
-      // preview would crop the logo out of frame.
-      if (reframe && row.kind !== 'placeholder') {
-        const scene = sceneById.get(row.sourceSceneId)
-        if (scene) reframe = snapReframeToLogo(reframe, scene)
-      }
-      // Same deal for `COLOR: exposure=... contrast=... ...` — the
-      // directive stays in the note as rationale, the parsed object
-      // becomes `row.colorAdjustments` for the timeline applier.
-      const colorAdjustments = parseColorDirective(row.note)
-      // `EXTEND +Xs:` — parsed into a clamped `{ seconds }` object for
-      // the timeline to slow down the clip as a preview, and for the
-      // Commit extend flow to pass to ComfyUI.
-      const extend = parseExtendDirective(row.note)
-      // Validate the LLM's referenceFrame pick: it must point to a
-      // scene that actually exists in the shot log, and framePosition
-      // must be one of the documented values. Anything malformed gets
-      // stripped here so the downstream generator either uses a sane
-      // default (start frame of the previous shot) or short-circuits
-      // with a clear "missing reference" error in the UI.
-      let referenceFrame = null
-      if (row.kind === 'placeholder' && row.referenceFrame && typeof row.referenceFrame === 'object') {
-        const refSceneId = String(row.referenceFrame.sourceSceneId || '').trim() || null
-        const refPos = String(row.referenceFrame.framePosition || '').trim().toLowerCase()
-        const validPos = ['start', 'middle', 'end'].includes(refPos) ? refPos : 'middle'
-        if (refSceneId && sceneById.has(refSceneId)) {
-          referenceFrame = { sourceSceneId: refSceneId, framePosition: validPos }
-        }
-      }
-      return {
-        index: i + 1,
-        kind: row.kind === 'placeholder' ? 'placeholder' : 'original',
-        sourceSceneId: row.sourceSceneId || null,
-        newTcIn: start,
-        newTcOut: end,
-        note: row.note || '',
-        reframe,
-        colorAdjustments,
-        extend,
-        referenceFrame,
-      }
-    })
-    // VO plan: if the user has taken manual control (voPlanOverride with
-    // autoEdit=false) we use their segment ids verbatim. Otherwise we
-    // accept the proposer's pick from the JSON response; if the LLM
-    // didn't emit one we fall back to "all segments" so nothing is
-    // silently dropped.
-    //
-    // We CARRY OVER any user-side knobs from the override — lead pads,
-    // per-segment timing edits — because those live in the UI and the
-    // LLM doesn't know about them. Without this carry the proposer's
-    // returned plan would erase the lead-in / lead-out that the user
-    // set, and the timeline would build VO clips trimmed to Gemini's
-    // (already-late) raw timestamps.
-    const allSegIds = Array.isArray(voSegments) ? voSegments.map((s) => s.id) : []
-    const userExtras = voPlanOverride ? {
-      leadInSec: Number.isFinite(voPlanOverride.leadInSec) ? voPlanOverride.leadInSec : undefined,
-      leadOutSec: Number.isFinite(voPlanOverride.leadOutSec) ? voPlanOverride.leadOutSec : undefined,
-      segmentEdits: voPlanOverride.segmentEdits || undefined,
-    } : {}
-    // Strip undefineds so spread doesn't clobber later fields.
-    Object.keys(userExtras).forEach((k) => userExtras[k] === undefined && delete userExtras[k])
-    // segmentGaps from the LLM: silence-before-each-segment in seconds,
-    // keyed by segment id. Only honoured when the proposer auto-picked
-    // (manual mode bypasses the LLM entirely). Carry user gap edits if
-    // the override has them — same pattern as segmentEdits.
-    const sanitizeGaps = (raw) => {
-      if (!raw || typeof raw !== 'object') return null
-      const out = {}
-      for (const [id, val] of Object.entries(raw)) {
-        const num = Number(val)
-        if (!Number.isFinite(num) || num < 0) continue
-        // Cap at a sane upper bound — a 30 s gap on a 30 s ad = pure
-        // silence with one VO line at the very end. Beyond that the LLM
-        // is almost certainly hallucinating.
-        out[id] = Math.min(30, num)
-      }
-      return Object.keys(out).length > 0 ? out : null
-    }
-    const overrideGaps = voPlanOverride && sanitizeGaps(voPlanOverride.segmentGaps)
-    const proposedGaps = sanitizeGaps(parsed?.voiceoverPlan?.segmentGaps)
-    let voiceoverPlan = null
-    if (voPlanOverride && voPlanOverride.autoEdit === false && Array.isArray(voPlanOverride.segmentIds)) {
-      voiceoverPlan = { autoEdit: false, segmentIds: voPlanOverride.segmentIds, ...userExtras }
-      if (overrideGaps) voiceoverPlan.segmentGaps = overrideGaps
-    } else if (Array.isArray(parsed?.voiceoverPlan?.segmentIds)) {
-      const validIds = parsed.voiceoverPlan.segmentIds.filter((id) => allSegIds.includes(id))
-      voiceoverPlan = { autoEdit: true, segmentIds: validIds, ...userExtras }
-      // User-edited gaps win over the LLM's pick on re-prompts; otherwise
-      // adopt whatever the LLM emitted.
-      const mergedGaps = overrideGaps || proposedGaps
-      if (mergedGaps) voiceoverPlan.segmentGaps = mergedGaps
-    } else if (allSegIds.length > 0) {
-      voiceoverPlan = { autoEdit: true, segmentIds: allSegIds, ...userExtras }
-      if (overrideGaps) voiceoverPlan.segmentGaps = overrideGaps
-    }
-    return { rationale: String(parsed.rationale || ''), edl: normalized, rawText, voiceoverPlan }
+    return parseProposalResponse(rawText, { scenes, voSegments, voPlanOverride })
   }
 
   // Try once, validate the duration estimate, re-prompt with a
@@ -1526,6 +1410,130 @@ export async function generateProposal({
   }
 }
 
+
+// Pure parser for the proposal LLM response. Extracted from the runOnce
+// closure inside generateProposal so golden tests can replay recorded
+// rawText from real projects without touching an LLM. Behaviour must
+// stay byte-identical to the inline version it came from.
+export function parseProposalResponse(rawText, { scenes, voSegments, voPlanOverride } = {}) {
+  const parsed = extractJson(rawText)
+  if (!parsed) throw new Error('LLM response was not valid JSON. Try re-generating.')
+  const rawEdl = Array.isArray(parsed.edl) ? parsed.edl : []
+  const sceneById = new Map((scenes || []).map((s) => [s.id, s]))
+  let cursor = 0
+  const normalized = rawEdl.map((row, i) => {
+    const rawDur = Math.max(0.1, (Number(row.newTcOut) || 0) - (Number(row.newTcIn) || 0))
+    const start = cursor
+    const end = cursor + rawDur
+    cursor = end
+    // Parse `REFRAME [zoom=X.X] [anchor=x,y]` out of the note. We
+    // leave the note text alone so the UI keeps showing human-
+    // readable rationale; the parsed params land on `row.reframe`
+    // for the timeline to consume without a second pass.
+    let reframe = parseReframeDirective(row.note)
+    // Safety net: if the scene has an analyzed logo bbox and the
+    // LLM's anchor would clip the logo out of the post-crop window,
+    // snap the anchor (and if necessary reduce zoom) so the logo
+    // stays visible. This catches the common failure mode where the
+    // LLM says "push in on the logo" but writes anchor=0.5,0.5 when
+    // the logo is actually off-center — without this clamp, the
+    // preview would crop the logo out of frame.
+    if (reframe && row.kind !== 'placeholder') {
+      const scene = sceneById.get(row.sourceSceneId)
+      if (scene) reframe = snapReframeToLogo(reframe, scene)
+    }
+    // Same deal for `COLOR: exposure=... contrast=... ...` — the
+    // directive stays in the note as rationale, the parsed object
+    // becomes `row.colorAdjustments` for the timeline applier.
+    const colorAdjustments = parseColorDirective(row.note)
+    // `EXTEND +Xs:` — parsed into a clamped `{ seconds }` object for
+    // the timeline to slow down the clip as a preview, and for the
+    // Commit extend flow to pass to ComfyUI.
+    const extend = parseExtendDirective(row.note)
+    // Validate the LLM's referenceFrame pick: it must point to a
+    // scene that actually exists in the shot log, and framePosition
+    // must be one of the documented values. Anything malformed gets
+    // stripped here so the downstream generator either uses a sane
+    // default (start frame of the previous shot) or short-circuits
+    // with a clear "missing reference" error in the UI.
+    let referenceFrame = null
+    if (row.kind === 'placeholder' && row.referenceFrame && typeof row.referenceFrame === 'object') {
+      const refSceneId = String(row.referenceFrame.sourceSceneId || '').trim() || null
+      const refPos = String(row.referenceFrame.framePosition || '').trim().toLowerCase()
+      const validPos = ['start', 'middle', 'end'].includes(refPos) ? refPos : 'middle'
+      if (refSceneId && sceneById.has(refSceneId)) {
+        referenceFrame = { sourceSceneId: refSceneId, framePosition: validPos }
+      }
+    }
+    return {
+      index: i + 1,
+      kind: row.kind === 'placeholder' ? 'placeholder' : 'original',
+      sourceSceneId: row.sourceSceneId || null,
+      newTcIn: start,
+      newTcOut: end,
+      note: row.note || '',
+      reframe,
+      colorAdjustments,
+      extend,
+      referenceFrame,
+    }
+  })
+  // VO plan: if the user has taken manual control (voPlanOverride with
+  // autoEdit=false) we use their segment ids verbatim. Otherwise we
+  // accept the proposer's pick from the JSON response; if the LLM
+  // didn't emit one we fall back to "all segments" so nothing is
+  // silently dropped.
+  //
+  // We CARRY OVER any user-side knobs from the override — lead pads,
+  // per-segment timing edits — because those live in the UI and the
+  // LLM doesn't know about them. Without this carry the proposer's
+  // returned plan would erase the lead-in / lead-out that the user
+  // set, and the timeline would build VO clips trimmed to Gemini's
+  // (already-late) raw timestamps.
+  const allSegIds = Array.isArray(voSegments) ? voSegments.map((s) => s.id) : []
+  const userExtras = voPlanOverride ? {
+    leadInSec: Number.isFinite(voPlanOverride.leadInSec) ? voPlanOverride.leadInSec : undefined,
+    leadOutSec: Number.isFinite(voPlanOverride.leadOutSec) ? voPlanOverride.leadOutSec : undefined,
+    segmentEdits: voPlanOverride.segmentEdits || undefined,
+  } : {}
+  // Strip undefineds so spread doesn't clobber later fields.
+  Object.keys(userExtras).forEach((k) => userExtras[k] === undefined && delete userExtras[k])
+  // segmentGaps from the LLM: silence-before-each-segment in seconds,
+  // keyed by segment id. Only honoured when the proposer auto-picked
+  // (manual mode bypasses the LLM entirely). Carry user gap edits if
+  // the override has them — same pattern as segmentEdits.
+  const sanitizeGaps = (raw) => {
+    if (!raw || typeof raw !== 'object') return null
+    const out = {}
+    for (const [id, val] of Object.entries(raw)) {
+      const num = Number(val)
+      if (!Number.isFinite(num) || num < 0) continue
+      // Cap at a sane upper bound — a 30 s gap on a 30 s ad = pure
+      // silence with one VO line at the very end. Beyond that the LLM
+      // is almost certainly hallucinating.
+      out[id] = Math.min(30, num)
+    }
+    return Object.keys(out).length > 0 ? out : null
+  }
+  const overrideGaps = voPlanOverride && sanitizeGaps(voPlanOverride.segmentGaps)
+  const proposedGaps = sanitizeGaps(parsed?.voiceoverPlan?.segmentGaps)
+  let voiceoverPlan = null
+  if (voPlanOverride && voPlanOverride.autoEdit === false && Array.isArray(voPlanOverride.segmentIds)) {
+    voiceoverPlan = { autoEdit: false, segmentIds: voPlanOverride.segmentIds, ...userExtras }
+    if (overrideGaps) voiceoverPlan.segmentGaps = overrideGaps
+  } else if (Array.isArray(parsed?.voiceoverPlan?.segmentIds)) {
+    const validIds = parsed.voiceoverPlan.segmentIds.filter((id) => allSegIds.includes(id))
+    voiceoverPlan = { autoEdit: true, segmentIds: validIds, ...userExtras }
+    // User-edited gaps win over the LLM's pick on re-prompts; otherwise
+    // adopt whatever the LLM emitted.
+    const mergedGaps = overrideGaps || proposedGaps
+    if (mergedGaps) voiceoverPlan.segmentGaps = mergedGaps
+  } else if (allSegIds.length > 0) {
+    voiceoverPlan = { autoEdit: true, segmentIds: allSegIds, ...userExtras }
+    if (overrideGaps) voiceoverPlan.segmentGaps = overrideGaps
+  }
+  return { rationale: String(parsed.rationale || ''), edl: normalized, rawText, voiceoverPlan }
+}
 // Helper used by the retry correction math.
 function avgEligibleDuration(scenes) {
   const elig = (scenes || []).filter((s) => !s?.excluded)
