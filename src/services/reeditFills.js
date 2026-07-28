@@ -43,7 +43,8 @@ export const FILL_MODELS = [
   { id: 'kling-v3-omni',           label: 'Kling 3 Omni',     blurb: '3–15 s, accepts multi-image refs. Default — stylised, good with creative prompts.' },
   { id: 'grok-imagine-video-beta', label: 'Grok Video',       blurb: '1–6 s, single ref. Faster + cheaper than Kling; "auto" aspect.' },
   { id: 'viduq2-pro-fast',         label: 'Vidu Q2 Pro Fast', blurb: '4–8 s, single ref. 1080p native; cleaner frames, heavier files.' },
-  { id: 'seedance-2',              label: 'Seedance 2.0',     blurb: '3–12 s, single ref (ByteDance). Strong on real-human-looking motion. Schema may shift.' },
+  { id: 'seedance-2',              label: 'Seedance 2.0 (multi-ref)', blurb: '4–15 s. Sends start/middle/end frames + a 3 s sub-clip of the reference scene — best product/brand consistency.' },
+  { id: 'veo-3.1-flf',             label: 'Veo 3.1 Bridge (first/last frame)', blurb: '4–8 s. For placeholders BETWEEN two original rows: bridges the previous shot\'s last frame to the next shot\'s first frame.' },
 ]
 
 export const DEFAULT_FILL_MODEL = 'kling-v3-omni'
@@ -65,6 +66,39 @@ function resolveReferenceTcSec(scene, framePosition) {
     case 'middle':
     default:       return tcIn + dur / 2
   }
+}
+
+// Model-specific reference extras beyond the single legacy frame:
+//   - Seedance multi-ref: start/middle/end frames of the reference scene
+//     plus a ≤3 s sub-clip for the reference_videos slot — this is what
+//     buys product/brand consistency.
+//   - Veo FLF bridge: previous original row's END frame + next original
+//     row's START frame, so the generated shot connects both neighbours.
+// Falls back to nothing (single-frame behaviour) when the shape doesn't
+// apply — e.g. an FLF placeholder at the very start of the cut.
+function buildReferenceExtras({ modelId, index, edl, sceneById, scene }) {
+  if (modelId === 'seedance-2' && scene) {
+    const tcIn = Number(scene.tcIn) || 0
+    const tcOut = Number(scene.tcOut) || tcIn
+    const dur = Math.max(0, tcOut - tcIn)
+    const margin = Math.min(0.1, dur * 0.1)
+    return {
+      referenceTcSecList: [tcIn + margin, tcIn + dur / 2, Math.max(tcIn + margin, tcOut - margin)],
+      referenceClip: { startSec: tcIn, durationSec: Math.min(3, Math.max(0.5, dur)) },
+    }
+  }
+  if (modelId === 'veo-3.1-flf' && Array.isArray(edl)) {
+    const prev = edl[index - 1]
+    const next = edl[index + 1]
+    const prevScene = prev?.kind === 'original' ? sceneById.get(prev.sourceSceneId) : null
+    const nextScene = next?.kind === 'original' ? sceneById.get(next.sourceSceneId) : null
+    if (prevScene || nextScene) {
+      const prevTc = prevScene ? resolveReferenceTcSec(prevScene, 'end') : resolveReferenceTcSec(scene, 'start')
+      const nextTc = nextScene ? resolveReferenceTcSec(nextScene, 'start') : resolveReferenceTcSec(scene, 'end')
+      return { bridgeFrames: { prevTcSec: prevTc, nextTcSec: nextTc } }
+    }
+  }
+  return {}
 }
 
 // Read the canonical placeholder id from a row. The EDL doesn't carry
@@ -174,6 +208,7 @@ export async function generateFillsForProposal({ onProgress, signal, force = fal
         projectDir,
         sourceVideoPath: sourceVideo.path,
         referenceTcSec: t.tcSec,
+        ...buildReferenceExtras({ modelId, index: t.index, edl, sceneById, scene: sceneById.get(t.row.referenceFrame.sourceSceneId) }),
         prompt: promptText,
         durationSec: t.durationSec,
         aspectRatio,
@@ -258,6 +293,7 @@ export async function generateFillForRow({ row, index, modelId = DEFAULT_FILL_MO
     projectDir,
     sourceVideoPath: sourceVideo.path,
     referenceTcSec: tcSec,
+    ...buildReferenceExtras({ modelId, index, edl: project.proposal?.edl, sceneById, scene }),
     prompt: promptText,
     durationSec,
     aspectRatio,

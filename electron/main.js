@@ -5497,6 +5497,9 @@ ipcMain.handle('analysis:generateFill', async (event, options) => {
     projectDir,
     sourceVideoPath,
     referenceTcSec,         // absolute source timecode for the reference frame
+    referenceTcSecList,     // OPTIONAL: multiple ref frames (Seedance multi-ref, up to 9)
+    bridgeFrames,           // OPTIONAL: { prevTcSec, nextTcSec } for first/last-frame models (Veo FLF)
+    referenceClip,          // OPTIONAL: { startSec, durationSec } — sub-clip uploaded as reference video (Seedance)
     prompt,
     durationSec,
     aspectRatio,
@@ -5513,7 +5516,14 @@ ipcMain.handle('analysis:generateFill', async (event, options) => {
   if (!placeholderId) return { success: false, error: 'placeholderId required.' }
   if (!projectDir)    return { success: false, error: 'projectDir required.' }
   if (!sourceVideoPath) return { success: false, error: 'sourceVideoPath required.' }
-  if (!Number.isFinite(referenceTcSec)) return { success: false, error: 'referenceTcSec must be a finite number.' }
+  // Which frames to extract from the source. Priority: explicit bridge
+  // frames (FLF models) → multi-ref list → single legacy referenceTcSec.
+  const refTcs = (bridgeFrames && Number.isFinite(bridgeFrames.prevTcSec) && Number.isFinite(bridgeFrames.nextTcSec))
+    ? [bridgeFrames.prevTcSec, bridgeFrames.nextTcSec]
+    : (Array.isArray(referenceTcSecList) && referenceTcSecList.length > 0)
+      ? referenceTcSecList.filter(Number.isFinite).slice(0, 9)
+      : Number.isFinite(referenceTcSec) ? [referenceTcSec] : []
+  if (refTcs.length === 0) return { success: false, error: 'referenceTcSec, referenceTcSecList or bridgeFrames required.' }
   const comfyUrl = comfyUrlOpt || DEFAULT_LOCAL_COMFY_URL
   const apiKey = apiKeyOpt || ''
   // Kling is a Cloud-only model — there's no local backend. Fail fast
@@ -5533,45 +5543,76 @@ ipcMain.handle('analysis:generateFill', async (event, options) => {
     return { success: false, error: `Could not create fills dir: ${err.message}` }
   }
 
-  // 1. Extract reference frame from source.
-  emit('extracting_reference', { tcSec: referenceTcSec })
-  const refPath = path.join(fillsDir, `${sanitizeForFilename(placeholderId)}_ref.png`)
-  try {
-    await new Promise((resolve, reject) => {
-      const args = [
-        '-hide_banner', '-nostats',
-        '-ss', String(Math.max(0, Number(referenceTcSec))),
-        '-i', sourceVideoPath,
-        '-vframes', '1',
-        '-q:v', '2',
-        '-y', refPath,
-      ]
-      const proc = spawn(ffmpegPath, args, { windowsHide: true })
-      let stderr = ''
-      proc.stderr.on('data', (d) => { stderr += d.toString() })
-      proc.on('close', (code) => {
-        if (code === 0) resolve()
-        else reject(new Error(`ffmpeg frame extract failed (${code}): ${stderr.slice(-300)}`))
-      })
-      proc.on('error', reject)
-    })
-  } catch (err) {
-    return { success: false, error: err.message }
-  }
-
-  // 2. Upload reference frame to Comfy Cloud.
-  emit('uploading_reference')
+  // 1. Extract the reference frame(s) from the source, then upload each.
+  //    One frame for classic i2v, two for FLF bridges (prev-row last
+  //    frame + next-row first frame), up to nine for Seedance multi-ref.
+  emit('extracting_reference', { tcs: refTcs })
   const prefix = `reedit_${sanitizeForFilename(path.basename(projectDir))}_${sanitizeForFilename(placeholderId)}`
-  let comfyRefName
-  try {
-    const up = await uploadFileToComfy({
-      comfyUrl, apiKey,
-      localFilePath: refPath,
-      filename: `${prefix}_ref.png`,
+  const extractFrame = (tcSec, destPath) => new Promise((resolve, reject) => {
+    const args = [
+      '-hide_banner', '-nostats',
+      '-ss', String(Math.max(0, Number(tcSec))),
+      '-i', sourceVideoPath,
+      '-vframes', '1',
+      '-q:v', '2',
+      '-y', destPath,
+    ]
+    const proc = spawn(ffmpegPath, args, { windowsHide: true })
+    let stderr = ''
+    proc.stderr.on('data', (d) => { stderr += d.toString() })
+    proc.on('close', (code) => {
+      if (code === 0) resolve()
+      else reject(new Error(`ffmpeg frame extract failed (${code}): ${stderr.slice(-300)}`))
     })
-    comfyRefName = up?.name || `${prefix}_ref.png`
+    proc.on('error', reject)
+  })
+
+  const uploadedRefNames = []
+  let refPath = null
+  try {
+    for (let i = 0; i < refTcs.length; i++) {
+      const localPath = path.join(fillsDir, `${sanitizeForFilename(placeholderId)}_ref${i > 0 ? `_${i + 1}` : ''}.png`)
+      if (i === 0) refPath = localPath
+      await extractFrame(refTcs[i], localPath)
+      const remoteName = `${prefix}_ref_${i + 1}.png`
+      const up = await uploadFileToComfy({ comfyUrl, apiKey, localFilePath: localPath, filename: remoteName })
+      uploadedRefNames.push(up?.name || remoteName)
+    }
   } catch (err) {
-    return { success: false, error: `Failed to upload reference frame: ${err.message}` }
+    return { success: false, error: `Reference frame extract/upload failed: ${err.message}` }
+  }
+  const comfyRefName = uploadedRefNames[0]
+
+  // 2b. Optional reference sub-clip (Seedance reference_videos slot) —
+  //     a short cut of the source that carries motion + product identity.
+  let referenceVideoName = null
+  if (referenceClip && Number.isFinite(referenceClip.startSec)) {
+    emit('uploading_reference_clip')
+    const clipDur = Math.max(0.5, Math.min(3, Number(referenceClip.durationSec) || 3))
+    const refClipPath = path.join(fillsDir, `${sanitizeForFilename(placeholderId)}_refclip.mp4`)
+    try {
+      await new Promise((resolve, reject) => {
+        const args = [
+          '-hide_banner', '-nostats',
+          '-ss', String(Math.max(0, Number(referenceClip.startSec))),
+          '-i', sourceVideoPath,
+          '-t', String(clipDur),
+          '-an',
+          '-c:v', 'libx264', '-preset', 'veryfast', '-crf', '20',
+          '-pix_fmt', 'yuv420p',
+          '-y', refClipPath,
+        ]
+        const proc = spawn(ffmpegPath, args, { windowsHide: true })
+        let stderr = ''
+        proc.stderr.on('data', (d) => { stderr += d.toString() })
+        proc.on('close', (code) => code === 0 ? resolve() : reject(new Error(`ffmpeg ref-clip cut failed (${code}): ${stderr.slice(-300)}`)))
+        proc.on('error', reject)
+      })
+      const up = await uploadFileToComfy({ comfyUrl, apiKey, localFilePath: refClipPath, filename: `${prefix}_refclip.mp4` })
+      referenceVideoName = up?.name || `${prefix}_refclip.mp4`
+    } catch (err) {
+      return { success: false, error: `Reference clip cut/upload failed: ${err.message}` }
+    }
   }
 
   // 3. Build patched workflow + submit. The model-specific builder
@@ -5582,6 +5623,9 @@ ipcMain.handle('analysis:generateFill', async (event, options) => {
   const seed = Math.floor(Math.random() * 2147483647)
   const workflow = fillAdapter.buildWorkflow({
     referenceFilename: comfyRefName,
+    referenceFilenames: uploadedRefNames.length > 1 ? uploadedRefNames : undefined,
+    lastFrameFilename: bridgeFrames ? uploadedRefNames[1] : undefined,
+    referenceVideoFilename: referenceVideoName || undefined,
     prompt,
     durationSec,
     aspectRatio,
