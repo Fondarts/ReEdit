@@ -628,7 +628,7 @@ function parseColorDirective(note) {
   // Capture the segment after "COLOR:" up to the first period or end of
   // line so a rationale tail ("warm sun-soaked grade") doesn't get
   // mined for numbers.
-  const segMatch = /\bCOLOR\b\s*:\s*([^\n\.]+)/i.exec(note)
+  const segMatch = /\bCOLOR\b\s*:\s*([^\n.]+)/i.exec(note)
   const segment = segMatch ? segMatch[1] : note
   const result = {}
   for (const [alias, { key, min, max }] of Object.entries(COLOR_AXIS_MAP)) {

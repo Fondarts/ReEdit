@@ -104,7 +104,7 @@ const USER_PROMPT = `Watch this clip end-to-end, including audio if present. Ret
       "text_color_family": "Dominant color of the graphic. One of: 'white', 'black', 'yellow', 'orange', 'red', 'magenta', 'pink', 'purple', 'blue', 'cyan', 'green', 'gray', 'multi'. Null if no text/logo.",
       "text_is_bright": true_or_false,
       "luma_threshold_hint": "If mask_strategy is 'luma_bright', suggest a grayscale threshold 0-255 where pixels above this value are likely the graphic (typical range 170-230, with 195 being a safe default). If 'luma_dark', suggest a threshold below which pixels are likely the graphic (typical 30-80). Null for color / mixed.",
-      "hsv_range_hint": "If mask_strategy is 'color', suggest OpenCV-convention HSV ranges (H: 0-180, S: 0-255, V: 0-255) covering the graphic color: { \\\"lower\\\": [H, S, V], \\\"upper\\\": [H, S, V] }. Null otherwise.",
+      "hsv_range_hint": "If mask_strategy is 'color', suggest OpenCV-convention HSV ranges (H: 0-180, S: 0-255, V: 0-255) covering the graphic color: { \\"lower\\": [H, S, V], \\"upper\\": [H, S, V] }. Null otherwise.",
       "coverage_estimate_pct": "Rough estimate of the % of screen area the graphic covers on average, integer 0-100. Used as a sanity check for the generated mask.",
       "position": "Where the graphic sits in the frame. One of: 'bottom', 'top', 'center', 'lower_third', 'upper_third', 'corner_top_left', 'corner_top_right', 'corner_bottom_left', 'corner_bottom_right', 'full_frame', 'scattered'.",
       "animated": "true if the graphic moves / changes across the shot (scroll, fade, kinetic typography), false if static overlay."
@@ -554,7 +554,7 @@ const OVERALL_USER_PROMPT = `Watch this ad in full, including audio. Return a JS
       "text": "VERBATIM transcription of this segment, word-for-word. Preserve punctuation as spoken (commas, question marks, ellipses for pauses within the segment).",
       "startSec": 0.0,
       "endSec": 0.0,
-      "role": "line | question | tagline | legal | other — 'line' is the normal default, 'tagline' is the ad's closing signature, 'legal' is fast-spoken disclaimers (\\\"when-used-as-directed\\\" etc.)."
+      "role": "line | question | tagline | legal | other — 'line' is the normal default, 'tagline' is the ad's closing signature, 'legal' is fast-spoken disclaimers (\\"when-used-as-directed\\" etc.)."
     }
   ]
 }

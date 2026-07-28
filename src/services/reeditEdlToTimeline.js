@@ -52,8 +52,12 @@ import { buildActiveVersionPatch } from './placeholderVersions'
 export function buildReframeTransform(reframe, canvasWidth, canvasHeight) {
   if (!reframe) return null
   const zoom = Math.max(1, Math.min(3, Number(reframe.zoom) || 1.2))
-  const anchorX = Math.max(0, Math.min(1, Number(reframe.anchorX) ?? 0.5))
-  const anchorY = Math.max(0, Math.min(1, Number(reframe.anchorY) ?? 0.5))
+  // Number() never yields null/undefined, so `?? 0.5` was dead and NaN
+  // (missing anchor) leaked through the clamp. Check finiteness instead.
+  const rawAx = Number(reframe.anchorX)
+  const rawAy = Number(reframe.anchorY)
+  const anchorX = Math.max(0, Math.min(1, Number.isFinite(rawAx) ? rawAx : 0.5))
+  const anchorY = Math.max(0, Math.min(1, Number.isFinite(rawAy) ? rawAy : 0.5))
   const scalePct = Math.round(zoom * 100)
   const W = Number(canvasWidth) || 1920
   const H = Number(canvasHeight) || 1080
@@ -1491,7 +1495,7 @@ function applyMusicDuckingForVO() {
   // intact below in case we need to revive it behind a capability
   // flag — `return` here makes the whole effect a no-op.
   return
-  // eslint-disable-next-line no-unreachable
+  /* eslint-disable no-unreachable -- body intentionally kept dead, see note above */
   const tlStore = useTimelineStore.getState()
   const assetsStore = useAssetsStore.getState()
   const allClips = tlStore.clips || []
@@ -1590,4 +1594,5 @@ function applyMusicDuckingForVO() {
       })
     }
   }
+  /* eslint-enable no-unreachable */
 }

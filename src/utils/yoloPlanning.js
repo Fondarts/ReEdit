@@ -27,7 +27,7 @@ function parseSceneHeadingLine(line = '') {
     return { isHeading: false, label: '' }
   }
   const label = text
-    .replace(/^(?:scene\s+\d+|sc\s*\d+|#\s*scene|\d+\.)\s*[:\-]?\s*/i, '')
+    .replace(/^(?:scene\s+\d+|sc\s*\d+|#\s*scene|\d+\.)\s*[:-]?\s*/i, '')
     .trim()
   return { isHeading: true, label }
 }
@@ -63,7 +63,7 @@ function parseShotHeadingLine(line = '') {
     return { isHeading: false, label: '' }
   }
   const label = text
-    .replace(/^(?:shot\s+\d+|sh\s*\d+)\s*[:\-]?\s*/i, '')
+    .replace(/^(?:shot\s+\d+|sh\s*\d+)\s*[:-]?\s*/i, '')
     .trim()
   return { isHeading: true, label }
 }

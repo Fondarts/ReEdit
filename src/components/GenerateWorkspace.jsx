@@ -306,7 +306,7 @@ function summarizeSceneText(value = '', fallback = '') {
   if (lines.length === 0) return String(fallback || '').trim()
 
   let candidate = lines[0]
-  candidate = candidate.replace(/^(?:scene\s+\d+|sc\s*\d+|#\s*scene|\d+\.)\s*[:\-]?\s*/i, '').trim()
+  candidate = candidate.replace(/^(?:scene\s+\d+|sc\s*\d+|#\s*scene|\d+\.)\s*[:-]?\s*/i, '').trim()
   if (!candidate && lines.length > 1) candidate = lines[1]
 
   const firstSentence = (candidate || lines[0]).split(/(?<=[.!?])\s+/)[0]

@@ -3617,8 +3617,12 @@ ipcMain.handle('analysis:commitReframe', async (event, options) => {
   }
   // Anchor defines the center of the crop in source coords. Clamp so
   // the crop stays fully inside the source frame.
-  const axClamped = Math.max(0, Math.min(1, Number(anchorX) ?? 0.5))
-  const ayClamped = Math.max(0, Math.min(1, Number(anchorY) ?? 0.5))
+  // Number() never yields null/undefined, so `?? 0.5` was dead and NaN
+  // (missing anchor) leaked through the clamp. Check finiteness instead.
+  const ax = Number(anchorX)
+  const ay = Number(anchorY)
+  const axClamped = Math.max(0, Math.min(1, Number.isFinite(ax) ? ax : 0.5))
+  const ayClamped = Math.max(0, Math.min(1, Number.isFinite(ay) ? ay : 0.5))
   const cropCenterX = axClamped * srcW
   const cropCenterY = ayClamped * srcH
   let cropX = Math.round(cropCenterX - cropW / 2)
