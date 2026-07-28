@@ -23,6 +23,22 @@ export const I2V_MODEL_OPTIONS = [
   { id: 'wan-2.2-svi', label: 'WAN 2.2 14B SVI Pro (extend-aware, video-context)' },
 ]
 
+// Extend-capable models. Local last-frame i2v drifts past ~2 s, so those
+// cap at 2.0; cloud video-context extension (Vidu sees the whole clip's
+// motion) holds up to ~5 s. The ceiling is enforced three times: in the
+// proposer prompt, in the UI slider, and as a clamp in main.js.
+export const EXTEND_MODEL_OPTIONS = [
+  { id: 'ltx-2.3', label: 'LTX 2.3 (local, last-frame)', maxExtendSec: 2.0 },
+  { id: 'wan-2.2-14b', label: 'WAN 2.2 14B (local, last-frame)', maxExtendSec: 2.0 },
+  { id: 'wan-2.2-svi', label: 'WAN 2.2 SVI Pro (local, video-context)', maxExtendSec: 2.0 },
+  { id: 'viduq2-pro-extend', label: 'Vidu Q2 Extend (cloud, video-context)', maxExtendSec: 5.0 },
+]
+
+export function maxExtendSecForModel(modelId) {
+  const opt = EXTEND_MODEL_OPTIONS.find((o) => o.id === modelId)
+  return opt?.maxExtendSec ?? 2.0
+}
+
 export const UPSCALE_MODEL_OPTIONS = [
   { id: 'RealESRGAN_x4plus.pth', label: 'RealESRGAN x4+ (default — works on Cloud + Local)' },
   { id: '4x_NMKD-Siax_200k.pth', label: '4x NMKD-Siax 200k (sharper, local only)' },

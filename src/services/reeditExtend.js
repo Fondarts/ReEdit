@@ -56,6 +56,20 @@ export async function commitExtend({ sceneId, projectDir, extendSec, sourceDurat
   let loadImageNodeId = null
   let loadVideoNodeId = null
 
+  if (modelId === 'viduq2-pro-extend') {
+    // Cloud video-context extend. The workflow is built main-side by the
+    // model adapter (electron/comfy/adapters/vidu-extend.js) — the
+    // renderer only ships the intent.
+    return await window.electronAPI.commitExtend({
+      sceneId,
+      projectDir,
+      extendSec,
+      prompt,
+      modelId,
+      ...getActiveComfyIpcContext(),
+    })
+  }
+
   if (modelId === 'wan-2.2-svi') {
     // WAN 2.2 SVI Pro extend. The workflow takes the FULL source clip
     // as input (VHS_LoadVideo), uses its last frame as the anchor,

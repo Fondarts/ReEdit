@@ -32,7 +32,7 @@ import { clearDiskCacheUrl } from './VideoLayerRenderer'
 import { getActiveHttpBaseSync, getActiveComfyIpcContext } from '../services/localComfyConnection'
 import { swapSceneActiveVersion } from '../services/reeditEdlToTimeline'
 import { commitExtend as commitExtendService } from '../services/reeditExtend'
-import { loadCapabilitySettings, I2V_MODEL_OPTIONS } from '../services/reeditCapabilitySettings'
+import { loadCapabilitySettings, I2V_MODEL_OPTIONS, EXTEND_MODEL_OPTIONS } from '../services/reeditCapabilitySettings'
 import { FRAME_RATE, TRANSITION_TYPES, TRANSITION_DEFAULT_SETTINGS } from '../constants/transitions'
 import {
   DEFAULT_LETTERBOX_ASPECT,
@@ -2180,8 +2180,8 @@ function InspectorPanel({ isExpanded, onToggleExpanded }) {
                     className="flex-1 text-[10px] bg-sf-dark-900 border border-sf-dark-700 rounded px-1.5 py-1 text-sf-text-primary hover:border-sf-dark-500 focus:outline-none focus:border-sf-accent disabled:opacity-50"
                     title="Pick the i2v model just for this commit. Empty falls back to the global default in Settings → Capabilities."
                   >
-                    <option value="">Use Settings default ({(I2V_MODEL_OPTIONS.find((m) => m.id === loadCapabilitySettings()?.footageExtend?.model)?.label) || 'LTX 2.3'})</option>
-                    {I2V_MODEL_OPTIONS.map((m) => (
+                    <option value="">Use Settings default ({(EXTEND_MODEL_OPTIONS.find((m) => m.id === loadCapabilitySettings()?.footageExtend?.model)?.label) || 'LTX 2.3'})</option>
+                    {EXTEND_MODEL_OPTIONS.map((m) => (
                       <option key={m.id} value={m.id}>{m.label}</option>
                     ))}
                   </select>
@@ -4003,8 +4003,8 @@ function InspectorPanel({ isExpanded, onToggleExpanded }) {
                     className="flex-1 text-[10px] bg-sf-dark-900 border border-sf-dark-700 rounded px-1.5 py-1 text-sf-text-primary hover:border-sf-dark-500 focus:outline-none focus:border-sf-accent disabled:opacity-50"
                     title="Pick the i2v model just for this commit. Empty falls back to the global default in Settings → Capabilities."
                   >
-                    <option value="">Use Settings default ({(I2V_MODEL_OPTIONS.find((m) => m.id === loadCapabilitySettings()?.footageExtend?.model)?.label) || 'LTX 2.3'})</option>
-                    {I2V_MODEL_OPTIONS.map((m) => (
+                    <option value="">Use Settings default ({(EXTEND_MODEL_OPTIONS.find((m) => m.id === loadCapabilitySettings()?.footageExtend?.model)?.label) || 'LTX 2.3'})</option>
+                    {EXTEND_MODEL_OPTIONS.map((m) => (
                       <option key={m.id} value={m.id}>{m.label}</option>
                     ))}
                   </select>

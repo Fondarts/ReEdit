@@ -3557,21 +3557,37 @@ ipcMain.handle('analysis:commitExtend', async (event, options) => {
   } = options || {}
   if (!sceneId) return { success: false, error: 'sceneId required.' }
   if (!projectDir) return { success: false, error: 'projectDir required.' }
-  if (!workflow || typeof workflow !== 'object') return { success: false, error: 'workflow JSON required.' }
-  // Two execution modes depending on the model:
+  // Three execution modes depending on the model:
   //   - last-frame mode (LTX, base WAN): we extract one frame from the
   //     source clip and inject it into a LoadImage node; ComfyUI
   //     generates only the tail, we ffmpeg-concat it onto the original.
   //   - whole-clip mode (WAN SVI Pro): we upload the source MP4 and
   //     inject it into a LoadVideo node; the workflow itself emits the
   //     concatenated original+extended video — no concat in main.js.
-  const isVideoInputMode = Boolean(loadVideoNodeId) && !loadImageNodeId
-  if (!isVideoInputMode && !loadImageNodeId) {
+  //   - adapter mode (cloud, e.g. Vidu Q2 Extend): the renderer passes
+  //     only modelId; the adapter builds the graph around the uploaded
+  //     source clip. True video-context extension, so the duration
+  //     ceiling is higher than the 2 s drift-limit of last-frame i2v.
+  const extendAdapter = modelId ? getAdapter(modelId) : null
+  const isAdapterMode = Boolean(extendAdapter && extendAdapter.kind === 'extend')
+  if (!isAdapterMode && (!workflow || typeof workflow !== 'object')) {
+    return { success: false, error: 'workflow JSON required.' }
+  }
+  const isVideoInputMode = !isAdapterMode && Boolean(loadVideoNodeId) && !loadImageNodeId
+  if (!isAdapterMode && !isVideoInputMode && !loadImageNodeId) {
     return { success: false, error: 'Either loadImageNodeId (LTX/WAN base) or loadVideoNodeId (SVI) is required.' }
   }
   const comfyUrl = comfyUrlOpt || DEFAULT_LOCAL_COMFY_URL
   const apiKey = apiKeyOpt || ''
-  const wantExtendSec = Math.max(0.2, Math.min(2, Number(extendSec) || 1))
+  if (isAdapterMode && extendAdapter.mode === 'cloud' && !isCloudComfyUrl(comfyUrl)) {
+    return { success: false, error: `${extendAdapter.label} needs Comfy Cloud. Switch the ComfyUI mode to Cloud in the launcher chip or Settings → ComfyUI.` }
+  }
+  // Per-model ceiling: cloud video-context extends tolerate more than
+  // the 2 s cap that protects last-frame i2v from drifting.
+  const maxExtend = isAdapterMode
+    ? Math.min(5, Number(extendAdapter.caps?.maxDurationSec) || 5)
+    : 2
+  const wantExtendSec = Math.max(0.2, Math.min(maxExtend, Number(extendSec) || 1))
 
   const emit = (stage, extra = {}) => {
     try { event.sender.send('analysis:commitExtend:progress', { sceneId, stage, ...extra }) } catch (_) { /* renderer closed */ }
@@ -3612,13 +3628,35 @@ ipcMain.handle('analysis:commitExtend', async (event, options) => {
   emit('uploading')
   const prefix = `reedit_${sanitizeForFilename(path.basename(projectDir))}_${sanitizeForFilename(sceneId)}_${versionTag}`
 
-  // Patch the workflow with the right input filename. SVI mode uploads
-  // the source clip as a video; the other paths upload the last frame
-  // as a PNG and let the workflow produce only the tail.
-  const patchedWorkflow = JSON.parse(JSON.stringify(workflow))
+  // Patch the workflow with the right input filename. SVI/adapter modes
+  // upload the source clip as a video; the other paths upload the last
+  // frame as a PNG and let the workflow produce only the tail.
+  let patchedWorkflow = isAdapterMode ? null : JSON.parse(JSON.stringify(workflow))
   let lastFrameLocalPath = null
 
-  if (isVideoInputMode) {
+  if (isAdapterMode) {
+    // Cloud extend adapter — upload the source sub-clip, let the adapter
+    // build the whole graph (it owns the node ids).
+    let comfyInputName = `${prefix}_source.mp4`
+    try {
+      const up = await uploadFileToComfy({
+        comfyUrl, apiKey,
+        localFilePath: sourceClipPath,
+        filename: comfyInputName,
+      })
+      comfyInputName = up?.name || comfyInputName
+    } catch (err) {
+      return { success: false, error: `Failed to upload source clip: ${err.message}` }
+    }
+    patchedWorkflow = extendAdapter.buildWorkflow({
+      sourceVideoFilename: comfyInputName,
+      prompt: options?.prompt || '',
+      durationSec: Math.max(1, Math.ceil(wantExtendSec)),
+      resolution: meta.height >= 1000 ? '1080p' : '720p',
+      outputPrefix: `reedit_extend/${prefix}`,
+      seed: Math.floor(Math.random() * 2147483647),
+    })
+  } else if (isVideoInputMode) {
     // SVI Pro path — upload the source sub-clip MP4 via /upload/image.
     let comfyInputName = `${prefix}_source.mp4`
     try {
@@ -3680,7 +3718,10 @@ ipcMain.handle('analysis:commitExtend', async (event, options) => {
   emit('queued_submit')
   let promptId
   try {
-    promptId = await queuePromptToComfy({ comfyUrl, apiKey, workflow: patchedWorkflow })
+    promptId = await queuePromptToComfy({
+      comfyUrl, apiKey, workflow: patchedWorkflow,
+      includeComfyOrgKey: Boolean(isAdapterMode && extendAdapter.partner),
+    })
   } catch (err) {
     return { success: false, error: err.message }
   }
@@ -3743,7 +3784,57 @@ ipcMain.handle('analysis:commitExtend', async (event, options) => {
   const finalPath = path.join(projectOptimizedDir, `${sceneId}_${versionTag}.mp4`)
   let tailLocalPath = null
 
-  if (isVideoInputMode) {
+  if (isAdapterMode) {
+    // Cloud extend output shape isn't fixed across providers: it may be
+    // the full original+extension or only the generated continuation.
+    // Probe the duration and pick full-video vs concat accordingly.
+    const stagePath = path.join(projectOptimizedDir, `${sceneId}_${versionTag}_cloud_raw.mp4`)
+    try {
+      await downloadFromComfy({
+        comfyUrl, apiKey,
+        filename: tailOutFilename,
+        subfolder: tailOutSubfolder,
+        type: tailOutType,
+        destPath: stagePath,
+      })
+    } catch (err) {
+      return { success: false, error: `Could not download cloud extend output: ${err.message}` }
+    }
+    const outMeta = await probeVideoMeta(stagePath)
+    const sourceDur = Number(meta.duration) || 0
+    const outDur = Number(outMeta?.duration) || 0
+    const looksLikeFullVideo = sourceDur > 0 && outDur >= sourceDur + wantExtendSec * 0.5
+    emit('note', { message: `Cloud extend returned ${outDur.toFixed(2)}s (source ${sourceDur.toFixed(2)}s) → ${looksLikeFullVideo ? 'full video' : 'tail, concatenating'}.` })
+    const pieces = looksLikeFullVideo ? [stagePath] : [sourceClipPath, stagePath]
+    const listFilePath = path.join(projectOptimizedDir, `${sceneId}_${versionTag}_concat.txt`)
+    const toListLine = (p) => `file '${p.replace(/\\/g, '/').replace(/'/g, "'\\''")}'`
+    await fs.writeFile(listFilePath, pieces.map(toListLine).join('\n') + '\n', 'utf8')
+    // Normalise dims/fps to the source in the same pass — cloud outputs
+    // regularly come back at a different resolution.
+    await new Promise((resolve, reject) => {
+      const args = [
+        '-hide_banner', '-nostats',
+        '-f', 'concat', '-safe', '0',
+        '-i', listFilePath,
+        '-vf', `scale=${meta.width}:${meta.height}:flags=lanczos,setsar=1,fps=${meta.fps}`,
+        '-c:v', 'libx264', '-preset', 'veryfast', '-crf', '18',
+        '-pix_fmt', 'yuv420p',
+        '-c:a', 'aac', '-b:a', '192k',
+        '-movflags', '+faststart',
+        '-y', finalPath,
+      ]
+      const proc = spawn(ffmpegPath, args, { windowsHide: true })
+      let stderr = ''
+      proc.stderr.on('data', (d) => { stderr += d.toString() })
+      proc.on('close', (code) => {
+        if (code === 0) resolve()
+        else reject(new Error(`ffmpeg finalize failed (${code}): ${stderr.slice(-300)}`))
+      })
+      proc.on('error', reject)
+    }).catch((err) => { throw err })
+    try { await fs.unlink(listFilePath) } catch (_) { /* ignore */ }
+    try { await fs.unlink(stagePath) } catch (_) { /* ignore */ }
+  } else if (isVideoInputMode) {
     // SVI Pro mode: ComfyUI already emitted the concatenated
     // original+extended video. Probe the output dims and, if they
     // don't match the source exactly (the workflow's

@@ -3,6 +3,7 @@ import { Film, Maximize2, Music2, Mic, Expand } from 'lucide-react'
 import {
   DEFAULT_CAPABILITY_SETTINGS,
   I2V_MODEL_OPTIONS,
+  EXTEND_MODEL_OPTIONS,
   UPSCALE_MODEL_OPTIONS,
   loadCapabilitySettings,
   saveCapabilitySettings,
@@ -177,10 +178,10 @@ function CapabilitiesSettingsSection() {
       </Section>
 
       <Section icon={Expand} title="Footage extend">
-        <Field label="Model" hint="Which i2v model drives the tail continuation.">
+        <Field label="Model" hint="Local models continue from the last frame (2 s ceiling before drift); Vidu Q2 Extend sees the whole clip's motion via Comfy Cloud and holds up to 5 s.">
           <SelectField
             value={ext.model}
-            options={I2V_MODEL_OPTIONS}
+            options={EXTEND_MODEL_OPTIONS}
             onChange={(v) => patch('footageExtend', { model: v })}
           />
         </Field>

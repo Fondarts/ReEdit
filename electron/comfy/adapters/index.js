@@ -21,6 +21,10 @@ const ADAPTERS = [
   require('./grok-i2v'),
   require('./vidu-i2v'),
   require('./seedance-i2v'),
+  require('./veo-flf'),
+  require('./vidu-extend'),
+  require('./luma-reframe'),
+  require('./kling-edit'),
 ]
 
 const byId = new Map(ADAPTERS.map((a) => [a.id, a]))
