@@ -2221,6 +2221,7 @@ const {
   queuePromptToComfy,
   waitForComfyJob,
 } = require('./comfy/client')
+const { getAdapter, listAdapters } = require('./comfy/adapters')
 
 // ============================================
 // LTX 2.3 IC-Edit watermark removal workflow loader
@@ -4953,270 +4954,8 @@ ipcMain.handle('analysis:extractThumbnail', async (event, options) => {
 // Bulk orchestration (loop over placeholders, persist results) lives
 // in the renderer-side `reeditFills.js` service — this handler stays
 // focused on one fill at a time.
-// Registry of available i2v fill models on Comfy Cloud. Each entry
-// exposes a builder that returns the workflow JSON patched with the
-// caller's prompt / reference image / duration / seed. Adding a model
-// is one entry here + one option in the renderer-side picker UI.
-const FILL_MODEL_REGISTRY = {
-  'kling-v3-omni':           buildKlingI2vWorkflow,
-  'grok-imagine-video-beta': buildGrokI2vWorkflow,
-  'viduq2-pro-fast':         buildVidu2I2vWorkflow,
-  'seedance-2':              buildSeedance2I2vWorkflow,
-}
-
-// Sanitise + bound a seed so every model gets a positive int32 value.
-// Each provider has slightly different limits but int32 max is the
-// strictest among them.
-function _safeSeed(seed) {
-  const INT32_MAX = 2147483647
-  return Number.isFinite(seed)
-    ? Math.abs(Math.floor(Number(seed))) % (INT32_MAX + 1)
-    : Math.floor(Math.random() * INT32_MAX)
-}
-
-// Per-model prompt formatters. The proposer writes one generic
-// "director's shot instruction" per placeholder; each i2v provider
-// has its own structural preferences we tune the prompt to here so
-// the same note lands well on every backend. The formatters never
-// hallucinate content — they only re-order, clip, and prepend/append
-// boilerplate that the model's official prompting guide recommends.
-
-// Strip trailing punctuation so prepended / appended clauses chain
-// cleanly without ugly ". ." sequences.
-function _trimEnd(s) { return String(s || '').trim().replace(/[.;,]\s*$/, '') }
-
-// Hard-cap a prompt to N words. Some providers (Seedance) explicitly
-// recommend ≤150; we keep 180 for safety margin without truncating
-// notes the proposer wrote tightly.
-function _capWords(s, max = 180) {
-  const words = String(s || '').trim().split(/\s+/)
-  if (words.length <= max) return words.join(' ')
-  return words.slice(0, max).join(' ') + '…'
-}
-
-// Kling 3 Omni — scene → character → action → camera → progression.
-// The proposer notes are already short cinematic shot instructions so
-// we just append a continuity cue + cap to 4-ish sentences. Kling
-// supports up to 15 s but our notes describe 1-3 s beats; the model
-// fills the gap with the camera move described.
-function formatPromptForKling(note) {
-  const body = _trimEnd(note) || 'A subtle moment of atmosphere consistent with the reference image'
-  // Append a continuity reinforcer so the generated motion blends back
-  // into the surrounding cut.
-  return _capWords(
-    `${body}. Match the lighting, palette, and tone of the reference image. Smooth, deliberate camera motion. Photoreal, cinematic.`,
-    180,
-  )
-}
-
-// Grok Imagine — natural sentences, 1 subject + 1 action + 1 camera
-// move + emotion tag. Strip a second camera move if the proposer
-// stacked two ("dolly + push" → keep "dolly"), and append an emotion
-// keyword if the note has none.
-function formatPromptForGrok(note) {
-  let body = _trimEnd(note) || 'A quiet moment of atmosphere consistent with the reference image'
-  // Heuristic: if the note mentions two camera verbs, keep only the
-  // first. Grok degrades sharply with multiple movements.
-  const CAMERA_VERBS = /\b(pan|tilt|dolly|track|push\s+in|pull\s+out|crane|orbit|zoom|tracking shot|aerial|whip\s+pan|handheld)\b/gi
-  const verbs = body.match(CAMERA_VERBS) || []
-  if (verbs.length > 1) {
-    // Replace the second+ occurrences with "" — leaves prose mostly
-    // readable; the worst case is a slightly awkward sentence but the
-    // model gets a single-motion shot instead of jittery output.
-    const seen = new Set()
-    body = body.replace(CAMERA_VERBS, (match) => {
-      const key = match.toLowerCase()
-      if (seen.has(key)) return ''
-      // First occurrence is also added but only once per phrase to keep
-      // dedupe consistent.
-      if (seen.size >= 1) return ''
-      seen.add(key)
-      return match
-    })
-  }
-  // Append an atmospheric tag if the note is purely descriptive.
-  const hasMood = /\b(nostalgic|melancholic|electric|tense|dreamlike|serene|cinematic|atmospheric|moody|peaceful|romantic|warm|cool|epic|tranquil)\b/i.test(body)
-  const mood = hasMood ? '' : ', atmospheric and cinematic'
-  return _capWords(`${body}${mood}.`, 120)
-}
-
-// Seedance 2.0 — i2v omits subject re-description. Prepend the
-// preservation clause + animation instruction, keep ONE camera move,
-// 60-100 words target.
-function formatPromptForSeedance(note) {
-  const body = _trimEnd(note) || 'Subtle motion consistent with the reference image'
-  return _capWords(
-    `Animate the provided image. Preserve composition, color palette, and lighting from the reference. ${body}. Single, smooth camera move. Photoreal, natural motion, no flicker.`,
-    120,
-  )
-}
-
-// Vidu Q2 — provider's guide is sparse; treat as generic prompt
-// passthrough with a light cinematic suffix that matches their demo
-// captions.
-function formatPromptForVidu(note) {
-  const body = _trimEnd(note) || 'Subtle motion consistent with the reference image'
-  return _capWords(`${body}. Photoreal, cinematic, natural motion.`, 150)
-}
-
-// Pick the canonical aspect bucket the provider accepts. Most i2v
-// providers reject anything that isn't 16:9 / 9:16 / 1:1.
-function _aspectBucket(aspectRatio) {
-  const ASPECT_BUCKETS = new Set(['16:9', '9:16', '1:1'])
-  return ASPECT_BUCKETS.has(String(aspectRatio)) ? String(aspectRatio) : '16:9'
-}
-
-function buildKlingI2vWorkflow({ referenceFilename, prompt, durationSec, aspectRatio, resolution, outputPrefix, seed }) {
-  // Kling's KlingOmniProImageToVideoNode requires duration in [3, 15].
-  // We always request 3 s from the model; the timeline applier trims
-  // the clip down to whatever the EDL row actually needs.
-  const safeDur = Math.max(3, Math.min(15, Math.round(Number(durationSec) || 3)))
-  const formattedPrompt = formatPromptForKling(prompt)
-  return {
-    '17': { class_type: 'LoadImage', inputs: { image: referenceFilename }, _meta: { title: 'Reference frame' } },
-    '21': {
-      class_type: 'KlingOmniProImageToVideoNode',
-      inputs: {
-        model_name: 'kling-v3-omni',
-        prompt: formattedPrompt.slice(0, 2000),
-        aspect_ratio: _aspectBucket(aspectRatio),
-        duration: safeDur,
-        resolution: resolution || '720p',
-        storyboards: 'disabled',
-        generate_audio: false,
-        seed: _safeSeed(seed),
-        reference_images: ['17', 0],
-      },
-      _meta: { title: 'Kling 3 Omni i2v' },
-    },
-    '20': {
-      class_type: 'SaveVideo',
-      inputs: { filename_prefix: outputPrefix, format: 'auto', codec: 'auto', video: ['21', 0] },
-      _meta: { title: 'Save Video' },
-    },
-  }
-}
-
-// Grok image-to-video. Single image reference, faster + cheaper than
-// Kling but no multi-reference support and slightly less "stylised"
-// outputs. Duration is best-effort 1–6 s.
-function buildGrokI2vWorkflow({ referenceFilename, prompt, durationSec, aspectRatio, outputPrefix, seed }) {
-  const safeDur = Math.max(1, Math.min(6, Math.round(Number(durationSec) || 3)))
-  const formattedPrompt = formatPromptForGrok(prompt)
-  return {
-    '3': { class_type: 'LoadImage', inputs: { image: referenceFilename }, _meta: { title: 'Reference frame' } },
-    '1': {
-      class_type: 'GrokVideoNode',
-      inputs: {
-        model: 'grok-imagine-video-beta',
-        prompt: formattedPrompt.slice(0, 2000),
-        resolution: '720p',
-        aspect_ratio: 'auto',          // Grok accepts 'auto' and infers from the reference image
-        duration: safeDur,
-        seed: _safeSeed(seed),
-        image: ['3', 0],
-      },
-      _meta: { title: 'Grok Video i2v' },
-    },
-    '2': {
-      class_type: 'SaveVideo',
-      inputs: { filename_prefix: outputPrefix, format: 'auto', codec: 'auto', video: ['1', 0] },
-      _meta: { title: 'Save Video' },
-    },
-  }
-}
-
-// Vidu Q2 image-to-video. 1080p native (heavier file but cleaner
-// frames). Movement amplitude is "auto" by default; we surface it as
-// a tunable later if needed.
-function buildVidu2I2vWorkflow({ referenceFilename, prompt, durationSec, outputPrefix, seed }) {
-  const safeDur = Math.max(4, Math.min(8, Math.round(Number(durationSec) || 5)))
-  const formattedPrompt = formatPromptForVidu(prompt)
-  return {
-    '40': { class_type: 'LoadImage', inputs: { image: referenceFilename }, _meta: { title: 'Reference frame' } },
-    '39': {
-      class_type: 'Vidu2ImageToVideoNode',
-      inputs: {
-        model: 'viduq2-pro-fast',
-        prompt: formattedPrompt.slice(0, 2000),
-        duration: safeDur,
-        seed: _safeSeed(seed),
-        resolution: '1080p',
-        movement_amplitude: 'auto',
-        image: ['40', 0],
-      },
-      _meta: { title: 'Vidu 2 i2v' },
-    },
-    '37': {
-      class_type: 'SaveVideo',
-      inputs: { filename_prefix: outputPrefix, format: 'auto', codec: 'auto', video: ['39', 0] },
-      _meta: { title: 'Save Video' },
-    },
-  }
-}
-
-// Seedance 2.0 reference-to-video (ByteDance). The upstream Comfy
-// `ByteDance2ReferenceNode` flipped its signature in late 2025 — all
-// of prompt / resolution / ratio / duration / reference images now
-// live nested inside a single `model` dict that also carries the
-// selected variant name ("Seedance 2.0" vs "Seedance 2.0 Fast").
-// Reference images go in as a sub-dict keyed `image_1` … `image_9`
-// (the node supports up to 9). Top-level inputs are limited to
-// `model`, `seed`, `watermark`.
-// Schema reference:
-//   https://github.com/comfyanonymous/ComfyUI/blob/master/comfy_api_nodes/nodes_bytedance.py
-//   (class ByteDance2ReferenceNode, _seedance2_reference_inputs)
-function buildSeedance2I2vWorkflow({ referenceFilename, prompt, durationSec, aspectRatio, outputPrefix, seed }) {
-  // Seedance 2.0 duration is bounded [4, 15] s. Clamp accordingly.
-  const safeDur = Math.max(4, Math.min(15, Math.round(Number(durationSec) || 5)))
-  const formattedPrompt = formatPromptForSeedance(prompt)
-  return {
-    '10': { class_type: 'LoadImage', inputs: { image: referenceFilename }, _meta: { title: 'Reference frame' } },
-    '11': {
-      class_type: 'ByteDance2ReferenceNode',
-      // ByteDance2ReferenceNode wraps its real inputs in a DynamicCombo
-      // widget called `model`. Comfy serialises that as FLAT, dotted
-      // keys at the API layer ("model", "model.prompt", "model.ratio"
-      // …) — NOT as a nested dict. The server's `build_nested_inputs`
-      // pass walks the `dynamic_paths` registered by the schema and
-      // re-packs the flat keys into the nested dict the `execute()`
-      // method actually receives. Sending a nested `model: {…}` here
-      // produces "missing 1 required positional argument: 'model'"
-      // because the flat key `"model"` (the selected variant string)
-      // is missing.
-      //
-      // Reference-image slots live under another nested widget
-      // (`reference_images` is an Autogrow with template names
-      // image_1…image_9), which finalises to `"model.reference_images.image_1"`.
-      inputs: {
-        // Selected DynamicCombo variant — must match one of the
-        // option keys defined in the schema ("Seedance 2.0" or
-        // "Seedance 2.0 Fast").
-        model: 'Seedance 2.0',
-        'model.prompt': formattedPrompt.slice(0, 2000),
-        'model.resolution': '720p',
-        'model.ratio': _aspectBucket(aspectRatio),
-        'model.duration': safeDur,
-        // Generated placeholders ride under the existing music bed —
-        // we don't want Seedance synthesising its own audio track.
-        'model.generate_audio': false,
-        // Reference image slot 1 of up to 9. The Autogrow widget
-        // packs these into `model.reference_images` at execute time.
-        'model.reference_images.image_1': ['10', 0],
-        seed: _safeSeed(seed),
-        // Required boolean since the late-2025 node update. False so
-        // outputs don't carry the ByteDance overlay.
-        watermark: false,
-      },
-      _meta: { title: 'Seedance 2.0 r2v' },
-    },
-    '12': {
-      class_type: 'SaveVideo',
-      inputs: { filename_prefix: outputPrefix, format: 'auto', codec: 'auto', video: ['11', 0] },
-      _meta: { title: 'Save Video' },
-    },
-  }
-}
+// Fill model builders + prompt formatters now live in
+// electron/comfy/adapters/ (one file per model, registry in index.js).
 
 ipcMain.handle('analysis:generateFill', async (event, options) => {
   const {
@@ -5227,14 +4966,15 @@ ipcMain.handle('analysis:generateFill', async (event, options) => {
     prompt,
     durationSec,
     aspectRatio,
-    modelId: modelIdOpt,    // which entry of FILL_MODEL_REGISTRY to use
+    modelId: modelIdOpt,    // adapter id from electron/comfy/adapters
     comfyUrl: comfyUrlOpt,
     apiKey: apiKeyOpt,
   } = options || {}
   const modelId = String(modelIdOpt || 'kling-v3-omni')
-  const buildWorkflow = FILL_MODEL_REGISTRY[modelId]
-  if (!buildWorkflow) {
-    return { success: false, error: `Unknown fill model "${modelId}". Available: ${Object.keys(FILL_MODEL_REGISTRY).join(', ')}.` }
+  const fillAdapter = getAdapter(modelId)
+  if (!fillAdapter || fillAdapter.kind !== 'i2v') {
+    const available = listAdapters({ kind: 'i2v' }).map((a) => a.id).join(', ')
+    return { success: false, error: `Unknown fill model "${modelId}". Available: ${available}.` }
   }
   if (!placeholderId) return { success: false, error: 'placeholderId required.' }
   if (!projectDir)    return { success: false, error: 'projectDir required.' }
@@ -5306,7 +5046,7 @@ ipcMain.handle('analysis:generateFill', async (event, options) => {
   // roll once here and let the builder re-clamp.
   const outputPrefix = `reedit_fills/${sanitizeForFilename(path.basename(projectDir))}_${sanitizeForFilename(placeholderId)}`
   const seed = Math.floor(Math.random() * 2147483647)
-  const workflow = buildWorkflow({
+  const workflow = fillAdapter.buildWorkflow({
     referenceFilename: comfyRefName,
     prompt,
     durationSec,
