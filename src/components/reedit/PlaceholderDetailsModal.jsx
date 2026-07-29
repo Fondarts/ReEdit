@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react'
-import { X, ImagePlus, Loader2, Trash2, Film, CheckCircle2, AlertCircle, Wand2, RefreshCw } from 'lucide-react'
+import { X, ImagePlus, Loader2, Trash2, Film, CheckCircle2, AlertCircle, Wand2, RefreshCw, Sparkles, Undo2 } from 'lucide-react'
 import {
   generateFrameForPlaceholder, generateFillForPlaceholder,
   captureSourceFrameForPlaceholder,
@@ -7,6 +7,7 @@ import {
   FRAME_ROLE_LABELS, frameRoleSupport, resolveFrameRole,
 } from '../../services/reeditGenerate'
 import SourceFramePicker from './SourceFramePicker'
+import { enhancePromptForModel, enhancerModelLabel } from '../../services/reeditPromptEnhancer'
 import { loadCapabilitySettings } from '../../services/reeditCapabilitySettings'
 import {
   appendVideoVersion, setActiveVideoVersion, removeVideoVersion,
@@ -79,6 +80,9 @@ function PlaceholderDetailsModal({
   const [prompt, setPrompt] = useState('')
   const [frameState, setFrameState] = useState({ running: false })
   const [grabState, setGrabState] = useState({ running: false })
+  const [enhanceState, setEnhanceState] = useState({ running: false })
+  // Snapshot of the prompt before the last enhance, for one-level undo.
+  const [promptBeforeEnhance, setPromptBeforeEnhance] = useState(null)
   const [videoState, setVideoState] = useState({ running: false })
   const [error, setError] = useState(null)
   // Local i2v model picker. Seeded per-row from genSpec.preferredModelId
@@ -99,6 +103,8 @@ function PlaceholderDetailsModal({
     setModelId(seed || DEFAULT_PLACEHOLDER_I2V_MODEL)
     setFrameState({ running: false })
     setGrabState({ running: false })
+    setEnhanceState({ running: false })
+    setPromptBeforeEnhance(null)
     setVideoState({ running: false })
     setError(null)
   }, [isOpen, row?.genSpec?.prompt, row?.note, row?.genSpec?.preferredModelId])
@@ -216,6 +222,41 @@ function PlaceholderDetailsModal({
     patchGenSpec({ selectedFrameId: id })
   }
 
+  // Translate + restructure the prompt for whichever model will run it.
+  // Writes straight into the textarea so the user can still edit or undo;
+  // it is not persisted until the normal prompt-persistence path runs.
+  const enhancePrompt = async () => {
+    if (enhanceState.running) return
+    const original = prompt.trim()
+    if (!original) return
+    setError(null)
+    setEnhanceState({ running: true })
+    try {
+      const enhanced = await enhancePromptForModel({
+        prompt: original,
+        modelId,
+        frameRole,
+      })
+      if (enhanced && enhanced !== original) {
+        setPromptBeforeEnhance(original)
+        setPrompt(enhanced)
+        patchGenSpec({ prompt: enhanced })
+      }
+      setEnhanceState({ running: false })
+    } catch (err) {
+      console.error('[reedit] prompt enhance failed:', err)
+      setError(err?.message || 'Could not enhance the prompt.')
+      setEnhanceState({ running: false })
+    }
+  }
+
+  const undoEnhance = () => {
+    if (promptBeforeEnhance == null) return
+    setPrompt(promptBeforeEnhance)
+    patchGenSpec({ prompt: promptBeforeEnhance })
+    setPromptBeforeEnhance(null)
+  }
+
   const pickFrameRole = (role) => {
     if (!roleSupport.roles.includes(role)) return
     patchGenSpec({ frameRole: role })
@@ -313,9 +354,41 @@ function PlaceholderDetailsModal({
         <div className="flex-1 overflow-auto px-5 py-4 space-y-5">
           {/* Prompt */}
           <div>
-            <label className="block text-[11px] uppercase tracking-wider text-sf-text-muted mb-2">
-              Prompt <span className="text-sf-text-muted/70 normal-case">(used for frame + video generation)</span>
-            </label>
+            <div className="flex items-end justify-between mb-2 gap-3">
+              <label className="block text-[11px] uppercase tracking-wider text-sf-text-muted">
+                Prompt <span className="text-sf-text-muted/70 normal-case">(used for frame + video generation)</span>
+              </label>
+              <div className="flex items-center gap-1.5">
+                {/* One-level undo. Enhancing overwrites what the user
+                    wrote, so there has to be a way back. */}
+                {promptBeforeEnhance != null && !enhanceState.running && (
+                  <button
+                    type="button"
+                    onClick={undoEnhance}
+                    title="Put back what you wrote before enhancing"
+                    className="inline-flex items-center gap-1 px-2 py-1 rounded-md text-[11px] border border-sf-dark-700 bg-sf-dark-900 text-sf-text-muted hover:text-sf-text-primary hover:border-sf-dark-500 transition-colors"
+                  >
+                    <Undo2 className="w-3 h-3" />
+                    Undo
+                  </button>
+                )}
+                <button
+                  type="button"
+                  onClick={enhancePrompt}
+                  disabled={enhanceState.running || !prompt.trim()}
+                  title={`Translate to English and restructure for ${enhancerModelLabel(modelId)} (via Gemini). Write in any language.`}
+                  className={`inline-flex items-center gap-1.5 px-2.5 py-1 rounded-md text-[11px] font-medium transition-colors
+                    ${enhanceState.running || !prompt.trim()
+                      ? 'bg-sf-dark-800 text-sf-text-muted cursor-not-allowed'
+                      : 'border border-violet-500/40 bg-violet-500/10 text-violet-200 hover:bg-violet-500/20'}`}
+                >
+                  {enhanceState.running
+                    ? <Loader2 className="w-3 h-3 animate-spin" />
+                    : <Sparkles className="w-3 h-3" />}
+                  {enhanceState.running ? 'Enhancing…' : 'Enhance prompt'}
+                </button>
+              </div>
+            </div>
             <textarea
               value={prompt}
               onChange={(e) => setPrompt(e.target.value)}
