@@ -709,6 +709,14 @@ function InspectorPanel({ isExpanded, onToggleExpanded }) {
     && !isAlreadyReframed
     && zoomedIn,
   )
+  // Declared here (not near their other reframe/extend usages below)
+  // because handleCommitOutpaint — defined further up this file — reads
+  // them in its dependency array; useCallback/useTimelineStore hooks
+  // must run in the same order every render, so this is the first point
+  // both values are available. Referencing them before this line is a
+  // TDZ crash (Cannot access before initialization).
+  const timelineWidth = useTimelineStore((s) => s.width)
+  const timelineHeight = useTimelineStore((s) => s.height)
   // Live reference to the scene so we can list its optimization stack
   // without re-running the reedit pipeline. Used to show the version
   // toggle under Transform (Original ↔ R01 ↔ R02 …) for comparison.
@@ -851,9 +859,6 @@ function InspectorPanel({ isExpanded, onToggleExpanded }) {
   const extendRunning = extendCommitState.stage
     && extendCommitState.sceneId === sceneIdForReframe
     && !['done', 'error'].includes(extendCommitState.stage)
-
-  const timelineWidth = useTimelineStore((s) => s.width)
-  const timelineHeight = useTimelineStore((s) => s.height)
 
   // Version picker handler. Swaps the on-timeline clip between the
   // original sub-clip (with reframe preview transform re-applied) and
