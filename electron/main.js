@@ -2286,6 +2286,24 @@ const LTX_REMOVE_SUBS_SLOTS = {
   TEXT_ENCODER: '5161:5084',    // LTXAVTextEncoderLoader
   CHECKPOINT: '5161:5085',      // CheckpointLoaderSimple
   IC_LORA: '5161:5087',         // LTXICLoRALoaderModelOnly
+  RESIZE_PASS1: '5161:5089',    // ResizeImageMaskNode — pass-1 working size
+  LATENT_VIDEO: '5161:5093',    // EmptyLTXVLatentVideo — must match pass 1
+  RESIZE_PASS2: '5161:5068',    // ResizeImageMaskNode — pass-2 (2x upscale)
+}
+
+// The template ships with 16:9 working sizes baked in (960×544 pass 1,
+// 1920×1088 pass 2), so anything non-16:9 came back stretched. Derive
+// the pass-1 size from the SOURCE aspect instead: keep roughly the
+// template's pixel budget (960×544 ≈ 522k px — what the author tuned
+// quality/VRAM around) and snap both edges to /32, which LTX's latent
+// space requires. Pass 2 is exactly 2× pass 1, like the template.
+function ltxWorkingSizeForAspect(srcW, srcH) {
+  const aspect = (Number(srcW) > 0 && Number(srcH) > 0) ? srcW / srcH : 16 / 9
+  const budget = 960 * 544
+  const snap = (v) => Math.max(32, Math.round(v / 32) * 32)
+  const h = snap(Math.sqrt(budget / aspect))
+  const w = snap(h * aspect)
+  return { w, h }
 }
 
 // Weight substitutions for LOCAL ComfyUI only.
@@ -2324,6 +2342,7 @@ async function loadLtxRemoveSubsWorkflow() {
 // plus the SaveVideo node id the caller polls /history for.
 async function buildLtxRemoveSubtitlesWorkflow({
   comfyInputName, outputPrefix, seed, prompt, availableLoras, cloud = false,
+  sourceWidth, sourceHeight,
 }) {
   const template = await loadLtxRemoveSubsWorkflow()
   const api = JSON.parse(JSON.stringify(template))
@@ -2350,6 +2369,18 @@ async function buildLtxRemoveSubtitlesWorkflow({
   const finalSeed = Number.isFinite(seed) ? Math.abs(Math.floor(seed)) : Math.floor(Math.random() * 1e15)
   setInput(LTX_REMOVE_SUBS_SLOTS.SEED_A, 'noise_seed', finalSeed)
   setInput(LTX_REMOVE_SUBS_SLOTS.SEED_B, 'noise_seed', finalSeed)
+
+  // Working sizes derived from the source aspect (see
+  // ltxWorkingSizeForAspect) — the template's baked-in 16:9 sizes
+  // stretched every non-16:9 clip. All three dim-bearing nodes have to
+  // agree or the guide latents won't concatenate.
+  const { w: passW, h: passH } = ltxWorkingSizeForAspect(sourceWidth, sourceHeight)
+  setInput(LTX_REMOVE_SUBS_SLOTS.RESIZE_PASS1, 'resize_type.width', passW)
+  setInput(LTX_REMOVE_SUBS_SLOTS.RESIZE_PASS1, 'resize_type.height', passH)
+  setInput(LTX_REMOVE_SUBS_SLOTS.LATENT_VIDEO, 'width', passW)
+  setInput(LTX_REMOVE_SUBS_SLOTS.LATENT_VIDEO, 'height', passH)
+  setInput(LTX_REMOVE_SUBS_SLOTS.RESIZE_PASS2, 'resize_type.width', passW * 2)
+  setInput(LTX_REMOVE_SUBS_SLOTS.RESIZE_PASS2, 'resize_type.height', passH * 2)
 
   // Cloud runs the template as authored (full-precision weights + the
   // real subtitles IC-LoRA, all provisioned there). Only local swaps in
@@ -3160,6 +3191,9 @@ ipcMain.handle('analysis:optimizeFootageLTX', async (event, options) => {
       prompt: promptOverride,
       availableLoras,
       cloud: runningOnCloud,
+      // Drives the working sizes so non-16:9 clips keep their aspect.
+      sourceWidth: meta.width,
+      sourceHeight: meta.height,
     })
   } catch (err) {
     return { success: false, error: `Could not load LTX text-removal workflow: ${err.message}` }
@@ -3219,16 +3253,50 @@ ipcMain.handle('analysis:optimizeFootageLTX', async (event, options) => {
 
   emit('finalizing')
   const finalPath = path.join(projectOptimizedDir, `${sceneId}_${versionTag}.mp4`)
+  const ltxStagePath = path.join(projectOptimizedDir, `${sceneId}_${versionTag}_raw.mp4`)
   try {
     await downloadFromComfy({
       comfyUrl, apiKey,
       filename: outFilename,
       subfolder: outSubfolder,
       type: outType,
-      destPath: finalPath,
+      destPath: ltxStagePath,
     })
   } catch (err) {
     return { success: false, error: `Could not download LTX text-removal output: ${err.message}` }
+  }
+
+  // Snap the render back to the source's EXACT dimensions. The working
+  // sizes are aspect-matched but /32-snapped, so the output can be a
+  // fraction of a percent off and at a different resolution; every
+  // downstream consumer (composite, timeline, export) assumes versions
+  // share the source's dims. Original audio passes through untouched.
+  const outMeta = await probeVideoMeta(ltxStagePath)
+  if (outMeta?.width === meta.width && outMeta?.height === meta.height) {
+    try { await fs.rename(ltxStagePath, finalPath) } catch {
+      await copyFileOverwrite(ltxStagePath, finalPath)
+      try { await fs.unlink(ltxStagePath) } catch (_) { /* ignore */ }
+    }
+  } else {
+    emit('note', { message: `Output ${outMeta?.width || '?'}×${outMeta?.height || '?'} → rescaling to source ${meta.width}×${meta.height}.` })
+    await new Promise((resolve, reject) => {
+      const args = [
+        '-hide_banner', '-nostats',
+        '-i', ltxStagePath,
+        '-vf', `scale=${meta.width}:${meta.height}:flags=lanczos,setsar=1`,
+        '-c:v', 'libx264', '-preset', 'veryfast', '-crf', '18',
+        '-pix_fmt', 'yuv420p',
+        '-c:a', 'aac', '-b:a', '192k',
+        '-movflags', '+faststart',
+        '-y', finalPath,
+      ]
+      const proc = spawn(ffmpegPath, args, { windowsHide: true })
+      let stderr = ''
+      proc.stderr.on('data', (d) => { stderr += d.toString() })
+      proc.on('close', (code) => code === 0 ? resolve() : reject(new Error(`ffmpeg rescale failed (${code}): ${stderr.slice(-300)}`)))
+      proc.on('error', reject)
+    }).catch((err) => ({ success: false, error: err.message }))
+    try { await fs.unlink(ltxStagePath) } catch (_) { /* ignore */ }
   }
 
   const workflowJsonPath = await saveWorkflowAlongsideOutput(finalPath, workflow, {
