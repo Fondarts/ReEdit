@@ -1,7 +1,7 @@
 {
   "name": "comfystudio",
   "version": "0.1.10",
-  "description": "ReEdit \u2014 AI-assisted re-editing of finished commercials (Kissd). Fork of ComfyStudio.",
+  "description": "ReEdit — AI-assisted re-editing of finished commercials (Kissd). Fork of ComfyStudio.",
   "main": "electron/main.js",
   "scripts": {
     "dev": "vite",
@@ -70,13 +70,13 @@
     "postcss": "^8.4.32",
     "tailwindcss": "^3.3.6",
     "vite": "^5.0.8",
-    "vitest": "^4.1.10",
+    "vitest": "^3.2.7",
     "wait-on": "^7.2.0"
   },
   "build": {
     "appId": "com.comfystudio.app",
     "productName": "ComfyStudio",
-    "copyright": "Copyright \u00a9 2024-2026",
+    "copyright": "Copyright © 2024-2026",
     "asarUnpack": [
       "**/node_modules/ffmpeg-static/**",
       "**/node_modules/ffprobe-static/**"
