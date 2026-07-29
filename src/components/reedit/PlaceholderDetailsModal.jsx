@@ -2,8 +2,10 @@ import { useEffect, useState } from 'react'
 import { X, ImagePlus, Loader2, Trash2, Film, CheckCircle2, AlertCircle, Wand2, RefreshCw } from 'lucide-react'
 import {
   generateFrameForPlaceholder, generateFillForPlaceholder,
+  captureSourceFrameForPlaceholder,
   LOCAL_PLACEHOLDER_I2V_MODELS, DEFAULT_PLACEHOLDER_I2V_MODEL,
 } from '../../services/reeditGenerate'
+import SourceFramePicker from './SourceFramePicker'
 import { loadCapabilitySettings } from '../../services/reeditCapabilitySettings'
 import {
   appendVideoVersion, setActiveVideoVersion, removeVideoVersion,
@@ -36,6 +38,33 @@ function buildComfyUrl(filePath, version) {
   return version ? `${base}?v=${encodeURIComponent(version)}` : base
 }
 
+export function formatTc(sec) {
+  if (!Number.isFinite(sec)) return '—'
+  const m = Math.floor(sec / 60)
+  const s = sec - m * 60
+  return `${m}:${s.toFixed(2).padStart(5, '0')}`
+}
+
+// Where to park the scrub playhead when the modal opens. The proposer
+// already picked a reference shot + position for this placeholder, so
+// start there — it's the frame the automatic path would have used, which
+// makes the manual picker a nudge rather than a blind hunt. Mirrors
+// resolveReferenceTcSec in reeditFills.js.
+export function initialScrubTc(row, scenes) {
+  const ref = row?.referenceFrame
+  const scene = ref?.sourceSceneId
+    ? (scenes || []).find((s) => s?.id === ref.sourceSceneId)
+    : null
+  if (!scene) return 0
+  const tcIn = Number(scene.tcIn) || 0
+  const tcOut = Number(scene.tcOut) || tcIn
+  const dur = Math.max(0, tcOut - tcIn)
+  const margin = Math.min(0.1, dur * 0.1)
+  if (ref.framePosition === 'start') return tcIn + margin
+  if (ref.framePosition === 'end') return Math.max(tcIn + margin, tcOut - margin)
+  return tcIn + dur / 2
+}
+
 function PlaceholderDetailsModal({
   isOpen,
   row,
@@ -48,6 +77,7 @@ function PlaceholderDetailsModal({
 }) {
   const [prompt, setPrompt] = useState('')
   const [frameState, setFrameState] = useState({ running: false })
+  const [grabState, setGrabState] = useState({ running: false })
   const [videoState, setVideoState] = useState({ running: false })
   const [error, setError] = useState(null)
   // Local i2v model picker. Seeded per-row from genSpec.preferredModelId
@@ -67,6 +97,7 @@ function PlaceholderDetailsModal({
       .find((v) => LOCAL_PLACEHOLDER_I2V_MODELS.some((m) => m.id === v))
     setModelId(seed || DEFAULT_PLACEHOLDER_I2V_MODEL)
     setFrameState({ running: false })
+    setGrabState({ running: false })
     setVideoState({ running: false })
     setError(null)
   }, [isOpen, row?.genSpec?.prompt, row?.note, row?.genSpec?.preferredModelId])
@@ -81,6 +112,13 @@ function PlaceholderDetailsModal({
   // Video versions (migrated lazily from a legacy single generatedPath).
   const versions = videoVersionList(genSpec)
   const activeVersionId = activeVideoVersionId(genSpec)
+  // Scrub playhead start: a previously grabbed frame's timecode wins, so
+  // reopening the modal lands where the user left off; otherwise the
+  // proposer's chosen reference point.
+  const lastGrabbedTc = [...candidates].reverse().find((c) => Number.isFinite(c?.tcSec))?.tcSec
+  const referenceTcSec = Number.isFinite(lastGrabbedTc)
+    ? lastGrabbedTc
+    : initialScrubTc(row, scenes)
 
   const patchGenSpec = (patch) => {
     onChange?.({ ...genSpec, ...patch })
@@ -136,6 +174,34 @@ function PlaceholderDetailsModal({
       console.error('[reedit] frame generation failed:', err)
       setError(err?.message || 'Frame generation failed.')
       setFrameState({ running: false })
+    }
+  }
+
+  // Pull a frame out of the source video and add it to the same
+  // candidate gallery, so stage 2 treats it exactly like a generated one.
+  const captureSourceFrame = async (tcSec) => {
+    if (grabState.running) return
+    setError(null)
+    setGrabState({ running: true })
+    try {
+      const candidate = await captureSourceFrameForPlaceholder({
+        rowIndex,
+        sourceVideo,
+        tcSec,
+        prompt,
+      })
+      patchGenSpec({
+        frameCandidates: [...candidates, candidate],
+        // A hand-picked frame is almost certainly the one they want to
+        // animate, so select it outright rather than only when empty.
+        selectedFrameId: candidate.id,
+        prompt,
+      })
+      setGrabState({ running: false })
+    } catch (err) {
+      console.error('[reedit] source frame grab failed:', err)
+      setError(err?.message || 'Could not grab that frame.')
+      setGrabState({ running: false })
     }
   }
 
@@ -282,6 +348,22 @@ function PlaceholderDetailsModal({
               </p>
             )}
 
+            {/* Or take the reference straight from the source video. Feeds
+                the same gallery, so stage 2 doesn't care which way the
+                frame arrived. */}
+            <div className="mt-2">
+              <div className="text-[10px] uppercase tracking-wider text-sf-text-muted/80 mb-1.5">
+                or pick a frame from the source video
+              </div>
+              <SourceFramePicker
+                sourceVideo={sourceVideo}
+                scenes={scenes}
+                initialTcSec={referenceTcSec}
+                busy={grabState.running}
+                onCapture={captureSourceFrame}
+              />
+            </div>
+
             {candidates.length > 0 && (
               <div className="flex flex-wrap gap-2">
                 {candidates.map((c) => {
@@ -309,9 +391,9 @@ function PlaceholderDetailsModal({
                           Selected
                         </div>
                       )}
-                      {c.seed != null && (
+                      {(c.seed != null || Number.isFinite(c.tcSec)) && (
                         <div className="absolute bottom-1 left-1 right-1 px-1.5 py-0.5 rounded bg-black/60 text-white/90 text-[9px] font-mono truncate pointer-events-none">
-                          seed {c.seed}
+                          {Number.isFinite(c.tcSec) ? `source @ ${formatTc(c.tcSec)}` : `seed ${c.seed}`}
                         </div>
                       )}
                       <button

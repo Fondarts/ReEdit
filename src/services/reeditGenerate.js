@@ -1159,6 +1159,65 @@ export async function generateFrameForPlaceholder({
   }
 }
 
+/**
+ * Grab a frame straight out of the source video and register it as a
+ * first-frame candidate. Same shape as the generated candidates above,
+ * so the gallery, the selection state and the stage-2 i2v pass all work
+ * on it unchanged.
+ *
+ * Why this exists alongside t2i generation: for a fill that has to cut
+ * against real footage, a frame OF that footage is usually a better
+ * reference than anything a text prompt will invent — it carries the
+ * actual lighting, grade, lens and subject. Reference-driven models
+ * (Seedance especially) key hard on it.
+ *
+ * Extraction runs through the existing ffmpeg `extractThumbnail` IPC at
+ * the source's native width, so the reference isn't a downscaled
+ * thumbnail.
+ */
+export async function captureSourceFrameForPlaceholder({
+  rowIndex,
+  sourceVideo,
+  tcSec,
+  prompt = '',
+}) {
+  if (!sourceVideo?.path) throw new Error('No source video to grab a frame from.')
+  if (!Number.isFinite(tcSec)) throw new Error('Pick a timecode first.')
+
+  const projectDir = useProjectStore.getState().currentProjectHandle
+  if (typeof projectDir !== 'string') {
+    throw new Error('Grabbing a source frame requires the desktop build (project path needed).')
+  }
+
+  const id = `srcframe-${rowIndex + 1}-${Date.now()}`
+  const outputPath = `${projectDir.replace(/\\/g, '/')}/.reedit/frames/${id}.jpg`
+  const width = Number(sourceVideo.width) || 1280
+
+  const res = await window.electronAPI?.extractThumbnail?.({
+    videoPath: sourceVideo.path,
+    tcSec: Math.max(0, tcSec),
+    outputPath,
+    width,
+  })
+  if (!res?.success) {
+    throw new Error(res?.error || 'Could not extract that frame from the source video.')
+  }
+
+  return {
+    id,
+    path: res.path || outputPath,
+    prompt,
+    // No seed — this frame wasn't sampled. `tcSec` is what identifies it,
+    // and the gallery shows that instead.
+    seed: null,
+    tcSec,
+    width,
+    height: Number(sourceVideo.height) || null,
+    model: 'source-frame',
+    createdAt: new Date().toISOString(),
+  }
+}
+
 export async function generateFillForPlaceholder({
   row,
   rowIndex,
