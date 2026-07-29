@@ -1783,9 +1783,15 @@ ipcMain.handle('analysis:detectScenes', async (event, videoPath, options = {}) =
   const minSceneDurSec = Number.isFinite(options.minSceneDurSec) ? options.minSceneDurSec : 0.5
 
   const scriptPath = path.join(__dirname, 'reedit_scene_detect.py')
-  // Windows ships `python` (the py launcher shim); other platforms
-  // typically only expose `python3` as a first-class executable.
-  const pythonCmd = process.platform === 'win32' ? 'python' : 'python3'
+  // Was hardcoded to 'python'/'python3' — inconsistent with the other
+  // Python-spawning handlers (mask generation, stem separation), which
+  // go through resolvePythonExe() and honour a REEDIT_PYTHON override.
+  // On a machine with multiple Python installs, whichever 'python' is
+  // first on PATH for an Electron-launched process isn't guaranteed to
+  // be the one the user installed scenedetect into — this lets them
+  // pin it (e.g. REEDIT_PYTHON="C:\...\Python312\python.exe") without
+  // touching system PATH.
+  const pythonCmd = resolvePythonExe()
   const args = [scriptPath, videoPath, String(threshold), String(minSceneDurSec)]
 
   return await new Promise((resolve) => {
@@ -2165,9 +2171,13 @@ function pickMaskArgsFromHint(hint, graphics) {
 }
 
 function resolvePythonExe() {
-  // Prefer an explicit env override (user can pin to a venv). Fall back
-  // to plain `python` which Windows resolves via the launcher.
-  return process.env.REEDIT_PYTHON || process.env.PYTHON || 'python'
+  // Prefer an explicit env override (user can pin to a specific install
+  // or venv — handy when multiple Pythons are on PATH and only one has
+  // the re-edit deps: scenedetect, opencv, demucs). Windows resolves
+  // plain `python` via the launcher shim; other platforms typically
+  // only expose `python3` as a first-class executable.
+  return process.env.REEDIT_PYTHON || process.env.PYTHON
+    || (process.platform === 'win32' ? 'python' : 'python3')
 }
 
 // Read ComfyUI's `--input-directory` argv by hitting /system_stats.
