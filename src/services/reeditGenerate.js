@@ -41,6 +41,51 @@ export const LOCAL_PLACEHOLDER_I2V_MODELS = [
 ]
 export const DEFAULT_PLACEHOLDER_I2V_MODEL = 'ltx-2.3'
 
+/**
+ * What the selected frame is FOR. Two genuinely different jobs:
+ *
+ *   'first'     — the frame is literally frame 0. The clip starts on it
+ *                 and moves away from there, so composition and framing
+ *                 are locked to what you picked.
+ *   'reference' — the frame guides subject, lighting and grade, but the
+ *                 model composes the shot freely. Better when you want
+ *                 the LOOK of some footage without reproducing its exact
+ *                 framing (the usual case for a grabbed source frame).
+ *
+ * Not every model can do both, and the mode isn't cosmetic — it selects a
+ * different API node. Keep this table as the single source of truth so
+ * the picker can't offer a mode the generator would silently ignore.
+ */
+export const FRAME_ROLES = Object.freeze({ FIRST: 'first', REFERENCE: 'reference' })
+
+export const FRAME_ROLE_LABELS = Object.freeze({
+  first: 'First frame',
+  reference: 'Reference only',
+})
+
+const FRAME_ROLE_SUPPORT = Object.freeze({
+  // Local i2v: the image is conditioned in as frame 0 by construction —
+  // there's no reference-only pathway in these workflows.
+  'ltx-2.3':     { roles: ['first'], default: 'first' },
+  'wan-2.2-14b': { roles: ['first'], default: 'first' },
+  // Seedance 2.0 has a distinct node per mode: ByteDance2ReferenceNode
+  // (reference_images) vs ByteDance2FirstLastFrameNode (first_frame).
+  // Reference is the default because that's the node this path has always
+  // used — switching the default would quietly change existing behaviour.
+  'seedance-2':  { roles: ['reference', 'first'], default: 'reference' },
+})
+
+/** Which roles a model supports, and which one it should start on. */
+export function frameRoleSupport(modelId) {
+  return FRAME_ROLE_SUPPORT[modelId] || { roles: ['first'], default: 'first' }
+}
+
+/** Coerce a stored role to one the model can actually honour. */
+export function resolveFrameRole(modelId, requested) {
+  const { roles, default: fallback } = frameRoleSupport(modelId)
+  return roles.includes(requested) ? requested : fallback
+}
+
 // Map source video dimensions to a Seedance aspect bucket. ByteDance
 // only accepts the canonical buckets; ambiguous shapes default to 16:9.
 function pickSeedanceAspect(sourceVideo) {
@@ -278,6 +323,60 @@ export function modifySeedance2R2vApiWorkflow(workflow, options = {}) {
 
 export function fetchSeedance2R2vWorkflow() {
   return fetchWorkflowJson(SEEDANCE_R2V_WORKFLOW_PATH)
+}
+
+/**
+ * Seedance 2.0 in FIRST-FRAME mode. Different API node from the
+ * reference path — ByteDance2FirstLastFrameNode takes the image on
+ * `first_frame` and starts the clip on it, where
+ * ByteDance2ReferenceNode treats its images as loose guidance.
+ *
+ * Built in JS rather than patched from a bundled template because it's
+ * three nodes and there's no template to snapshot; the dotted `model.*`
+ * keys are the DynamicCombo serialisation the /prompt layer expects (a
+ * nested `model` object fails with "missing required argument: model").
+ * Verified against the live node schema 2026-07.
+ */
+export function buildSeedance2FirstFrameWorkflow({
+  prompt = '',
+  inputImage = '',
+  aspectRatio = '16:9',
+  resolution = '720p',
+  durationSec = SEEDANCE_FIXED_DURATION_SEC,
+  seed,
+  filenamePrefix = 'video/Seedance2_flf',
+} = {}) {
+  return {
+    '1': {
+      class_type: 'LoadImage',
+      inputs: { image: inputImage },
+      _meta: { title: 'First frame' },
+    },
+    '2': {
+      class_type: 'ByteDance2FirstLastFrameNode',
+      inputs: {
+        model: 'Seedance 2.0',
+        'model.prompt': String(prompt).slice(0, 2000),
+        'model.resolution': resolution,
+        'model.ratio': aspectRatio,
+        // Node accepts 4-15 s; the surrounding flow pins fills to the
+        // same fixed length as the reference path so the timeline clip
+        // and version metadata stay consistent between modes.
+        'model.duration': Math.max(4, Math.min(15, Math.round(Number(durationSec) || SEEDANCE_FIXED_DURATION_SEC))),
+        // Fills sit under the cut's own audio bed.
+        'model.generate_audio': false,
+        first_frame: ['1', 0],
+        seed: Number.isFinite(seed) ? Math.abs(Math.trunc(seed)) % 2147483648 : 0,
+        watermark: false,
+      },
+      _meta: { title: 'Seedance 2.0 first-frame' },
+    },
+    '3': {
+      class_type: 'SaveVideo',
+      inputs: { filename_prefix: filenamePrefix, format: 'auto', codec: 'auto', video: ['2', 0] },
+      _meta: { title: 'Save Video' },
+    },
+  }
 }
 
 // WAN 2.2 14B SVI Pro extend workflow. Distinct from the plain WAN
@@ -913,6 +1012,8 @@ export async function prepareWorkflowForPlaceholder({
   let modified
   let fps
   let modelLabel
+  // Recorded on the version so the gallery can say how the frame was used.
+  let frameRole = resolveFrameRole(resolvedModelId, row.genSpec?.frameRole)
   if (resolvedModelId === 'wan-2.2-14b') {
     fps = 16
     modelLabel = 'wan-2.2-14b'
@@ -954,20 +1055,38 @@ export async function prepareWorkflowForPlaceholder({
         + 'requests via API key, not via the browser session.'
       )
     }
-    // ByteDance R2V is hard-locked to 4 s — override the per-row duration
-    // so the version metadata + timeline clip reflect the actual output.
+    // ByteDance pins these fills to 4 s so the version metadata and the
+    // timeline clip reflect the actual output. Both Seedance modes use
+    // the same length, so switching modes can't shift the cut.
     durationSec = SEEDANCE_FIXED_DURATION_SEC
     fps = 24
-    modelLabel = 'seedance-2.0-r2v'
-    const workflow = await fetchSeedance2R2vWorkflow()
-    modified = modifySeedance2R2vApiWorkflow(workflow, {
-      prompt,
-      inputImage: comfyImageName,
-      aspectRatio: pickSeedanceAspect(sourceVideo),
-      resolution: '720p',
-      seed,
-      filenamePrefix,
-    })
+    // Which job the picked frame is doing decides the API node:
+    // first-frame starts the clip on it, reference only takes its look.
+    frameRole = resolveFrameRole(resolvedModelId, row.genSpec?.frameRole)
+    const aspectRatio = pickSeedanceAspect(sourceVideo)
+    if (frameRole === FRAME_ROLES.FIRST) {
+      modelLabel = 'seedance-2.0-first-frame'
+      modified = buildSeedance2FirstFrameWorkflow({
+        prompt,
+        inputImage: comfyImageName,
+        aspectRatio,
+        resolution: '720p',
+        durationSec,
+        seed,
+        filenamePrefix,
+      })
+    } else {
+      modelLabel = 'seedance-2.0-r2v'
+      const workflow = await fetchSeedance2R2vWorkflow()
+      modified = modifySeedance2R2vApiWorkflow(workflow, {
+        prompt,
+        inputImage: comfyImageName,
+        aspectRatio,
+        resolution: '720p',
+        seed,
+        filenamePrefix,
+      })
+    }
   } else {
     fps = DEFAULT_FPS
     modelLabel = 'ltx-2.3-22b-dev-fp8 + distilled lora'
@@ -998,6 +1117,7 @@ export async function prepareWorkflowForPlaceholder({
     refSceneId,
     refSource: selectedFrame ? 'frame-candidate' : 'scene-thumbnail',
     refFrameId: selectedFrame?.id || null,
+    frameRole,
     modelId: resolvedModelId,
     modelLabel,
   }

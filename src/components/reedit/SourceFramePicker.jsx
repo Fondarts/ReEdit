@@ -110,9 +110,10 @@ export default function SourceFramePicker({
 
         <div className="flex-1 min-w-0 space-y-2">
           <p className="text-[11px] text-sf-text-secondary leading-snug">
-            Scrub the source and grab a real frame to use as the reference. Best when the
-            fill has to match footage that&apos;s already in the cut — it carries the actual
-            lighting, grade and subject.
+            Scrub the source and grab a real frame. Best when the fill has to match footage
+            that&apos;s already in the cut — it carries the actual lighting, grade and subject.
+            Whether it becomes the clip&apos;s first frame or only a look reference is set in
+            step 2.
           </p>
 
           {/* Scrub track + shot ticks */}

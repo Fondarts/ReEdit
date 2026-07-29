@@ -4,6 +4,7 @@ import {
   generateFrameForPlaceholder, generateFillForPlaceholder,
   captureSourceFrameForPlaceholder,
   LOCAL_PLACEHOLDER_I2V_MODELS, DEFAULT_PLACEHOLDER_I2V_MODEL,
+  FRAME_ROLE_LABELS, frameRoleSupport, resolveFrameRole,
 } from '../../services/reeditGenerate'
 import SourceFramePicker from './SourceFramePicker'
 import { loadCapabilitySettings } from '../../services/reeditCapabilitySettings'
@@ -120,6 +121,12 @@ function PlaceholderDetailsModal({
     ? lastGrabbedTc
     : initialScrubTc(row, scenes)
 
+  // What the selected frame is for. Coerced against the active model so a
+  // role stored while another model was picked can't leak through as a
+  // mode that model would ignore.
+  const roleSupport = frameRoleSupport(modelId)
+  const frameRole = resolveFrameRole(modelId, genSpec.frameRole)
+
   const patchGenSpec = (patch) => {
     onChange?.({ ...genSpec, ...patch })
   }
@@ -207,6 +214,11 @@ function PlaceholderDetailsModal({
 
   const selectFrame = (id) => {
     patchGenSpec({ selectedFrameId: id })
+  }
+
+  const pickFrameRole = (role) => {
+    if (!roleSupport.roles.includes(role)) return
+    patchGenSpec({ frameRole: role })
   }
 
   const deleteFrame = (id) => {
@@ -416,6 +428,36 @@ function PlaceholderDetailsModal({
             <div className="flex items-center justify-between mb-2">
               <h3 className="text-[11px] uppercase tracking-wider text-sf-text-muted">2 — Video from selected frame</h3>
               <div className="flex items-center gap-2">
+                {/* What the selected frame is FOR. Not cosmetic — it picks
+                    a different API node, so it's only offered on models
+                    that actually implement both modes. */}
+                <div className="inline-flex rounded-md border border-sf-dark-700 overflow-hidden" role="group">
+                  {['first', 'reference'].map((role) => {
+                    const supported = roleSupport.roles.includes(role)
+                    const active = frameRole === role
+                    return (
+                      <button
+                        key={role}
+                        type="button"
+                        onClick={() => pickFrameRole(role)}
+                        disabled={!supported || videoState.running}
+                        title={!supported
+                          ? `${LOCAL_PLACEHOLDER_I2V_MODELS.find((m) => m.id === modelId)?.label || modelId} always starts the clip on the image — pick Seedance 2.0 to use a frame as reference only.`
+                          : role === 'first'
+                            ? 'The clip starts on this exact frame and moves away from it.'
+                            : 'Take the look (subject, lighting, grade) but let the model compose the shot freely.'}
+                        className={`px-2 py-1 text-[11px] transition-colors
+                          ${active
+                            ? 'bg-sf-accent text-white'
+                            : supported
+                              ? 'bg-sf-dark-800 text-sf-text-muted hover:text-sf-text-primary'
+                              : 'bg-sf-dark-900 text-sf-text-muted/40 cursor-not-allowed'}`}
+                      >
+                        {FRAME_ROLE_LABELS[role]}
+                      </button>
+                    )
+                  })}
+                </div>
                 <select
                   value={modelId}
                   onChange={(e) => pickModel(e.target.value)}
