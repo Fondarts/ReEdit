@@ -1,5 +1,14 @@
 """Separate a source video's audio into VO (vocals) + Music (no_vocals)
-stems using Demucs.
+stems.
+
+Two engines, same output contract:
+  - demucs (default): htdemucs two-stem split. Fast, decent, already
+    battle-tested here.
+  - bsroformer: BS-RoFormer via the `audio-separator` package
+    (pip install "audio-separator[gpu]"). State-of-the-art vocal
+    isolation (SDR ~12.9 vs htdemucs' ~8) — noticeably better on hard
+    material like chants, crowd singing and heavily produced mixes
+    where Demucs leaves vocal bleed in the music stem.
 
 Pipeline:
   1. Probe the source with ffprobe to confirm there's an audio stream.
@@ -16,6 +25,7 @@ can parse them and forward progress events to the renderer.
 
 Usage:
   python separate_stems.py --src <video> --out-dir <dir> --out-prefix <basename>
+                            [--engine demucs|bsroformer]
                             [--model htdemucs] [--device auto|cuda|cpu]
                             [--ffmpeg <path>] [--ffprobe <path>]
 """
@@ -26,6 +36,13 @@ import shutil
 import subprocess
 import sys
 import tempfile
+
+# Windows consoles (and Electron pipes) default to cp1252, which chokes
+# on the arrows in our log/help strings. Force UTF-8 like the sibling
+# scripts do.
+for _stream in (sys.stdout, sys.stderr):
+    if hasattr(_stream, "reconfigure"):
+        _stream.reconfigure(encoding="utf-8", errors="replace")
 
 
 def log(stage, message):
@@ -119,6 +136,50 @@ def run_demucs(python_exe, wav_path, tmp_out, model, device):
         raise SystemExit(f"demucs failed (code {code}). Last line: {tail}")
 
 
+# The BS-RoFormer checkpoint used for the alternative engine. viperx's
+# ep_317 build is the community-standard SOTA vocal model; audio-separator
+# downloads it on first use (~600 MB) and caches it under its model dir.
+BSROFORMER_MODEL = "model_bs_roformer_ep_317_sdr_12.9755.ckpt"
+
+
+def run_bsroformer(wav_path, out_dir, prefix, device):
+    try:
+        from audio_separator.separator import Separator  # noqa: WPS433
+    except ImportError:
+        raise SystemExit(
+            "audio-separator is not installed. Run:\n"
+            '  pip install "audio-separator[gpu]"\n'
+            "(or audio-separator[cpu] on machines without CUDA)"
+        )
+
+    log("separating", f"bs-roformer model={BSROFORMER_MODEL} device={device}")
+    # audio-separator picks CUDA automatically when the [gpu] extra +
+    # torch see a device; there's no explicit device kwarg on this API,
+    # so `device` here is informational only.
+    separator = Separator(
+        output_dir=out_dir,
+        output_format="wav",
+        model_file_dir=os.path.join(tempfile.gettempdir(), "reedit_audio_separator_models"),
+    )
+    log("separating", "loading model (first run downloads ~600 MB)")
+    separator.load_model(model_filename=BSROFORMER_MODEL)
+    # custom_output_names writes straight to our final contract paths —
+    # no post-hoc renaming, and re-runs overwrite in place like demucs.
+    outputs = separator.separate(wav_path, custom_output_names={
+        "Vocals": f"{prefix}_vocals",
+        "Instrumental": f"{prefix}_music",
+    })
+    log("separating", f"bs-roformer wrote {len(outputs)} stems")
+    dst_vocals = os.path.join(out_dir, f"{prefix}_vocals.wav")
+    dst_music = os.path.join(out_dir, f"{prefix}_music.wav")
+    if not os.path.exists(dst_vocals) or not os.path.exists(dst_music):
+        raise SystemExit(
+            f"bs-roformer finished but the expected stems are missing "
+            f"(looked for {dst_vocals} and {dst_music}; got: {outputs})"
+        )
+    return dst_vocals, dst_music
+
+
 def find_stems_dir(tmp_out, wav_basename):
     # Demucs writes to <tmp_out>/<model_name>/<basename>/ where
     # model_name is whatever it actually used (e.g. 'htdemucs'). We
@@ -169,6 +230,7 @@ def main():
     p.add_argument("--src", required=True, help="Path to source video.")
     p.add_argument("--out-dir", required=True, help="Directory for final WAV outputs.")
     p.add_argument("--out-prefix", required=True, help="Basename prefix for the two WAVs (e.g. 'scene-022' → scene-022_vocals.wav).")
+    p.add_argument("--engine", default="demucs", choices=["demucs", "bsroformer"], help="Separation engine. demucs = htdemucs (fast, default); bsroformer = BS-RoFormer via audio-separator (best vocal isolation, handles chants/crowd vocals).")
     p.add_argument("--model", default="htdemucs", help="Demucs model name. htdemucs is the default balance of quality/speed; htdemucs_ft is higher quality but ~3x slower.")
     p.add_argument("--device", default="auto", help="'auto' (default), 'cuda', or 'cpu'.")
     p.add_argument("--ffmpeg", default=None, help="Path to ffmpeg binary. Falls back to PATH lookup.")
@@ -196,25 +258,31 @@ def main():
         wav_path = os.path.join(tmp_root, "input.wav")
         extract_audio(args.ffmpeg, args.src, wav_path)
 
-        # 3. Run demucs into another tmp dir so we can find the stem
-        #    files at a predictable path.
-        demucs_out = os.path.join(tmp_root, "demucs_out")
-        os.makedirs(demucs_out, exist_ok=True)
-        run_demucs(sys.executable, wav_path, demucs_out, args.model, device)
-
-        # 4. Move + rename.
-        log("finalizing", "moving stems to project dir")
-        stems_dir = find_stems_dir(demucs_out, os.path.splitext(os.path.basename(wav_path))[0])
-        if not stems_dir:
-            raise SystemExit(f"could not locate demucs output dir under {demucs_out}")
-        dst_vocals, dst_music = move_stems(stems_dir, args.out_dir, args.out_prefix)
+        # 3+4. Separate with the chosen engine. Both paths end with the
+        #    same two files at the same names — the manifest contract
+        #    (and everything downstream: ducking, dubs, VO cloning)
+        #    doesn't know which engine ran.
+        if args.engine == "bsroformer":
+            dst_vocals, dst_music = run_bsroformer(wav_path, args.out_dir, args.out_prefix, device)
+            effective_model = BSROFORMER_MODEL
+        else:
+            demucs_out = os.path.join(tmp_root, "demucs_out")
+            os.makedirs(demucs_out, exist_ok=True)
+            run_demucs(sys.executable, wav_path, demucs_out, args.model, device)
+            log("finalizing", "moving stems to project dir")
+            stems_dir = find_stems_dir(demucs_out, os.path.splitext(os.path.basename(wav_path))[0])
+            if not stems_dir:
+                raise SystemExit(f"could not locate demucs output dir under {demucs_out}")
+            dst_vocals, dst_music = move_stems(stems_dir, args.out_dir, args.out_prefix)
+            effective_model = args.model
 
         # 5. Final manifest line the parent parses to grab the paths.
         #    JSON on a single stdout line keeps the contract tight.
         manifest = {
             "vocalsPath": dst_vocals,
             "musicPath": dst_music,
-            "model": args.model,
+            "engine": args.engine,
+            "model": effective_model,
             "device": device,
         }
         print(json.dumps(manifest), flush=True)

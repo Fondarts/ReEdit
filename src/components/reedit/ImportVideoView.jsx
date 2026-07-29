@@ -353,12 +353,35 @@ const STEM_STAGE_LABEL = {
   done: 'Done',
 }
 
+// Separation engines. Demucs stays the default (fast, proven here);
+// BS-RoFormer (via the audio-separator package) is the option to reach
+// for when Demucs leaves vocal bleed — chants, crowd singing, dense
+// mixes. Slower and downloads a ~600 MB model on first run.
+const STEM_ENGINES = [
+  { id: 'demucs', label: 'Demucs (fast, default)' },
+  { id: 'bsroformer', label: 'BS-RoFormer (best vocal isolation, slower)' },
+]
+const STEM_ENGINE_LS_KEY = 'reedit.stems.engine'
+
 function AudioStemsSection({ sourceVideo, saveProject }) {
   const currentProjectHandle = useProjectStore((s) => s.currentProjectHandle)
   const projectDir = typeof currentProjectHandle === 'string' ? currentProjectHandle : null
 
   const stems = sourceVideo?.stems || null
   const [stage, setStage] = useState(null)
+  // Engine choice persists across projects — it's a machine-level
+  // preference (depends on what's pip-installed), not a project one.
+  const [engine, setEngine] = useState(() => {
+    try {
+      const saved = localStorage.getItem(STEM_ENGINE_LS_KEY)
+      return STEM_ENGINES.some((e) => e.id === saved) ? saved : 'demucs'
+    } catch { return 'demucs' }
+  })
+  const pickEngine = (id) => {
+    if (!STEM_ENGINES.some((e) => e.id === id)) return
+    setEngine(id)
+    try { localStorage.setItem(STEM_ENGINE_LS_KEY, id) } catch { /* ignore */ }
+  }
   const [stageMessage, setStageMessage] = useState('')
   const [error, setError] = useState(null)
 
@@ -390,6 +413,7 @@ function AudioStemsSection({ sourceVideo, saveProject }) {
       const res = await window.electronAPI.separateStems({
         sourceVideoPath: sourceVideo.path,
         projectDir,
+        engine,
       })
       if (!res?.success) {
         setStage('error')
@@ -402,6 +426,7 @@ function AudioStemsSection({ sourceVideo, saveProject }) {
       const nextStems = {
         vocalsPath: res.vocalsPath,
         musicPath: res.musicPath,
+        engine: res.engine || engine,
         model: res.model || 'htdemucs',
         generatedAt: new Date().toISOString(),
       }
@@ -464,20 +489,33 @@ function AudioStemsSection({ sourceVideo, saveProject }) {
         <div className="flex items-center gap-1.5 text-sf-text-secondary uppercase tracking-wider text-[10px]">
           <CheckCircle2 className="w-3 h-3 text-emerald-400" />
           Audio stems ready
-          <span className="normal-case text-sf-text-muted ml-2">· {stems.model || 'htdemucs'}</span>
+          <span className="normal-case text-sf-text-muted ml-2">· {stems.engine === 'bsroformer' ? 'BS-RoFormer' : (stems.model || 'htdemucs')}</span>
         </div>
         <StemRow icon={<Mic className="w-3 h-3" />} label="VO" path={stems.vocalsPath} onReveal={reveal} />
         <StemRow icon={<Music className="w-3 h-3" />} label="Music" path={stems.musicPath} onReveal={reveal} />
-        <button
-          type="button"
-          onClick={runSeparate}
-          disabled={running}
-          className="inline-flex items-center gap-1 text-[10px] text-sf-text-muted hover:text-sf-text-primary mt-1"
-          title="Regenerate the stems (useful if the source audio changed)"
-        >
-          <RotateCcw className="w-3 h-3" />
-          {running ? (STEM_STAGE_LABEL[stage] || stage) : 'Re-run'}
-        </button>
+        <div className="flex items-center gap-2 mt-1">
+          <button
+            type="button"
+            onClick={runSeparate}
+            disabled={running}
+            className="inline-flex items-center gap-1 text-[10px] text-sf-text-muted hover:text-sf-text-primary"
+            title="Regenerate the stems with the selected engine — switch to BS-RoFormer when Demucs left vocals bleeding into the music."
+          >
+            <RotateCcw className="w-3 h-3" />
+            {running ? (STEM_STAGE_LABEL[stage] || stage) : 'Re-run'}
+          </button>
+          <select
+            value={engine}
+            onChange={(e) => pickEngine(e.target.value)}
+            disabled={running}
+            className="text-[10px] bg-sf-dark-900 border border-sf-dark-700 rounded px-1.5 py-0.5 text-sf-text-muted hover:border-sf-dark-500 focus:outline-none focus:border-sf-accent disabled:opacity-50"
+            title="Demucs is the fast default. BS-RoFormer isolates vocals far better on hard material (chants, crowd singing) — needs `pip install audio-separator[gpu]`."
+          >
+            {STEM_ENGINES.map((e) => (
+              <option key={e.id} value={e.id}>{e.label}</option>
+            ))}
+          </select>
+        </div>
       </div>
     )
   }
@@ -497,15 +535,27 @@ function AudioStemsSection({ sourceVideo, saveProject }) {
           )}
         </div>
       ) : (
-        <button
-          type="button"
-          onClick={runSeparate}
-          className="inline-flex items-center gap-1.5 px-2.5 py-1.5 rounded-md text-[11px] border border-sf-dark-700 bg-sf-dark-900 hover:bg-sf-dark-800 text-sf-text-primary hover:border-sf-accent/60 transition-colors"
-          title="Run Demucs locally to split the source audio into VO (vocals) and Music stems."
-        >
-          <Mic className="w-3.5 h-3.5" />
-          Separate stems (VO + Music)
-        </button>
+        <div className="flex items-center gap-2 flex-wrap">
+          <button
+            type="button"
+            onClick={runSeparate}
+            className="inline-flex items-center gap-1.5 px-2.5 py-1.5 rounded-md text-[11px] border border-sf-dark-700 bg-sf-dark-900 hover:bg-sf-dark-800 text-sf-text-primary hover:border-sf-accent/60 transition-colors"
+            title="Split the source audio into VO (vocals) and Music stems with the selected engine."
+          >
+            <Mic className="w-3.5 h-3.5" />
+            Separate stems (VO + Music)
+          </button>
+          <select
+            value={engine}
+            onChange={(e) => pickEngine(e.target.value)}
+            className="text-[10px] bg-sf-dark-900 border border-sf-dark-700 rounded px-1.5 py-1 text-sf-text-muted hover:border-sf-dark-500 focus:outline-none focus:border-sf-accent"
+            title="Demucs is the fast default. BS-RoFormer isolates vocals far better on hard material (chants, crowd singing) — needs `pip install audio-separator[gpu]` and downloads a ~600 MB model on first run."
+          >
+            {STEM_ENGINES.map((e) => (
+              <option key={e.id} value={e.id}>{e.label}</option>
+            ))}
+          </select>
+        </div>
       )}
       {stage === 'error' && error && (
         <div className="flex items-start gap-1.5 text-sf-error">

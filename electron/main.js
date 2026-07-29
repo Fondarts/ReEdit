@@ -5364,7 +5364,7 @@ ipcMain.handle('analysis:synthesizeMusic', async (event, options) => {
 // Import view can show the current stage; the renderer persists the
 // output paths into `sourceVideo.stems`.
 ipcMain.handle('analysis:separateStems', async (event, options) => {
-  const { sourceVideoPath, projectDir, model = 'htdemucs', device = 'auto' } = options || {}
+  const { sourceVideoPath, projectDir, model = 'htdemucs', device = 'auto', engine = 'demucs' } = options || {}
   if (!sourceVideoPath) return { success: false, error: 'sourceVideoPath required.' }
   if (!projectDir) return { success: false, error: 'projectDir required.' }
 
@@ -5399,11 +5399,19 @@ ipcMain.handle('analysis:separateStems', async (event, options) => {
       fs.stat(musicPath).catch(() => null),
       fs.stat(sourceVideoPath).catch(() => null),
     ])
+    // A marker records which engine produced the cached stems — asking
+    // for a different engine must regenerate, or "try BS-RoFormer"
+    // would silently hand back the Demucs result.
+    let cachedEngine = 'demucs'
+    try {
+      cachedEngine = JSON.parse(await fs.readFile(path.join(stemsDir, `${sourceBase}_stems.json`), 'utf8'))?.engine || 'demucs'
+    } catch (_) { /* legacy stems predate the marker: they were demucs */ }
     if (vStat && mStat && srcStat
         && vStat.size > 1024 && mStat.size > 1024
-        && vStat.mtimeMs >= srcStat.mtimeMs && mStat.mtimeMs >= srcStat.mtimeMs) {
-      emit('done', { vocalsPath, musicPath, model, cached: true })
-      return { success: true, vocalsPath, musicPath, model, cached: true, inProjectDir: true }
+        && vStat.mtimeMs >= srcStat.mtimeMs && mStat.mtimeMs >= srcStat.mtimeMs
+        && cachedEngine === engine) {
+      emit('done', { vocalsPath, musicPath, model, engine, cached: true })
+      return { success: true, vocalsPath, musicPath, model, engine, cached: true, inProjectDir: true }
     }
   } catch (_) { /* proceed with regen */ }
 
@@ -5419,6 +5427,7 @@ ipcMain.handle('analysis:separateStems', async (event, options) => {
     '--src', sourceVideoPath,
     '--out-dir', stemsDir,
     '--out-prefix', sourceBase,
+    '--engine', engine,
     '--model', model,
     '--device', device,
   ]
@@ -5449,6 +5458,12 @@ ipcMain.handle('analysis:separateStems', async (event, options) => {
     // `-m` module runner prints it WITHOUT quotes ("No module named
     // demucs") — match both so the friendly hint always wins over a
     // raw traceback dump.
+    if (/audio-separator is not installed/i.test(tail) || /no module named ['"]?audio_separator['"]?/i.test(tail)) {
+      return {
+        success: false,
+        error: 'The BS-RoFormer engine needs the audio-separator package. Run `pip install "audio-separator[gpu]"` in the Python this app uses (py launcher default), then retry — or switch the engine back to Demucs.',
+      }
+    }
     if (/no module named ['"]?demucs['"]?/i.test(tail)) {
       return {
         success: false,
@@ -5486,11 +5501,22 @@ ipcMain.handle('analysis:separateStems', async (event, options) => {
     return { success: false, error: `Manifest points to missing files: ${err.message}` }
   }
 
-  emit('done', { vocalsPath: lastManifest.vocalsPath, musicPath: lastManifest.musicPath, model: lastManifest.model, device: lastManifest.device })
+  // Record which engine produced these stems so the cache check above
+  // can tell an engine switch apart from a plain re-run.
+  try {
+    await fs.writeFile(
+      path.join(stemsDir, `${sourceBase}_stems.json`),
+      JSON.stringify({ engine, model: lastManifest.model, device: lastManifest.device, createdAt: new Date().toISOString() }),
+      'utf8',
+    )
+  } catch (_) { /* marker is best-effort — worst case an engine switch regenerates */ }
+
+  emit('done', { vocalsPath: lastManifest.vocalsPath, musicPath: lastManifest.musicPath, model: lastManifest.model, engine, device: lastManifest.device })
   return {
     success: true,
     vocalsPath: lastManifest.vocalsPath,
     musicPath: lastManifest.musicPath,
+    engine,
     model: lastManifest.model,
     device: lastManifest.device,
     inProjectDir: true,
