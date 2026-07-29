@@ -2392,6 +2392,28 @@ async function buildLtxIcEditWatermarkWorkflow({
   delete api['5131']
   delete api['5132']
 
+  // ── Same class of problem, two more custom-node dependencies from
+  // packs that aren't installed everywhere: node 5128 builds a full
+  // white "edit everything" mask (measure size → solid white image →
+  // repeat over every frame → convert to mask) for VAEEncodeForInpaint.
+  // 'easy imageSize' (ComfyUI-Easy-Use) and 'Image To Mask' (WAS Node
+  // Suite) both have drop-in CORE-node equivalents with an IDENTICAL
+  // input/output slot layout, so a straight class_type swap is safe —
+  // no rewiring needed:
+  //   - 'easy imageSize'  → 'GetImageSize'  (same image input; output
+  //     slots 0/1 are width/height on both, GetImageSize adds a
+  //     batch_size at slot 2 that nothing here consumes)
+  //   - 'Image To Mask'   → 'ImageToMask'   (same image input; the
+  //     'method: intensity' widget becomes 'channel: red' — the source
+  //     image here is solid #FFFFFF from node 5123, so every channel
+  //     reads 1.0 either way)
+  if (api['5128']) api['5128'].class_type = 'GetImageSize'
+  if (api['5125']) {
+    api['5125'].class_type = 'ImageToMask'
+    delete api['5125'].inputs.method
+    api['5125'].inputs.channel = 'red'
+  }
+
   // ── Text encoder. The reference workflow ships pointing at
   // gemma_3_12B_it_fp8_e4m3fn.safetensors — most installs (ours
   // included) have the fp8_scaled variant from Comfy-Org's mirror,
