@@ -5381,13 +5381,17 @@ ipcMain.handle('analysis:separateStems', async (event, options) => {
 
   if (!runRes.success) {
     const tail = (runRes.stderr || '').slice(-400)
-    // Common case: user hasn't installed demucs yet. The stderr will
-    // typically contain "No module named 'demucs'" — surface that as
-    // an actionable hint rather than dumping the whole traceback.
-    if (/no module named ['"]demucs['"]/i.test(tail)) {
+    // Common case: user hasn't installed demucs yet (or the Python that
+    // ran it isn't the one it was pip-installed into — see
+    // resolvePythonExe's REEDIT_PYTHON override). The stderr contains
+    // "No module named 'demucs'" for a plain ImportError, but Python's
+    // `-m` module runner prints it WITHOUT quotes ("No module named
+    // demucs") — match both so the friendly hint always wins over a
+    // raw traceback dump.
+    if (/no module named ['"]?demucs['"]?/i.test(tail)) {
       return {
         success: false,
-        error: "Demucs is not installed. Run `pip install demucs` in the Python environment you're using for this project, then try again.",
+        error: "Demucs is not installed for the Python interpreter this app is using. Run `pip install demucs` there, or point REEDIT_PYTHON at an interpreter that has it (Settings → not yet exposed there; set the env var before launching). If you normally work inside another Python venv, launch the app from a shell without that venv activated.",
       }
     }
     if (/no audio stream/i.test(tail)) {
