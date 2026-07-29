@@ -171,7 +171,7 @@
         "39",
         0
       ],
-      "batch_size": 97
+      "batch_size": 1
     },
     "_meta": {
       "title": "LTXVEmptyLatentAudio",
@@ -606,7 +606,7 @@
         "41",
         1
       ],
-      "batch_size": 121
+      "batch_size": 1
     },
     "_meta": {
       "title": "EmptyLTXVLatentVideo",

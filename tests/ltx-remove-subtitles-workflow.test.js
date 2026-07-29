@@ -106,4 +106,34 @@ describe('bundled LTX text-removal workflow', () => {
     const savers = Object.values(graph).filter((n) => /^Save(Video|Image|Animated)/.test(n.class_type))
     expect(savers).toHaveLength(1)
   })
+
+  it('keeps batch_size at 1 on the latent nodes', () => {
+    // Regression guard. ComfyUI's widgets_values array reserves a slot for
+    // every widget-backed input INCLUDING ones currently driven by a link,
+    // so a flattener that skips linked inputs without advancing its index
+    // shifts all later widgets onto the wrong value. That shipped once:
+    // EmptyLTXVLatentVideo is [960, 544, 121, 1] over
+    // width/height/length/batch_size with `length` linked, so batch_size
+    // silently became 121 (the frame count) and LTXAddVideoICLoRAGuide
+    // blew up on a tensor-size mismatch at execution time on the worker.
+    const latentNodes = Object.entries(graph)
+      .filter(([, n]) => /EmptyLTXV|LTXVEmptyLatent/.test(n.class_type))
+    expect(latentNodes.length).toBeGreaterThan(0)
+    for (const [id, node] of latentNodes) {
+      expect(node.inputs.batch_size, `${id} (${node.class_type}) batch_size`).toBe(1)
+    }
+  })
+
+  it('derives frame counts from the source video, not a baked-in constant', () => {
+    // The template computes LTX's valid 8k+1 frame length from the clip's
+    // own frame count; if that link were replaced by a literal, every
+    // scene would render at the template author's length.
+    const lengthDriven = Object.values(graph)
+      .filter((n) => /EmptyLTXV|LTXVEmptyLatent/.test(n.class_type))
+      .map((n) => n.inputs.length ?? n.inputs.frames_number)
+    expect(lengthDriven.length).toBeGreaterThan(0)
+    for (const value of lengthDriven) {
+      expect(Array.isArray(value), 'frame length must come from a link').toBe(true)
+    }
+  })
 })

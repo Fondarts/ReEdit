@@ -177,6 +177,19 @@ function walk(graph, prefix, boundaryInputs) {
 
     ;(node.inputs || []).forEach((inp, slotIdx) => {
       if (!inp?.name) return
+
+      // widgets_values is positional over EVERY widget-backed input, and
+      // it keeps the slot even when that input is currently driven by a
+      // link. So claim this input's index BEFORE deciding whether a link
+      // wins — skipping it without advancing shifts every later widget
+      // onto the wrong value. (EmptyLTXVLatentVideo is the canary:
+      // [960, 544, 121, 1] over width/height/length/batch_size with
+      // `length` linked would otherwise assign batch_size = 121.)
+      const isWidget = Boolean(inp.widget) || inp.type === 'COMBO' || inp.type === 'STRING'
+        || inp.type === 'INT' || inp.type === 'FLOAT' || inp.type === 'BOOLEAN'
+        || inp.type === 'IMAGEUPLOAD'
+      const myWidgetIdx = isWidget ? widgetIdx++ : -1
+
       const linked = incoming.get(`${node.id}/${slotIdx}`)
       if (linked) {
         const src = resolveSource(node.id, slotIdx)
@@ -185,13 +198,14 @@ function walk(graph, prefix, boundaryInputs) {
           resolveCount++
           return
         }
+        // Link that resolved to nothing (e.g. it came from a bypassed
+        // node with no compatible input): fall through to the widget
+        // value, which is the sane default ComfyUI would show.
       }
-      // Widget-backed value.
-      if (inp.widget || inp.type === 'COMBO' || inp.type === 'STRING' || inp.type === 'INT'
-          || inp.type === 'FLOAT' || inp.type === 'BOOLEAN' || inp.type === 'IMAGEUPLOAD') {
-        if (wvObj && inp.name in wvObj) { inputs[inp.name] = wvObj[inp.name]; return }
-        if (wv && widgetIdx < wv.length) { inputs[inp.name] = wv[widgetIdx]; widgetIdx++ }
-      }
+
+      if (!isWidget) return
+      if (wvObj && inp.name in wvObj) { inputs[inp.name] = wvObj[inp.name]; return }
+      if (wv && myWidgetIdx >= 0 && myWidgetIdx < wv.length) inputs[inp.name] = wv[myWidgetIdx]
     })
 
     flat.set(key(node.id), {
