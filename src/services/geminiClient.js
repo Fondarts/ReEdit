@@ -377,9 +377,9 @@ export { INLINE_BYTE_LIMIT }
 // Embedding 2 is preview-only as of March 2026 — kept separate because
 // it's only used by the embedding calls, never by chatCompletion.
 export const GEMINI_MODELS = [
-  { id: 'gemini-3.6-flash', label: 'Gemini 3.6 Flash', blurb: 'Default. Released Jul 2026. Same reasoning as 3.5 Flash but ~17% fewer output tokens and ~2x faster — an efficiency upgrade, not a smarts upgrade. Native video, 1M ctx. $1.50/M in, $7.50/M out.' },
-  { id: 'gemini-3.5-flash-lite', label: 'Gemini 3.5 Flash-Lite', blurb: 'Cheapest current-gen model. Released alongside 3.6 Flash (Jul 2026). Use when latency + cost matter more than reasoning depth.' },
-  { id: 'gemini-3.5-flash', label: 'Gemini 3.5 Flash', blurb: 'Previous default (May 2026 I/O). Kept for projects pinned to 3.5 — same reasoning as 3.6 Flash, just slower/pricier on output.' },
+  { id: 'gemini-3.5-flash', label: 'Gemini 3.5 Flash', blurb: 'Default. Released May 2026 at I/O — beats 3.1 Pro on agentic + coding. Native video, 1M ctx. $1.50/M in, $9/M out.' },
+  { id: 'gemini-3.6-flash', label: 'Gemini 3.6 Flash (experimental)', blurb: 'Released Jul 2026, claimed to match 3.5 Flash reasoning at ~17% fewer output tokens. NOT defaulted here: a real request against this project\'s API key returned "400 Request contains an invalid argument" on 2026-07-29 — cause not yet identified (bad model id for this API surface? unsupported param?). Try at your own risk; fall back to 3.5 Flash if it 400s for you too.' },
+  { id: 'gemini-3.5-flash-lite', label: 'Gemini 3.5 Flash-Lite', blurb: 'Cheapest current-gen model. Released alongside 3.6 Flash (Jul 2026) — same caveat: unverified against the live API.' },
   { id: 'gemini-3.1-flash-lite', label: 'Gemini 3.1 Flash Lite', blurb: 'Older cheap tier. Kept for fallback.' },
   { id: 'gemini-3-flash-preview', label: 'Gemini 3 Flash (preview)', blurb: 'Older 3.x flash preview, kept for fallback if 3.6/3.5 are unstable on your project.' },
   { id: 'gemini-3-pro', label: 'Gemini 3 Pro', blurb: 'Strongest reasoning in the 3.x line so far. Requires project access.' },

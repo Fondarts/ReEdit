@@ -61,9 +61,9 @@ export default function LlmSettingsSection() {
 
   const backend = settings?.backend || LLM_BACKENDS.LM_STUDIO
   const anthropicModel = settings?.anthropicModel || ANTHROPIC_MODELS[0].id
-  const geminiAnalysisModel  = settings?.geminiAnalysisModel || settings?.geminiModel || 'gemini-3.6-flash'
-  const geminiProposalModel  = settings?.geminiProposalModel || 'gemini-3.6-flash'
-  const geminiReviewModel    = settings?.geminiReviewModel    || settings?.geminiAnalysisModel || 'gemini-3.6-flash'
+  const geminiAnalysisModel  = settings?.geminiAnalysisModel || settings?.geminiModel || 'gemini-3.5-flash'
+  const geminiProposalModel  = settings?.geminiProposalModel || 'gemini-3.5-flash'
+  const geminiReviewModel    = settings?.geminiReviewModel    || settings?.geminiAnalysisModel || 'gemini-3.5-flash'
   const geminiEmbeddingModel = settings?.geminiEmbeddingModel || GEMINI_EMBEDDING_MODELS[GEMINI_EMBEDDING_MODELS.length - 1].id
   const geminiSendSourceVideo = Boolean(settings?.geminiSendSourceVideo)
 
