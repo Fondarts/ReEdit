@@ -29,6 +29,7 @@ import comfyui, { modifyZImageTurboWorkflow } from './comfyui'
 import useProjectStore from '../stores/projectStore'
 import { getLocalComfyHttpBaseSync, getActiveHttpBaseSync } from './localComfyConnection'
 import { loadCapabilitySettings } from './reeditCapabilitySettings'
+import { fillPromptForRow } from './reeditFills'
 
 // Local i2v models supported by the placeholder-details modal. Subset of
 // I2V_MODEL_OPTIONS — only models that take a single REFERENCE FRAME
@@ -1000,7 +1001,11 @@ export async function prepareWorkflowForPlaceholder({
   let durationSec = Math.max(1, Math.round(rawDuration))
   const width = sourceVideo?.width || 1080
   const height = sourceVideo?.height || 1920
-  const prompt = [row.note || 'cinematic shot', extraPrompt].filter(Boolean).join(' — ')
+  // Was `row.note` — which meant the VIDEO pass silently ignored the
+  // prompt the user typed (or enhanced) in the modal and generated from
+  // the proposer's original note instead, while the FRAME pass used the
+  // edited one. Both go through the shared resolver now.
+  const prompt = [fillPromptForRow(row) || 'cinematic shot', extraPrompt].filter(Boolean).join(' — ')
   const seed = Math.floor(Math.random() * 1e12)
   const filenamePrefix = `reedit/row-${String(rowIndex + 1).padStart(3, '0')}`
 
@@ -1222,7 +1227,7 @@ export async function generateFrameForPlaceholder({
   if (!res.ok) throw new Error(`Could not load frame workflow (${res.status}).`)
   const workflow = await res.json()
 
-  const prompt = (promptOverride || row.note || 'cinematic shot').trim()
+  const prompt = (promptOverride || fillPromptForRow(row) || 'cinematic shot').trim()
   const width = sourceVideo?.width || 1024
   const height = sourceVideo?.height || 1024
   // Explicit random seed per call. The modifier's destructuring

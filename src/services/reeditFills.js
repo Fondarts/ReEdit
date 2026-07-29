@@ -23,13 +23,23 @@ import useProjectStore from '../stores/projectStore'
 import { getActiveComfyIpcContext } from './localComfyConnection'
 import { appendFillVersion } from './placeholderVersions'
 
-// The generation prompt for a placeholder fill: the user's per-row
-// override (`fillPrompt`, set from the prompt modal) wins, else the
-// proposer's note. Kept in one place so the bulk + single-row paths
-// always agree on what was sent to the model.
+// The generation prompt for a placeholder fill. THE one resolver — every
+// generation path (bulk cloud fills, single-row cloud fill, local frame
+// gen, local video gen) must go through it, or a prompt the user edited
+// in one surface gets silently ignored by another.
+//
+// Two editing surfaces write to different fields, for historical reasons:
+//   - Advanced mode's PlaceholderDetailsModal → `genSpec.prompt`
+//     (this is also where "Enhance prompt" writes)
+//   - Auto/Simple mode's FillDetailsModal      → `fillPrompt`
+// Either counts as a deliberate override and beats the proposer's note.
+// When both exist we take genSpec.prompt: it's the surface with the
+// enhancer, so it's the more likely to hold a hand-tuned prompt. Rows
+// normally only ever see one of the two modes.
 export function fillPromptForRow(row) {
-  const override = typeof row?.fillPrompt === 'string' ? row.fillPrompt.trim() : ''
-  return override || row?.note || ''
+  const fromGenSpec = typeof row?.genSpec?.prompt === 'string' ? row.genSpec.prompt.trim() : ''
+  const fromRow = typeof row?.fillPrompt === 'string' ? row.fillPrompt.trim() : ''
+  return fromGenSpec || fromRow || row?.note || ''
 }
 
 // Catalogue of Comfy Cloud i2v models we know how to invoke. Each
