@@ -2244,256 +2244,133 @@ const {
 const { getAdapter, listAdapters } = require('./comfy/adapters')
 
 // ============================================
-// LTX 2.3 IC-Edit watermark removal workflow loader
+// LTX 2.3 subtitle / text removal workflow
 // ============================================
 //
-// Loads the joyfox/LTX2.3-ICEdit-Insight reference workflow (UI format)
-// from disk and turns it into the prompt-API format that ComfyUI's
-// /prompt endpoint expects. The workflow is checked into the repo at
-// reedit/workflows/LTX-2.3-ICLORA-edit-official.json — when the user
-// updates the workflow there, the next run picks up the changes
-// automatically (we cache parsed JSON until the file mtime changes).
+// Loads the official comfy.org template "Remove Subtitles from Video —
+// LTX 2.3 LoRA" (https://comfy.org/workflows/1785e38f230a-1785e38f230a/),
+// pre-flattened to prompt-API format and committed at
+// workflows/optimize_ltx23_remove_subtitles_api.json.
 //
-// Conversion rules:
-//   - Each node's `inputs[]` is walked in order. If an input has a
-//     `link`, the value becomes `[srcNodeId, srcSlot]`. If an input has
-//     `widget: {name}`, the value is pulled from `widgets_values` —
-//     positionally when the latter is an array, or by name when it's an
-//     object (VHS_* nodes use the object shape).
-//   - `Seed (rgthree)` doesn't declare any inputs in the UI JSON; we
-//     synthesise `{seed: <int>}` so the downstream RandomNoise node has
-//     something to read.
-//   - Nodes with `mode: 4` (muted/bypass in ComfyUI UI) are skipped.
+// Why the bundled file is pre-flattened: that template keeps its real
+// graph inside `definitions.subgraphs`, which /prompt can't take and a
+// runtime converter would have to expand (boundary links, bypass
+// pass-through, two link encodings). scripts/flatten-comfy-subgraphs.mjs
+// does that once, offline, and also prunes the template's side-by-side
+// "comparison video" branch so we only render the clean output. Re-run it
+// to pick up a newer version of the template:
 //
-// Patches applied for our use case:
-//   - text encoder swap (we ship the fp8_scaled gemma, not the
-//     fp8_e4m3fn the workflow author shipped with).
-//   - IC-LoRA filename swap (the author's v2 file isn't published; we
-//     point at the public `*-general.safetensors`).
-//   - Wire 5097 (SageAttention) to the WATERMARK IC-LoRA (5133) and
-//     5097/2483 to the watermark prompt (5131) instead of the upscale
-//     prompt (5132). The reference workflow ships configured for
-//     upscale; this flips it to watermark removal.
-//   - The video filename uploaded for this scene, a random seed, and a
-//     project-scoped output filename prefix.
+//   node scripts/flatten-comfy-subgraphs.mjs <downloaded.json> \
+//     workflows/optimize_ltx23_remove_subtitles_api.json --keep-output 5159
+//
+// This replaced the joyfox/LTX2.3-ICEdit-Insight workflow shipped before,
+// which depended on five custom-node packs not installed here (rgthree,
+// ComfyRoll, Easy-Use, WAS, Essentials) and had to be patched node by node
+// to submit at all. The official template needs only ComfyUI-LTXVideo and
+// KJNodes.
+//
+// Nodes are located by `_meta.origId` (their pre-renumbering path) rather
+// than by renumbered integer id, so regenerating the JSON can't silently
+// repoint a patch at the wrong node.
+const LTX_REMOVE_SUBS_WORKFLOW_PATH = path.resolve(__dirname, '..', 'workflows', 'optimize_ltx23_remove_subtitles_api.json')
+let _ltxRemoveSubsCache = { mtimeMs: 0, json: null }
 
-const LTX_IC_EDIT_WORKFLOW_PATH = path.resolve(__dirname, '..', 'workflows', 'LTX-2.3-ICLORA-edit-official.json')
-let _ltxIcEditCache = { mtimeMs: 0, json: null }
+// origId → what the app patches on it.
+const LTX_REMOVE_SUBS_SLOTS = {
+  LOAD_VIDEO: '5160',           // LoadVideo.file ← uploaded clip
+  SAVE_VIDEO: '5159',           // SaveVideo.filename_prefix
+  POSITIVE_PROMPT: '5161:5091', // CLIPTextEncode.text ← what to remove
+  NEGATIVE_PROMPT: '5161:5057',
+  SEED_A: '5161:5058',          // RandomNoise.noise_seed (pass 1)
+  SEED_B: '5161:5078',          // RandomNoise.noise_seed (pass 2)
+  TEXT_ENCODER: '5161:5084',    // LTXAVTextEncoderLoader
+  CHECKPOINT: '5161:5085',      // CheckpointLoaderSimple
+  IC_LORA: '5161:5087',         // LTXICLoRALoaderModelOnly
+}
 
-async function loadLtxIcEditWorkflowJson() {
+// The template ships pointing at full-precision weights. Substitute the
+// quantised local variants: a 22B model in bf16 does not fit a 12 GB card,
+// and these are the files this project actually has on disk.
+const LTX_LOCAL_WEIGHTS = {
+  ckpt: 'ltx-2.3-22b-dev-fp8.safetensors',
+  textEncoder: 'gemma_3_12B_it_fp8_scaled.safetensors',
+  // The template's own subtitles IC-LoRA isn't downloaded here; the
+  // watermark-removal LoRA from the same family is, and it's trained on
+  // the same task (removing text / overlay occlusions). Prefer the
+  // subtitles file if ComfyUI reports having it.
+  icLoraPreferred: 'ltx2.3-train/ltx2.3-ic-subtitles-remove-general.safetensors',
+  icLoraFallback: 'ltx2.3-train/ltx2.3-ic-watermark-remove-general.safetensors',
+}
+
+async function loadLtxRemoveSubsWorkflow() {
   let stat
-  try { stat = await fs.stat(LTX_IC_EDIT_WORKFLOW_PATH) } catch (err) {
-    throw new Error(`LTX IC-Edit workflow JSON missing at ${LTX_IC_EDIT_WORKFLOW_PATH}. Re-clone the repo or restore it from workflows/LTX-2.3-ICLORA-edit-official.json.`)
+  try { stat = await fs.stat(LTX_REMOVE_SUBS_WORKFLOW_PATH) } catch {
+    throw new Error(`LTX subtitle-removal workflow JSON missing at ${LTX_REMOVE_SUBS_WORKFLOW_PATH}. Regenerate it with scripts/flatten-comfy-subgraphs.mjs (see the comment above this loader).`)
   }
-  if (_ltxIcEditCache.json && _ltxIcEditCache.mtimeMs === stat.mtimeMs) {
-    return _ltxIcEditCache.json
+  if (_ltxRemoveSubsCache.json && _ltxRemoveSubsCache.mtimeMs === stat.mtimeMs) {
+    return _ltxRemoveSubsCache.json
   }
-  const raw = await fs.readFile(LTX_IC_EDIT_WORKFLOW_PATH, 'utf-8')
-  const json = JSON.parse(raw)
-  _ltxIcEditCache = { mtimeMs: stat.mtimeMs, json }
+  const json = JSON.parse(await fs.readFile(LTX_REMOVE_SUBS_WORKFLOW_PATH, 'utf-8'))
+  _ltxRemoveSubsCache = { mtimeMs: stat.mtimeMs, json }
   return json
 }
 
-function convertUiWorkflowToApi(uiJson) {
-  // Build linkId → [srcNodeId, srcSlot] map. ComfyUI link format:
-  //   [linkId, srcNode, srcSlot, dstNode, dstSlot, type]
-  const linkMap = {}
-  for (const link of uiJson.links || []) {
-    if (!Array.isArray(link) || link.length < 3) continue
-    linkMap[link[0]] = [String(link[1]), Number(link[2])]
-  }
-
-  const api = {}
-  for (const node of uiJson.nodes || []) {
-    if (!node || typeof node.id === 'undefined') continue
-    if (node.mode === 4 || node.mode === 2) continue  // muted / bypassed
-    const nid = String(node.id)
-    const inputsObj = {}
-    const wv = node.widgets_values
-    const wvIsArray = Array.isArray(wv)
-    const wvIsObject = wv !== null && typeof wv === 'object' && !wvIsArray
-    let widgetIdx = 0
-    for (const inp of (node.inputs || [])) {
-      if (!inp?.name) continue
-      const name = inp.name
-      if (inp.link != null) {
-        const src = linkMap[inp.link]
-        if (src) inputsObj[name] = src
-        continue
-      }
-      // Widget input — pull from widgets_values.
-      if (inp.widget) {
-        if (wvIsObject) {
-          if (name in wv) inputsObj[name] = wv[name]
-        } else if (wvIsArray) {
-          if (widgetIdx < wv.length) {
-            inputsObj[name] = wv[widgetIdx]
-            widgetIdx += 1
-          }
-        }
-      }
-    }
-    api[nid] = {
-      class_type: node.type,
-      inputs: inputsObj,
-      _meta: { title: node.title || node.type },
-    }
-  }
-
-  // ── Special-case fixups for nodes the converter can't handle from
-  // schema alone:
-  //
-  // `Seed (rgthree)` has no inputs[] entries in the UI JSON but its
-  // first widgets_values element is the seed (-1 = random in rgthree's
-  // convention). The /prompt API needs an explicit `seed` input.
-  for (const node of uiJson.nodes || []) {
-    if (node?.type !== 'Seed (rgthree)') continue
-    const nid = String(node.id)
-    if (!api[nid]) continue
-    const wv = Array.isArray(node.widgets_values) ? node.widgets_values : []
-    const seed = Number.isFinite(Number(wv[0])) && Number(wv[0]) >= 0
-      ? Number(wv[0])
-      : Math.floor(Math.random() * 1e15)
-    api[nid].inputs = { seed }
-  }
-
-  return api
-}
-
-// Build the API-format LTX 2.3 IC-Edit watermark removal workflow with
-// the per-scene knobs patched in. Caller passes the filename already
-// uploaded to Comfy + the desired output prefix; we return the workflow
-// object plus the metadata the caller needs to find the saved video in
-// /history (the VHS_VideoCombine node id, the filename prefix, etc.).
-async function buildLtxIcEditWatermarkWorkflow({
-  comfyInputName, outputPrefix, seed, fps,
+// Build the per-scene LTX text-removal workflow. Returns the API graph
+// plus the SaveVideo node id the caller polls /history for.
+async function buildLtxRemoveSubtitlesWorkflow({
+  comfyInputName, outputPrefix, seed, prompt, availableLoras,
 }) {
-  const uiJson = await loadLtxIcEditWorkflowJson()
-  const api = convertUiWorkflowToApi(uiJson)
+  const template = await loadLtxRemoveSubsWorkflow()
+  const api = JSON.parse(JSON.stringify(template))
 
-  // ── Bake the watermark-removal prompt as a literal string instead of
-  // wiring it through node 5131 ("CR Prompt Text", from the ComfyRoll
-  // Custom Nodes pack). Two problems with keeping that node in the API
-  // graph: (1) most installs — ours included — don't have ComfyRoll,
-  // so ComfyUI rejects the whole /prompt submit with "unsupported node
-  // type 'CR Prompt Text'" (VALIDATION_ERROR, no partial fallback);
-  // (2) CR Prompt Text declares its text as a WIDGET, not a formal
-  // input slot (its UI-JSON `inputs: []`), so convertUiWorkflowToApi's
-  // generic positional/by-name widget mapping never populates
-  // `inputs.text` for it anyway — even with the pack installed, the
-  // node would submit with an empty prompt. Pull the author's default
-  // straight out of the UI JSON's widgets_values and delete both
-  // CR Prompt Text nodes (5131 = watermark-removal prompt, 5132 =
-  // upscale-mode prompt, unused here) so ComfyUI never has to
-  // instantiate the unsupported type.
-  const ltxIcEditDefaultPromptNode = (uiJson.nodes || []).find((n) => n.id === 5131)
-  const ltxIcEditDefaultPrompt = String(ltxIcEditDefaultPromptNode?.widgets_values?.[0] || '')
-    || 'Remove the watermark and any platform overlay from this video; restore a clean, natural original image. Keep subject, scene, action, camera movement, timing and overall style identical — only remove the watermark and repair the affected detail.'
-  delete api['5131']
-  delete api['5132']
-
-  // ── Same class of problem, two more custom-node dependencies from
-  // packs that aren't installed everywhere: node 5128 builds a full
-  // white "edit everything" mask (measure size → solid white image →
-  // repeat over every frame → convert to mask) for VAEEncodeForInpaint.
-  // 'easy imageSize' (ComfyUI-Easy-Use) and 'Image To Mask' (WAS Node
-  // Suite) both have drop-in CORE-node equivalents with an IDENTICAL
-  // input/output slot layout, so a straight class_type swap is safe —
-  // no rewiring needed:
-  //   - 'easy imageSize'  → 'GetImageSize'  (same image input; output
-  //     slots 0/1 are width/height on both, GetImageSize adds a
-  //     batch_size at slot 2 that nothing here consumes)
-  //   - 'Image To Mask'   → 'ImageToMask'   (same image input; the
-  //     'method: intensity' widget becomes 'channel: red' — the source
-  //     image here is solid #FFFFFF from node 5123, so every channel
-  //     reads 1.0 either way)
-  if (api['5128']) api['5128'].class_type = 'GetImageSize'
-  if (api['5125']) {
-    api['5125'].class_type = 'ImageToMask'
-    delete api['5125'].inputs.method
-    api['5125'].inputs.channel = 'red'
+  const byOrig = new Map()
+  for (const [id, node] of Object.entries(api)) {
+    const orig = node?._meta?.origId
+    if (orig) byOrig.set(String(orig), { id, node })
+  }
+  const at = (origId) => byOrig.get(origId) || null
+  const setInput = (origId, key, value) => {
+    const hit = at(origId)
+    if (hit?.node?.inputs) hit.node.inputs[key] = value
+    return Boolean(hit)
   }
 
-  // ── Same story for two pure-plumbing custom nodes. Neither does model
-  // work — they just carry a number — so replacing them with literals is
-  // always valid and drops two more pack dependencies:
-  //
-  //   5104 'Seed (rgthree)' → feeds RandomNoise.noise_seed. We already
-  //   compute `finalSeed` below, so inline it and delete the node.
-  //   (convertUiWorkflowToApi has a generic Seed-rgthree fixup that
-  //   populates its `seed` input — useful if the pack IS installed, but
-  //   it can't help when ComfyUI refuses to instantiate the type at all.)
-  //
-  //   5100 'SimpleMath+' (ComfyUI Essentials) → expression is literally
-  //   'a', an identity passthrough of the source clip's frame rate from
-  //   VHS_VideoInfoLoaded, split into an INT for LTXVEmptyLatentAudio
-  //   and a FLOAT for VHS_VideoCombine. The caller already probed the
-  //   real fps, so write it straight into both consumers. Mirrors the
-  //   fix the outpaint workflow's _meta documents for its CM_FloatToInt
-  //   cast.
-  const finalSeed = Number.isFinite(seed) ? seed : Math.floor(Math.random() * 1e15)
-  delete api['5104']
-  if (api['5106']?.inputs) api['5106'].inputs.noise_seed = finalSeed
-
-  const safeFps = Number.isFinite(fps) && fps > 0 ? fps : 24
-  delete api['5100']
-  if (api['3980']?.inputs) api['3980'].inputs.frame_rate = Math.round(safeFps)
-  if (api['5069']?.inputs) api['5069'].inputs.frame_rate = safeFps
-
-  // ── Text encoder. The reference workflow ships pointing at
-  // gemma_3_12B_it_fp8_e4m3fn.safetensors — most installs (ours
-  // included) have the fp8_scaled variant from Comfy-Org's mirror,
-  // which is the same model with scale factors pre-applied. Drop in the
-  // scaled version when available; fall back to whatever the workflow
-  // shipped with otherwise (user can fix the dropdown manually).
-  if (api['5023']) {
-    api['5023'].inputs.text_encoder = 'gemma_3_12B_it_fp8_scaled.safetensors'
+  if (!setInput(LTX_REMOVE_SUBS_SLOTS.LOAD_VIDEO, 'file', comfyInputName)) {
+    throw new Error('Bundled LTX text-removal workflow has no LoadVideo node — regenerate it.')
+  }
+  if (!setInput(LTX_REMOVE_SUBS_SLOTS.SAVE_VIDEO, 'filename_prefix', outputPrefix)) {
+    throw new Error('Bundled LTX text-removal workflow has no SaveVideo node — regenerate it.')
   }
 
-  // ── IC-LoRA filename. Author's v2 file isn't on HF (only the
-  // *-general.safetensors is published). Point both IC-LoRA loaders at
-  // files we actually have. 5011 is the upscale variant — we don't use
-  // it for watermark removal but the workflow keeps it loaded, so we
-  // hand it the watermark file too (loaded but bypassed downstream).
-  if (api['5133']) {
-    api['5133'].inputs.lora_name = 'ltx2.3-train/ltx2.3-ic-watermark-remove-general.safetensors'
-  }
-  if (api['5011']) {
-    api['5011'].inputs.lora_name = 'ltx2.3-train/ltx2.3-ic-watermark-remove-general.safetensors'
-    // Set strength to 0 so it loads but contributes nothing — saves us
-    // from rewiring the SageAttention node downstream.
-    api['5011'].inputs.strength_model = 0
-  }
+  const finalSeed = Number.isFinite(seed) ? Math.abs(Math.floor(seed)) : Math.floor(Math.random() * 1e15)
+  setInput(LTX_REMOVE_SUBS_SLOTS.SEED_A, 'noise_seed', finalSeed)
+  setInput(LTX_REMOVE_SUBS_SLOTS.SEED_B, 'noise_seed', finalSeed)
 
-  // ── Switch the workflow from "upscale" mode to "watermark removal".
-  // The reference JSON has 5097 (SageAttention) reading from 5011
-  // (upscale LoRA) and 2483 (positive CLIP encode) reading from 5132
-  // (upscale prompt). Repoint both to the watermark side.
-  if (api['5097']) api['5097'].inputs.model = ['5133', 0]
-  if (api['2483']) api['2483'].inputs.text = ltxIcEditDefaultPrompt
+  setInput(LTX_REMOVE_SUBS_SLOTS.CHECKPOINT, 'ckpt_name', LTX_LOCAL_WEIGHTS.ckpt)
+  setInput(LTX_REMOVE_SUBS_SLOTS.TEXT_ENCODER, 'ckpt_name', LTX_LOCAL_WEIGHTS.ckpt)
+  setInput(LTX_REMOVE_SUBS_SLOTS.TEXT_ENCODER, 'text_encoder', LTX_LOCAL_WEIGHTS.textEncoder)
 
-  // ── Source video. VHS_LoadVideo accepts the filename of an asset
-  // that was already uploaded to ComfyUI's input/ dir via /upload/image.
-  if (api['5099']) {
-    api['5099'].inputs.video = comfyInputName
-    // Drop the default 121-frame cap so we process the whole clip.
-    // (Caller can clamp upstream if VRAM is the issue.)
-    api['5099'].inputs.frame_load_cap = 0
+  const loras = Array.isArray(availableLoras) ? availableLoras : []
+  const icLora = loras.includes(LTX_LOCAL_WEIGHTS.icLoraPreferred)
+    ? LTX_LOCAL_WEIGHTS.icLoraPreferred
+    : LTX_LOCAL_WEIGHTS.icLoraFallback
+  setInput(LTX_REMOVE_SUBS_SLOTS.IC_LORA, 'lora_name', icLora)
+
+  // Prompt describing what to strip. The template default already says
+  // "remove subtitles, captions and related text occlusions"; a
+  // scene-specific hint from the analyzer overrides it.
+  if (prompt && String(prompt).trim()) {
+    setInput(LTX_REMOVE_SUBS_SLOTS.POSITIVE_PROMPT, 'text', String(prompt).trim())
   }
 
-  // ── Output prefix on VHS_VideoCombine.
-  if (api['5069']) {
-    api['5069'].inputs.filename_prefix = outputPrefix
-    // Force-disable the videopreview's cos_url cache the author left
-    // pointing at a remote bucket — we want the local /view route.
-    delete api['5069'].inputs.videopreview
+  const saveHit = at(LTX_REMOVE_SUBS_SLOTS.SAVE_VIDEO)
+  return {
+    workflow: api,
+    saveNodeId: saveHit?.id || null,
+    filenamePrefix: outputPrefix,
+    seed: finalSeed,
+    icLora,
   }
-
-  // (Seed + frame-rate literals are patched near the top, alongside the
-  // other custom-node removals, since deleting those nodes has to happen
-  // before anything else reads the graph.)
-
-  return { workflow: api, saveNodeId: '5069', filenamePrefix: outputPrefix, seed: finalSeed }
 }
 
 function buildWanVaceWorkflow({
@@ -3240,30 +3117,39 @@ ipcMain.handle('analysis:optimizeFootageLTX', async (event, options) => {
   // huge flat output dir on the Comfy side.
   const outputPrefix = `reedit_optimized/${sanitizeForFilename(path.basename(projectDir))}_${sanitizeForFilename(sceneId)}_${versionTag}`
   const seed = Math.floor(Math.random() * 1e12)
+
+  // Ask ComfyUI which LoRAs it has so the builder can prefer the
+  // task-specific subtitles IC-LoRA when it's been downloaded and fall
+  // back to the watermark-removal sibling otherwise. Best-effort: if the
+  // probe fails we just take the fallback.
+  let availableLoras = []
+  try {
+    const oiRes = await net.fetch(`${comfyUrl}${_comfyApiPath(comfyUrl, '/object_info/LoraLoaderModelOnly')}`, {
+      headers: _comfyHeaders(comfyUrl, apiKey),
+    })
+    if (oiRes.ok) {
+      const oi = await oiRes.json()
+      const opts = oi?.LoraLoaderModelOnly?.input?.required?.lora_name?.[0]
+      if (Array.isArray(opts)) availableLoras = opts.map(String)
+    }
+  } catch (_) { /* offline / cloud without the route — use the fallback */ }
+
   let built
   try {
-    built = await buildLtxIcEditWatermarkWorkflow({
+    built = await buildLtxRemoveSubtitlesWorkflow({
       comfyInputName,
       outputPrefix,
       seed,
-      // Real source fps — replaces the SimpleMath+ passthrough node the
-      // reference workflow used to derive it (see the builder).
-      fps: meta.fps,
+      // The analyzer's removal hint, when it produced one, steers what
+      // gets erased; otherwise the template's own prompt applies.
+      prompt: promptOverride,
+      availableLoras,
     })
   } catch (err) {
-    return { success: false, error: `Could not load LTX IC-Edit workflow: ${err.message}` }
+    return { success: false, error: `Could not load LTX text-removal workflow: ${err.message}` }
   }
   const { workflow } = built
-
-  // Optional prompt override. The reference workflow ships with the
-  // joyfox-authored Chinese prompt baked into node 2483's CLIPTextEncode
-  // (see buildLtxIcEditWatermarkWorkflow — node 5131 that used to hold
-  // it was removed, it's an uninstalled ComfyRoll custom node); English
-  // usually works fine for the ad-cleanup use case, but expose it so
-  // the user can swap if a particular shot needs steering.
-  if (promptOverride && typeof promptOverride === 'string' && workflow['2483']?.inputs) {
-    workflow['2483'].inputs.text = promptOverride
-  }
+  emit('note', { message: `Using IC-LoRA ${built.icLora}.` })
 
   emit('queued_submit')
   let promptId
@@ -3287,11 +3173,12 @@ ipcMain.handle('analysis:optimizeFootageLTX', async (event, options) => {
       onTick: () => emit('running', { elapsedSec: Math.round((Date.now() - startedAt) / 1000) }),
     })
   } catch (err) {
-    return { success: false, error: err?.message || `Comfy LTX IC-Edit job ${promptId} failed.` }
+    return { success: false, error: err?.message || `Comfy LTX text-removal job ${promptId} failed.` }
   }
 
-  // VHS_VideoCombine writes to `gifs[]` in the history (filename ends
-  // in `.mp4` despite the key name — Comfy historical baggage).
+  // SaveVideo reports under `videos[]` (older VHS_VideoCombine graphs
+  // used `gifs[]` despite emitting .mp4 — Comfy historical baggage), so
+  // accept every shape and filter by extension.
   const VIDEO_RE = /\.(mp4|mov|webm|mkv|gif|avi|m4v)$/i
   let outFilename = null, outSubfolder = '', outType = 'output'
   for (const out of Object.values(result.outputs || {})) {
@@ -3311,7 +3198,7 @@ ipcMain.handle('analysis:optimizeFootageLTX', async (event, options) => {
     if (outFilename) break
   }
   if (!outFilename) {
-    return { success: false, error: 'LTX IC-Edit workflow completed but no video output was reported in history.' }
+    return { success: false, error: 'LTX text-removal workflow completed but no video output was reported in history.' }
   }
 
   emit('finalizing')
@@ -3325,11 +3212,11 @@ ipcMain.handle('analysis:optimizeFootageLTX', async (event, options) => {
       destPath: finalPath,
     })
   } catch (err) {
-    return { success: false, error: `Could not download LTX IC-Edit output: ${err.message}` }
+    return { success: false, error: `Could not download LTX text-removal output: ${err.message}` }
   }
 
   const workflowJsonPath = await saveWorkflowAlongsideOutput(finalPath, workflow, {
-    kind: 'optimize-ltx-ic-edit', version: versionTag, sceneId, modelId: 'ltx-2.3-ic-edit-watermark', promptId, seed,
+    kind: 'optimize-ltx-remove-text', version: versionTag, sceneId, modelId: built.icLora, promptId, seed,
   })
   emit('done', { promptId, outputPath: finalPath, version: versionTag, workflowJsonPath })
   return {
@@ -3339,7 +3226,7 @@ ipcMain.handle('analysis:optimizeFootageLTX', async (event, options) => {
     workflowJsonPath,
     inProjectDir: true,
     version: versionTag,
-    modelId: 'ltx-2.3-ic-edit-watermark',
+    modelId: built.icLora,
     engine: 'ltx-ic-edit',
   }
 })
