@@ -2371,6 +2371,27 @@ async function buildLtxIcEditWatermarkWorkflow({
   const uiJson = await loadLtxIcEditWorkflowJson()
   const api = convertUiWorkflowToApi(uiJson)
 
+  // ── Bake the watermark-removal prompt as a literal string instead of
+  // wiring it through node 5131 ("CR Prompt Text", from the ComfyRoll
+  // Custom Nodes pack). Two problems with keeping that node in the API
+  // graph: (1) most installs — ours included — don't have ComfyRoll,
+  // so ComfyUI rejects the whole /prompt submit with "unsupported node
+  // type 'CR Prompt Text'" (VALIDATION_ERROR, no partial fallback);
+  // (2) CR Prompt Text declares its text as a WIDGET, not a formal
+  // input slot (its UI-JSON `inputs: []`), so convertUiWorkflowToApi's
+  // generic positional/by-name widget mapping never populates
+  // `inputs.text` for it anyway — even with the pack installed, the
+  // node would submit with an empty prompt. Pull the author's default
+  // straight out of the UI JSON's widgets_values and delete both
+  // CR Prompt Text nodes (5131 = watermark-removal prompt, 5132 =
+  // upscale-mode prompt, unused here) so ComfyUI never has to
+  // instantiate the unsupported type.
+  const ltxIcEditDefaultPromptNode = (uiJson.nodes || []).find((n) => n.id === 5131)
+  const ltxIcEditDefaultPrompt = String(ltxIcEditDefaultPromptNode?.widgets_values?.[0] || '')
+    || 'Remove the watermark and any platform overlay from this video; restore a clean, natural original image. Keep subject, scene, action, camera movement, timing and overall style identical — only remove the watermark and repair the affected detail.'
+  delete api['5131']
+  delete api['5132']
+
   // ── Text encoder. The reference workflow ships pointing at
   // gemma_3_12B_it_fp8_e4m3fn.safetensors — most installs (ours
   // included) have the fp8_scaled variant from Comfy-Org's mirror,
@@ -2401,7 +2422,7 @@ async function buildLtxIcEditWatermarkWorkflow({
   // (upscale LoRA) and 2483 (positive CLIP encode) reading from 5132
   // (upscale prompt). Repoint both to the watermark side.
   if (api['5097']) api['5097'].inputs.model = ['5133', 0]
-  if (api['2483']) api['2483'].inputs.text = ['5131', 0]
+  if (api['2483']) api['2483'].inputs.text = ltxIcEditDefaultPrompt
 
   // ── Source video. VHS_LoadVideo accepts the filename of an asset
   // that was already uploaded to ComfyUI's input/ dir via /upload/image.
@@ -3193,11 +3214,13 @@ ipcMain.handle('analysis:optimizeFootageLTX', async (event, options) => {
   const { workflow } = built
 
   // Optional prompt override. The reference workflow ships with the
-  // joyfox-authored Chinese prompt; English usually works fine for the
-  // ad-cleanup use case, but expose it so the user can swap if a
-  // particular shot needs steering.
-  if (promptOverride && typeof promptOverride === 'string' && workflow['5131']?.inputs) {
-    workflow['5131'].inputs.text = promptOverride
+  // joyfox-authored Chinese prompt baked into node 2483's CLIPTextEncode
+  // (see buildLtxIcEditWatermarkWorkflow — node 5131 that used to hold
+  // it was removed, it's an uninstalled ComfyRoll custom node); English
+  // usually works fine for the ad-cleanup use case, but expose it so
+  // the user can swap if a particular shot needs steering.
+  if (promptOverride && typeof promptOverride === 'string' && workflow['2483']?.inputs) {
+    workflow['2483'].inputs.text = promptOverride
   }
 
   emit('queued_submit')
