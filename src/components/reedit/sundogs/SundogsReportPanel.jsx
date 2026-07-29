@@ -11,7 +11,7 @@
 import { useRef } from 'react'
 import { FileText, Loader2, AlertCircle, Upload } from 'lucide-react'
 import SundogsDimensionSection, { DeltaPill } from './SundogsDimensionSection'
-import { SUNDOGS_TECHNIQUES } from '../../../services/reeditSundogsReport'
+import { SUNDOGS_TECHNIQUES, SUNDOGS_REPORT_ACCEPT } from '../../../services/reeditSundogsReport'
 
 export default function SundogsReportPanel({
   report,
@@ -22,7 +22,7 @@ export default function SundogsReportPanel({
   // other than the original "client sent us a Sundogs PDF" flow
   // (e.g. importing a Sundogs PDF of the new cut in the Review tab).
   title = 'Sundogs report',
-  emptyCopy = "Import the Sundogs Video Performance Analysis PDF the client sent. We'll feed its scores directly to the proposal LLM. Requires Gemini API key.",
+  emptyCopy = "Import the Sundogs Video Performance Analysis the client sent — PDF, a screenshot/image of it, or a text/markdown export. We'll feed its scores directly to the proposal LLM. Requires Gemini API key.",
 }) {
   const inputRef = useRef(null)
   const has = Boolean(report)
@@ -46,7 +46,7 @@ export default function SundogsReportPanel({
       <input
         ref={inputRef}
         type="file"
-        accept="application/pdf,.pdf"
+        accept={SUNDOGS_REPORT_ACCEPT}
         className="hidden"
         onChange={handleChange}
       />

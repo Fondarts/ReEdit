@@ -30,6 +30,64 @@ import {
   chatCompletion, LLM_BACKENDS, LLM_TASKS, loadLlmSettings,
 } from './reeditLlmClient'
 
+// What the report importer accepts. Originally PDF-only, but the report
+// doesn't always arrive as one — clients send screenshots of the deck, an
+// exported image, or a pasted text/markdown summary. Every type here is
+// one Gemini takes as an `inlineData` part, so widening the picker needs
+// no new parsing code.
+//
+// Deliberately NOT included: .docx / .xlsx / .pptx. Gemini has no inline
+// support for Office XML containers — accepting them would fail deep in
+// the API with an opaque error instead of at the picker. Export to PDF
+// first (the error message says so).
+export const SUNDOGS_REPORT_MIME_TYPES = Object.freeze([
+  'application/pdf',
+  'image/png',
+  'image/jpeg',
+  'image/webp',
+  'image/heic',
+  'image/heif',
+  'text/plain',
+  'text/markdown',
+  'text/csv',
+  'text/html',
+])
+
+// Extension → mime, for the `filePath` branch (Electron reads the file
+// itself, so nothing reports a MIME type for us) and as a fallback when a
+// browser hands us `application/octet-stream`.
+const EXT_TO_MIME = Object.freeze({
+  pdf: 'application/pdf',
+  png: 'image/png',
+  jpg: 'image/jpeg',
+  jpeg: 'image/jpeg',
+  webp: 'image/webp',
+  heic: 'image/heic',
+  heif: 'image/heif',
+  txt: 'text/plain',
+  text: 'text/plain',
+  md: 'text/markdown',
+  markdown: 'text/markdown',
+  csv: 'text/csv',
+  html: 'text/html',
+  htm: 'text/html',
+  json: 'text/plain',
+})
+
+// `accept` attribute for the file input — MIME types plus explicit
+// extensions, since Windows doesn't always map .md/.heic to a MIME.
+export const SUNDOGS_REPORT_ACCEPT = [
+  ...SUNDOGS_REPORT_MIME_TYPES,
+  ...Object.keys(EXT_TO_MIME).map((e) => `.${e}`),
+].join(',')
+
+export function mimeForReportFilename(name) {
+  const ext = String(name || '').toLowerCase().split('.').pop()
+  return EXT_TO_MIME[ext] || null
+}
+
+const HUMAN_ACCEPTED = 'PDF, PNG/JPEG/WebP/HEIC image, or TXT/Markdown/CSV/HTML text'
+
 // Canonical technique IDs per dimension. Mirror the Sundogs PDF
 // taxonomy. The LLM normalises whatever the PDF happens to call them
 // (case, spacing, "Has CTA" vs "has_cta") into these IDs.
@@ -337,34 +395,48 @@ export async function parseSundogsReport({ file, filePath } = {}) {
   // unhelpfully or silently drop the PDF.
   const settings = loadLlmSettings()
   if (!settings.geminiApiKey) {
-    throw new Error('Sundogs PDF import requires a Gemini API key (set it in LLM Settings). The other backends do not accept PDFs the same way.')
+    throw new Error('Sundogs report import requires a Gemini API key (set it in LLM Settings). The other backends do not accept document/image attachments the same way.')
   }
+  const sourceName = file?.name || filePath || ''
   let dataUrl
   if (file) {
     dataUrl = await fileToDataUrl(file)
   } else {
-    const res = await window.electronAPI?.readFileAsDataUrl?.(filePath, 'application/pdf')
+    // Electron reads the bytes, so we have to tell it the MIME ourselves.
+    const guessed = mimeForReportFilename(filePath) || 'application/pdf'
+    const res = await window.electronAPI?.readFileAsDataUrl?.(filePath, guessed)
     if (!res?.success || !res.dataUrl) {
-      throw new Error(`Could not read PDF at ${filePath}: ${res?.error || 'unknown error'}`)
+      throw new Error(`Could not read the report at ${filePath}: ${res?.error || 'unknown error'}`)
     }
     dataUrl = res.dataUrl
   }
-  if (!/^data:application\/pdf;base64,/.test(dataUrl)) {
-    // FileReader keeps the upload's reported MIME — Sundogs files come
-    // out as application/pdf. Anything else is almost certainly the
-    // wrong file (an image, a Word doc, etc.).
-    throw new Error('The attached file does not look like a PDF. Pick a Sundogs Video Performance Analysis PDF.')
+
+  // Resolve the effective MIME. Browsers sometimes report nothing (or
+  // application/octet-stream) for .md / .heic, so fall back to the
+  // extension before rejecting.
+  const declaredMime = (dataUrl.match(/^data:([^;]+);base64,/) || [])[1] || ''
+  const effectiveMime = SUNDOGS_REPORT_MIME_TYPES.includes(declaredMime)
+    ? declaredMime
+    : mimeForReportFilename(sourceName)
+  if (!effectiveMime) {
+    const shown = declaredMime || 'unknown type'
+    const officeHint = /\.(docx?|xlsx?|pptx?)$/i.test(sourceName)
+      ? ' Word/Excel/PowerPoint files can\'t be read directly — export to PDF first.'
+      : ''
+    throw new Error(`Can't read "${sourceName || shown}" as a Sundogs report. Supported: ${HUMAN_ACCEPTED}.${officeHint}`)
   }
   // We compose the user message as a content array: prompt text + the
-  // PDF as a Gemini-native inlineData part. Going through the dispatcher
-  // (with backendOverride=GEMINI) keeps this code unaware of any
-  // Gemini-specific knobs the rest of the app uses.
+  // report as a Gemini-native inlineData part. Going through the
+  // dispatcher (with backendOverride=GEMINI) keeps this code unaware of
+  // any Gemini-specific knobs the rest of the app uses. `effectiveMime`
+  // (not the data URL's own header) is sent, so an extension-recovered
+  // type reaches the API instead of application/octet-stream.
   const userPromptText = buildUserPrompt()
-  const [, mime, base64] = dataUrl.match(/^data:([^;]+);base64,(.+)$/) || []
-  const pdfPart = { inlineData: { mimeType: mime || 'application/pdf', data: base64 || '' } }
+  const [, , base64] = dataUrl.match(/^data:([^;]+);base64,(.+)$/) || []
+  const reportPart = { inlineData: { mimeType: effectiveMime, data: base64 || '' } }
   const messages = [
     { role: 'system', content: buildSystemPrompt() },
-    { role: 'user', content: [{ type: 'text', text: userPromptText }, pdfPart] },
+    { role: 'user', content: [{ type: 'text', text: userPromptText }, reportPart] },
   ]
   const response = await chatCompletion({
     messages,
@@ -376,7 +448,7 @@ export async function parseSundogsReport({ file, filePath } = {}) {
   const rawText = response?.choices?.[0]?.message?.content || ''
   const parsed = extractJson(rawText)
   if (!parsed) {
-    throw new Error('Gemini did not return valid JSON for the report. Re-import the PDF.')
+    throw new Error('Gemini did not return valid JSON for the report. Re-import the file.')
   }
   const validated = validateReport(parsed)
   return {

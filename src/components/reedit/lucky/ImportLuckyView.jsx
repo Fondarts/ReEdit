@@ -25,7 +25,7 @@ import useProjectStore from '../../../stores/projectStore'
 import useTimelineStore from '../../../stores/timelineStore'
 import useLuckyRunStore from '../../../stores/luckyRunStore'
 import { resetReeditProjectState } from '../../../services/reeditEdlToTimeline'
-import { parseSundogsReport } from '../../../services/reeditSundogsReport'
+import { parseSundogsReport, SUNDOGS_REPORT_ACCEPT } from '../../../services/reeditSundogsReport'
 import { isGeminiReportMode } from '../../../services/reeditReportSource'
 import { runLuckyPipeline, LUCKY_STEPS } from '../../../services/reeditLuckyPipeline'
 
@@ -648,12 +648,13 @@ export default function ImportLuckyView({ onProposalReady }) {
             </div>
           </div>
         ) : (
-        /* Sundogs PDF gate — required to enable the Go button. */
+        /* Sundogs report gate — required to enable the Go button.
+           Accepts PDF, an image of the report, or a text export. */
         <div className="bg-sf-dark-900/40 border border-sf-dark-700 rounded-lg overflow-hidden">
           <input
             ref={pdfInputRef}
             type="file"
-            accept="application/pdf,.pdf"
+            accept={SUNDOGS_REPORT_ACCEPT}
             className="hidden"
             onChange={handlePdfChange}
           />

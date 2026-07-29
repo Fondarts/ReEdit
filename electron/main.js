@@ -2288,16 +2288,21 @@ const LTX_REMOVE_SUBS_SLOTS = {
   IC_LORA: '5161:5087',         // LTXICLoRALoaderModelOnly
 }
 
-// The template ships pointing at full-precision weights. Substitute the
-// quantised local variants: a 22B model in bf16 does not fit a 12 GB card,
-// and these are the files this project actually has on disk.
+// Weight substitutions for LOCAL ComfyUI only.
+//
+// On Comfy Cloud the template's own weights are the right ones and are
+// already provisioned, so we submit it untouched — swapping in quantised
+// filenames there would point at models that may not exist on the worker
+// and costs quality for no reason. Only a local 12 GB card needs these:
+// the 22B checkpoint in bf16 doesn't fit, and these are the files this
+// machine actually has.
 const LTX_LOCAL_WEIGHTS = {
   ckpt: 'ltx-2.3-22b-dev-fp8.safetensors',
   textEncoder: 'gemma_3_12B_it_fp8_scaled.safetensors',
-  // The template's own subtitles IC-LoRA isn't downloaded here; the
+  // The template's subtitles IC-LoRA isn't downloaded locally; the
   // watermark-removal LoRA from the same family is, and it's trained on
   // the same task (removing text / overlay occlusions). Prefer the
-  // subtitles file if ComfyUI reports having it.
+  // subtitles file whenever ComfyUI reports having it.
   icLoraPreferred: 'ltx2.3-train/ltx2.3-ic-subtitles-remove-general.safetensors',
   icLoraFallback: 'ltx2.3-train/ltx2.3-ic-watermark-remove-general.safetensors',
 }
@@ -2318,7 +2323,7 @@ async function loadLtxRemoveSubsWorkflow() {
 // Build the per-scene LTX text-removal workflow. Returns the API graph
 // plus the SaveVideo node id the caller polls /history for.
 async function buildLtxRemoveSubtitlesWorkflow({
-  comfyInputName, outputPrefix, seed, prompt, availableLoras,
+  comfyInputName, outputPrefix, seed, prompt, availableLoras, cloud = false,
 }) {
   const template = await loadLtxRemoveSubsWorkflow()
   const api = JSON.parse(JSON.stringify(template))
@@ -2346,15 +2351,21 @@ async function buildLtxRemoveSubtitlesWorkflow({
   setInput(LTX_REMOVE_SUBS_SLOTS.SEED_A, 'noise_seed', finalSeed)
   setInput(LTX_REMOVE_SUBS_SLOTS.SEED_B, 'noise_seed', finalSeed)
 
-  setInput(LTX_REMOVE_SUBS_SLOTS.CHECKPOINT, 'ckpt_name', LTX_LOCAL_WEIGHTS.ckpt)
-  setInput(LTX_REMOVE_SUBS_SLOTS.TEXT_ENCODER, 'ckpt_name', LTX_LOCAL_WEIGHTS.ckpt)
-  setInput(LTX_REMOVE_SUBS_SLOTS.TEXT_ENCODER, 'text_encoder', LTX_LOCAL_WEIGHTS.textEncoder)
+  // Cloud runs the template as authored (full-precision weights + the
+  // real subtitles IC-LoRA, all provisioned there). Only local swaps in
+  // the quantised files this machine has.
+  let icLora = at(LTX_REMOVE_SUBS_SLOTS.IC_LORA)?.node?.inputs?.lora_name || null
+  if (!cloud) {
+    setInput(LTX_REMOVE_SUBS_SLOTS.CHECKPOINT, 'ckpt_name', LTX_LOCAL_WEIGHTS.ckpt)
+    setInput(LTX_REMOVE_SUBS_SLOTS.TEXT_ENCODER, 'ckpt_name', LTX_LOCAL_WEIGHTS.ckpt)
+    setInput(LTX_REMOVE_SUBS_SLOTS.TEXT_ENCODER, 'text_encoder', LTX_LOCAL_WEIGHTS.textEncoder)
 
-  const loras = Array.isArray(availableLoras) ? availableLoras : []
-  const icLora = loras.includes(LTX_LOCAL_WEIGHTS.icLoraPreferred)
-    ? LTX_LOCAL_WEIGHTS.icLoraPreferred
-    : LTX_LOCAL_WEIGHTS.icLoraFallback
-  setInput(LTX_REMOVE_SUBS_SLOTS.IC_LORA, 'lora_name', icLora)
+    const loras = Array.isArray(availableLoras) ? availableLoras : []
+    icLora = loras.includes(LTX_LOCAL_WEIGHTS.icLoraPreferred)
+      ? LTX_LOCAL_WEIGHTS.icLoraPreferred
+      : LTX_LOCAL_WEIGHTS.icLoraFallback
+    setInput(LTX_REMOVE_SUBS_SLOTS.IC_LORA, 'lora_name', icLora)
+  }
 
   // Prompt describing what to strip. The template default already says
   // "remove subtitles, captions and related text occlusions"; a
@@ -3118,21 +3129,25 @@ ipcMain.handle('analysis:optimizeFootageLTX', async (event, options) => {
   const outputPrefix = `reedit_optimized/${sanitizeForFilename(path.basename(projectDir))}_${sanitizeForFilename(sceneId)}_${versionTag}`
   const seed = Math.floor(Math.random() * 1e12)
 
-  // Ask ComfyUI which LoRAs it has so the builder can prefer the
-  // task-specific subtitles IC-LoRA when it's been downloaded and fall
-  // back to the watermark-removal sibling otherwise. Best-effort: if the
-  // probe fails we just take the fallback.
+  // On Cloud the template's own weights are correct and provisioned, so
+  // there's nothing to resolve. Locally, ask ComfyUI which LoRAs it has so
+  // the builder can prefer the task-specific subtitles IC-LoRA when it's
+  // been downloaded and fall back to the watermark-removal sibling
+  // otherwise. Best-effort — if the probe fails we take the fallback.
+  const runningOnCloud = isCloudComfyUrl(comfyUrl)
   let availableLoras = []
-  try {
-    const oiRes = await net.fetch(`${comfyUrl}${_comfyApiPath(comfyUrl, '/object_info/LoraLoaderModelOnly')}`, {
-      headers: _comfyHeaders(comfyUrl, apiKey),
-    })
-    if (oiRes.ok) {
-      const oi = await oiRes.json()
-      const opts = oi?.LoraLoaderModelOnly?.input?.required?.lora_name?.[0]
-      if (Array.isArray(opts)) availableLoras = opts.map(String)
-    }
-  } catch (_) { /* offline / cloud without the route — use the fallback */ }
+  if (!runningOnCloud) {
+    try {
+      const oiRes = await net.fetch(`${comfyUrl}${_comfyApiPath(comfyUrl, '/object_info/LoraLoaderModelOnly')}`, {
+        headers: _comfyHeaders(comfyUrl, apiKey),
+      })
+      if (oiRes.ok) {
+        const oi = await oiRes.json()
+        const opts = oi?.LoraLoaderModelOnly?.input?.required?.lora_name?.[0]
+        if (Array.isArray(opts)) availableLoras = opts.map(String)
+      }
+    } catch (_) { /* ComfyUI down mid-run — use the fallback */ }
+  }
 
   let built
   try {
@@ -3144,12 +3159,13 @@ ipcMain.handle('analysis:optimizeFootageLTX', async (event, options) => {
       // gets erased; otherwise the template's own prompt applies.
       prompt: promptOverride,
       availableLoras,
+      cloud: runningOnCloud,
     })
   } catch (err) {
     return { success: false, error: `Could not load LTX text-removal workflow: ${err.message}` }
   }
   const { workflow } = built
-  emit('note', { message: `Using IC-LoRA ${built.icLora}.` })
+  emit('note', { message: `${runningOnCloud ? 'Cloud' : 'Local'} · IC-LoRA ${built.icLora || '(template default)'}.` })
 
   emit('queued_submit')
   let promptId
