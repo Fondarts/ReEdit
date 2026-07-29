@@ -2477,9 +2477,18 @@ function Timeline({ onOpenAudioGenerate, hideToolbar = false }) {
     }
   }, [handleWheel])
 
+  // Auto-scroll during playback, throttled to ~8 Hz. Unthrottled this ran
+  // every playhead tick, and ensureTimelineTimeVisible reads scrollLeft /
+  // clientWidth / scrollWidth — a forced synchronous layout of the whole
+  // (unvirtualised) timeline DOM, 60x/sec, right after a scrollLeft write
+  // from the previous tick. The scroll itself only needs to keep the
+  // playhead loosely inside the safe zone; ~8 Hz is visually identical.
+  const lastAutoScrollAtRef = useRef(0)
   useEffect(() => {
     if (!timelineRef.current || !timelineIsPlaying) return
-
+    const now = performance.now()
+    if (now - lastAutoScrollAtRef.current < 125) return
+    lastAutoScrollAtRef.current = now
     ensureTimelineTimeVisible(playheadPosition)
   }, [ensureTimelineTimeVisible, playheadPosition, timelineIsPlaying])
 

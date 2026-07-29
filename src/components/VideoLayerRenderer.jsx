@@ -2158,6 +2158,12 @@ function VideoLayerRenderer({
    * Preload upcoming clips
    */
   const preloadUpcoming = useCallback(() => {
+    // Live read instead of a closure over `playheadPosition`: keeping the
+    // playhead out of this callback's deps keeps its identity stable
+    // during playback, which is what lets the preload interval effect
+    // below actually keep its interval alive (with the playhead as a
+    // dep, the interval was recreated 60x/sec and never fired).
+    const playheadPosition = useTimelineStore.getState().playheadPosition
     const clipsToPreload = getClipsToPreload(playheadPosition)
     
     clipsToPreload.forEach(clip => {
@@ -2181,10 +2187,17 @@ function VideoLayerRenderer({
     })
     
     lastPreloadPosition.current = playheadPosition
-  }, [playheadPosition, getClipsToPreload, getAssetById])
+  }, [getClipsToPreload, getAssetById])
 
-  // Auto-render cache for clips with mask effects (smooth playback)
+  // Auto-render cache for clips with mask effects (smooth playback).
+  // Gated on actual movement — with a bare playheadPosition dep this ran
+  // its candidate scan (filter + Set over every clip) 60x/sec during
+  // playback even though the answer only changes when the playhead moves
+  // between clips.
+  const lastAutoCachePosition = useRef(-Infinity)
   useEffect(() => {
+    if (Math.abs(playheadPosition - lastAutoCachePosition.current) < 0.3) return
+    lastAutoCachePosition.current = playheadPosition
     const candidates = getClipsToPreload(playheadPosition)
     candidates.forEach(clip => {
       void autoCacheClip(clip)

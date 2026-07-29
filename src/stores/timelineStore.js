@@ -1,5 +1,43 @@
 import { create } from 'zustand'
-import { persist } from 'zustand/middleware'
+import { persist, createJSONStorage } from 'zustand/middleware'
+
+// Debounced localStorage adapter for `persist`. Zustand's persist
+// middleware calls storage.setItem on EVERY setState — including the
+// ~60/sec setPlayheadPosition ticks during playback — and each call
+// serialises the whole persisted slice (all clips, keyframes,
+// transitions) and writes localStorage SYNCHRONOUSLY on the main
+// thread. partialize excludes playheadPosition from the payload but
+// does not stop the write, so playback was spending multiple ms per
+// frame on identical JSON writes: the #1 source of playback stutter.
+// Reads and removes stay synchronous; only the write is deferred.
+const PERSIST_WRITE_DELAY_MS = 500
+function debouncedStorage() {
+  let timer = null
+  let pending = null
+  const flush = () => {
+    timer = null
+    if (!pending) return
+    const { name, value } = pending
+    pending = null
+    try { localStorage.setItem(name, value) } catch { /* quota/private mode */ }
+  }
+  // Losing at most 500 ms of edits on a hard crash is acceptable; a
+  // normal quit flushes via pagehide.
+  if (typeof window !== 'undefined') {
+    window.addEventListener('pagehide', () => { if (timer) { clearTimeout(timer); flush() } })
+  }
+  return {
+    getItem: (name) => localStorage.getItem(name),
+    setItem: (name, value) => {
+      pending = { name, value }
+      if (!timer) timer = setTimeout(flush, PERSIST_WRITE_DELAY_MS)
+    },
+    removeItem: (name) => {
+      if (pending?.name === name) pending = null
+      localStorage.removeItem(name)
+    },
+  }
+}
 import { TRANSITION_DEFAULT_SETTINGS, FRAME_RATE } from '../constants/transitions'
 import { buildTextAnimationPresetKeyframes, TEXT_ANIMATION_KEYFRAME_PROPERTIES } from '../utils/textAnimationPresets'
 import { getAdjustmentValue, mergeAdjustmentSettings, normalizeAdjustmentSettings } from '../utils/adjustments'
@@ -4519,6 +4557,7 @@ export const useTimelineStore = create(
     }),
     {
       name: 'comfystudio-timeline', // localStorage key
+      storage: createJSONStorage(debouncedStorage),
       partialize: (state) => ({
         // Only persist these fields (exclude transient UI state)
         duration: state.duration,

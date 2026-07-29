@@ -1096,15 +1096,30 @@ function registerFileProtocol() {
     if (queryIdx >= 0) url = url.slice(0, queryIdx)
     const filePath = decodeURIComponent(url)
 
-    // Tell Chromium not to heuristically cache these responses. The files
-    // these URLs point at (scene thumbnails, generated clips) routinely
-    // get overwritten in place between analysis / generation runs, so
-    // caching served stale frames.
+    // Cache policy is split by media kind:
+    //  - Images (scene thumbnails, mask previews) ARE overwritten in
+    //    place between analysis runs, so they stay no-store — a stale
+    //    thumbnail is exactly the bug that policy was added for.
+    //  - Video/audio get a real cache. Generated media always lands at a
+    //    NEW filename (version tags V01/L02/E01…, fill ids), so
+    //    overwrite-in-place doesn't apply — and blanket no-store meant
+    //    Chromium could never reuse a byte range it had already read:
+    //    every seek and every playback loop re-entered this handler
+    //    (sync statSync + new read stream on the main process), which
+    //    contributed to playback stutter. `private` keeps it in the
+    //    in-memory HTTP cache only; the `?v=` cache-buster convention
+    //    still forces a refetch wherever callers version their URLs.
+    const mime = guessProtocolMime(filePath)
+    const isStreamableMedia = /^(video|audio)\//.test(mime)
     const baseHeaders = {
-      'Cache-Control': 'no-cache, no-store, must-revalidate',
-      'Pragma': 'no-cache',
-      'Expires': '0',
-      'Content-Type': guessProtocolMime(filePath),
+      ...(isStreamableMedia
+        ? { 'Cache-Control': 'private, max-age=3600' }
+        : {
+            'Cache-Control': 'no-cache, no-store, must-revalidate',
+            'Pragma': 'no-cache',
+            'Expires': '0',
+          }),
+      'Content-Type': mime,
       // Advertise range support so the media element knows it can seek.
       'Accept-Ranges': 'bytes',
     }
