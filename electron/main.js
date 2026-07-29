@@ -2366,7 +2366,7 @@ function convertUiWorkflowToApi(uiJson) {
 // object plus the metadata the caller needs to find the saved video in
 // /history (the VHS_VideoCombine node id, the filename prefix, etc.).
 async function buildLtxIcEditWatermarkWorkflow({
-  comfyInputName, outputPrefix, seed,
+  comfyInputName, outputPrefix, seed, fps,
 }) {
   const uiJson = await loadLtxIcEditWorkflowJson()
   const api = convertUiWorkflowToApi(uiJson)
@@ -2413,6 +2413,32 @@ async function buildLtxIcEditWatermarkWorkflow({
     delete api['5125'].inputs.method
     api['5125'].inputs.channel = 'red'
   }
+
+  // ── Same story for two pure-plumbing custom nodes. Neither does model
+  // work — they just carry a number — so replacing them with literals is
+  // always valid and drops two more pack dependencies:
+  //
+  //   5104 'Seed (rgthree)' → feeds RandomNoise.noise_seed. We already
+  //   compute `finalSeed` below, so inline it and delete the node.
+  //   (convertUiWorkflowToApi has a generic Seed-rgthree fixup that
+  //   populates its `seed` input — useful if the pack IS installed, but
+  //   it can't help when ComfyUI refuses to instantiate the type at all.)
+  //
+  //   5100 'SimpleMath+' (ComfyUI Essentials) → expression is literally
+  //   'a', an identity passthrough of the source clip's frame rate from
+  //   VHS_VideoInfoLoaded, split into an INT for LTXVEmptyLatentAudio
+  //   and a FLOAT for VHS_VideoCombine. The caller already probed the
+  //   real fps, so write it straight into both consumers. Mirrors the
+  //   fix the outpaint workflow's _meta documents for its CM_FloatToInt
+  //   cast.
+  const finalSeed = Number.isFinite(seed) ? seed : Math.floor(Math.random() * 1e15)
+  delete api['5104']
+  if (api['5106']?.inputs) api['5106'].inputs.noise_seed = finalSeed
+
+  const safeFps = Number.isFinite(fps) && fps > 0 ? fps : 24
+  delete api['5100']
+  if (api['3980']?.inputs) api['3980'].inputs.frame_rate = Math.round(safeFps)
+  if (api['5069']?.inputs) api['5069'].inputs.frame_rate = safeFps
 
   // ── Text encoder. The reference workflow ships pointing at
   // gemma_3_12B_it_fp8_e4m3fn.safetensors — most installs (ours
@@ -2463,18 +2489,9 @@ async function buildLtxIcEditWatermarkWorkflow({
     delete api['5069'].inputs.videopreview
   }
 
-  // ── Seed. Patch both the rgthree Seed node and the RandomNoise node
-  // (whichever the workflow actually wires to the sampler) so a re-run
-  // of the same scene produces a different result.
-  const finalSeed = Number.isFinite(seed) ? seed : Math.floor(Math.random() * 1e15)
-  if (api['5104']) api['5104'].inputs = { seed: finalSeed }
-  if (api['5106'] && api['5106'].inputs) {
-    // RandomNoise expects noise_seed as either an int or a link. If
-    // 5104 is wired (link), keep the link; otherwise pin the int.
-    if (!Array.isArray(api['5106'].inputs.noise_seed)) {
-      api['5106'].inputs.noise_seed = finalSeed
-    }
-  }
+  // (Seed + frame-rate literals are patched near the top, alongside the
+  // other custom-node removals, since deleting those nodes has to happen
+  // before anything else reads the graph.)
 
   return { workflow: api, saveNodeId: '5069', filenamePrefix: outputPrefix, seed: finalSeed }
 }
@@ -3229,6 +3246,9 @@ ipcMain.handle('analysis:optimizeFootageLTX', async (event, options) => {
       comfyInputName,
       outputPrefix,
       seed,
+      // Real source fps — replaces the SimpleMath+ passthrough node the
+      // reference workflow used to derive it (see the builder).
+      fps: meta.fps,
     })
   } catch (err) {
     return { success: false, error: `Could not load LTX IC-Edit workflow: ${err.message}` }
