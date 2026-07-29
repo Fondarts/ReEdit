@@ -1805,7 +1805,7 @@ ipcMain.handle('analysis:detectScenes', async (event, videoPath, options = {}) =
       if (err.code === 'ENOENT') {
         resolve({
           success: false,
-          error: `Python interpreter not found (looked for "${pythonCmd}" in PATH). Install Python 3 and retry.`,
+          error: `Python interpreter not found (looked for "${pythonCmd}" in PATH). Install Python 3${pythonCmd === 'py' ? ' from python.org (includes the "py" launcher)' : ''}, or set REEDIT_PYTHON to a specific python.exe, and retry.`,
         })
       } else {
         resolve({ success: false, error: err.message })
@@ -2173,11 +2173,21 @@ function pickMaskArgsFromHint(hint, graphics) {
 function resolvePythonExe() {
   // Prefer an explicit env override (user can pin to a specific install
   // or venv — handy when multiple Pythons are on PATH and only one has
-  // the re-edit deps: scenedetect, opencv, demucs). Windows resolves
-  // plain `python` via the launcher shim; other platforms typically
-  // only expose `python3` as a first-class executable.
+  // the re-edit deps: scenedetect, opencv, demucs).
+  //
+  // Otherwise, on Windows, use the `py` launcher (py.exe, installed
+  // system-wide under C:\Windows by the official python.org installer)
+  // instead of the bare `python` command. This matters because
+  // activating ANY virtualenv prepends its Scripts\ dir — which ships
+  // python.exe/pip.exe but never its own py.exe — to the front of
+  // PATH. If the Electron process inherits its environment from a
+  // shell that had an unrelated venv active, plain `python` silently
+  // resolves to that venv's interpreter (missing scenedetect/demucs)
+  // while `py` still finds the system install the user actually set
+  // up for this project. Other platforms don't have this launcher;
+  // fall back to `python3`.
   return process.env.REEDIT_PYTHON || process.env.PYTHON
-    || (process.platform === 'win32' ? 'python' : 'python3')
+    || (process.platform === 'win32' ? 'py' : 'python3')
 }
 
 // Read ComfyUI's `--input-directory` argv by hitting /system_stats.
